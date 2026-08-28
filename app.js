@@ -40,7 +40,7 @@ if (creativeBoard) {
     { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS },
   ];
   // 보드 카드에 노출할 속성 (요청받은 순서)
-  const CARD_PROPS = ['status', 'sku', 'channel', 'event', 'owners', 'eventDate', 'dueDate'];
+  const CARD_PROPS = ['sku', 'channel', 'owners', 'dueDate'];
   const propByKey = Object.fromEntries(SCHEMA.map((prop) => [prop.key, prop]));
   const colorOf = (prop, value) => (prop.options || []).find(([option]) => option === value)?.[1] || 'default';
 
