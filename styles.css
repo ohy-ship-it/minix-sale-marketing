@@ -118,10 +118,15 @@ body:has(#creative-board:not([hidden])) .topbar{display:none}
 .week-row:hover{background:#faf9f7}
 .week-row.is-editing{background:#f6f9fc;cursor:default}
 .week-table td{padding:11px 12px;vertical-align:middle}
-.week-title-cell{font-weight:700;color:#20211e}
-.week-title-cell small{margin-left:8px;font-weight:400;color:#a5a49f}
-.week-author{color:#8c8c85}
-.week-updated{color:#8c8c85;white-space:nowrap}
+.week-month{font-weight:700;color:#20211e;white-space:nowrap}
+.week-table td small{margin-left:8px;color:#a5a49f}
+.week-share-cell{width:100%;color:#8c8c85}
+.week-share-link{display:inline-block;max-width:min(420px,42vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:#337ea9;text-decoration:none}
+.week-share-link:hover{text-decoration:underline}
+.week-share{display:inline-flex;align-items:center;gap:4px;margin-left:8px;vertical-align:middle;border:1px solid #e3e2dc;border-radius:6px;background:#fff;color:#555;font:600 11px inherit;padding:4px 8px;cursor:pointer}
+.week-share:hover{background:#f4f4f1}
+.week-share svg{width:12px}
+.week-share.is-copied{border-color:#c7e1c9;background:#e9f4ea;color:#448361}
 .week-actions{display:flex;justify-content:flex-end;gap:6px}
 .week-actions button{border:1px solid #e3e2dc;border-radius:6px;background:#fff;color:#555;font:600 11px inherit;padding:5px 9px;cursor:pointer}
 .week-actions button:hover{background:#f4f4f1}

@@ -79,22 +79,28 @@ if (creativeBoard) {
     mediaNotes: row.mediaNotes && typeof row.mediaNotes === 'object' ? { ...row.mediaNotes } : {},
   });
 
-  const weekLabelFor = (date) => `${date.getMonth() + 1}월 ${Math.ceil(date.getDate() / 7)}주차`;
+  const monthFor = (date) => `${date.getMonth() + 1}월`;
+  const weekNoFor = (date) => `${Math.ceil(date.getDate() / 7)}주차`;
 
-  const normalizeWeek = (week) => ({
-    id: week.id || newId(),
-    label: week.label || weekLabelFor(new Date()),
-    title: week.title || '',
-    author: week.author || OWNER_OPTIONS[0][0],
-    updated: Number(week.updated) || Date.now(),
-    rows: Array.isArray(week.rows) ? week.rows.map(normalize) : [],
-  });
+  const normalizeWeek = (week) => {
+    // 예전 구조("8월 4주차" 한 덩어리)를 월/주차로 나눠 받는다
+    const [, oldMonth, oldWeek] = /^\s*(\d+월)\s*(.*)$/.exec(week.label || '') || [];
+    return {
+      id: week.id || newId(),
+      month: week.month || oldMonth || monthFor(new Date()),
+      week: week.week || oldWeek || weekNoFor(new Date()),
+      rows: Array.isArray(week.rows) ? week.rows.map(normalize) : [],
+    };
+  };
+
+  const weekName = (week) => `${week.month} ${week.week}`;
+  const shareLink = (week) => `${window.location.origin}${window.location.pathname}#creative-planning/${week.id}`;
 
   const firstWeek = () => {
     let legacy = null;
     try { legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null'); } catch { legacy = null; }
     const seedRows = Array.isArray(legacy) && legacy.length ? legacy : SEED;
-    return [normalizeWeek({ label: '8월 4주차', title: '8월 4주차 주간 리포트', rows: seedRows })];
+    return [normalizeWeek({ month: '8월', week: '4주차', rows: seedRows })];
   };
 
   let weeks;
@@ -108,16 +114,7 @@ if (creativeBoard) {
   let currentWeekId = null;
   let rows = [];
   const currentWeek = () => weeks.find((week) => week.id === currentWeekId) || null;
-  const save = (touched = currentWeek()) => {
-    if (touched) touched.updated = Date.now();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
-  };
-
-  const formatUpdated = (stamp) => {
-    const at = new Date(stamp);
-    const hour = at.getHours();
-    return `${at.getMonth() + 1}. ${at.getDate()}. ${hour < 12 ? '오전' : '오후'} ${String(hour % 12 || 12).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
-  };
+  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const formatDay = (value) => {
@@ -454,20 +451,18 @@ if (creativeBoard) {
         <button type="button" class="week-add"><i data-lucide="plus"></i>주간 리포트 추가</button>
       </div>
       <table class="week-table">
-        <thead><tr><th>주차</th><th>제목</th><th>작성자</th><th>최종 수정</th><th></th></tr></thead>
+        <thead><tr><th>월</th><th>주차</th><th>공유링크</th><th></th></tr></thead>
         <tbody>${weeks.map((week) => (week.id === editingWeekId ? `
           <tr class="week-row is-editing" data-week="${week.id}">
-            <td><input class="week-input" data-field="label" value="${escapeHtml(week.label)}" placeholder="8월 4주차"></td>
-            <td><input class="week-input" data-field="title" value="${escapeHtml(week.title)}" placeholder="주간 리포트 제목"></td>
-            <td><select class="week-input" data-field="author">${OWNER_OPTIONS.map(([name]) => `<option${name === week.author ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></td>
-            <td class="week-updated">${formatUpdated(week.updated)}</td>
+            <td><input class="week-input" data-field="month" value="${escapeHtml(week.month)}" placeholder="8월"></td>
+            <td><input class="week-input" data-field="week" value="${escapeHtml(week.week)}" placeholder="4주차"></td>
+            <td class="week-share-cell">${escapeHtml(shareLink(week))}</td>
             <td class="week-actions"><button type="button" class="week-save">저장</button><button type="button" class="week-cancel">취소</button></td>
           </tr>` : `
           <tr class="week-row" data-week="${week.id}">
-            <td><span class="chip chip-orange">${escapeHtml(week.label)}</span></td>
-            <td class="week-title-cell">${escapeHtml(week.title || '제목 없음')}<small>${week.rows.length}건</small></td>
-            <td class="week-author">${escapeHtml(week.author)}</td>
-            <td class="week-updated">${formatUpdated(week.updated)}</td>
+            <td class="week-month">${escapeHtml(week.month)}</td>
+            <td><span class="chip chip-orange">${escapeHtml(week.week)}</span><small>${week.rows.length}건</small></td>
+            <td class="week-share-cell"><a class="week-share-link" href="${escapeHtml(shareLink(week))}">${escapeHtml(shareLink(week))}</a><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
             <td class="week-actions"><button type="button" class="week-edit" aria-label="수정"><i data-lucide="pencil"></i></button><button type="button" class="week-delete">삭제</button></td>
           </tr>`)).join('')}</tbody>
       </table>`;
@@ -480,9 +475,10 @@ if (creativeBoard) {
     currentWeekId = id;
     rows = week.rows;
     FACETS.forEach((facet) => { active[facet.key] = []; });
-    boardView.querySelector('.board-title').textContent = week.title || week.label;
+    boardView.querySelector('.board-title').textContent = weekName(week);
     weekList.hidden = true;
     boardView.hidden = false;
+    window.history.replaceState(null, '', `#creative-planning/${week.id}`);
     renderBoard();
   };
 
@@ -492,20 +488,30 @@ if (creativeBoard) {
     rows = [];
     boardView.hidden = true;
     weekList.hidden = false;
+    window.history.replaceState(null, '', '#creative-planning');
     renderWeekList();
   };
 
   weekList.addEventListener('click', (event) => {
     if (event.target.closest('.week-add')) {
-      const label = weekLabelFor(new Date());
-      const week = normalizeWeek({ label, title: `${label} 주간 리포트` });
+      const week = normalizeWeek({ month: monthFor(new Date()), week: weekNoFor(new Date()) });
       weeks.unshift(week);
       editingWeekId = week.id;
-      save(week);
+      save();
       renderWeekList();
       weekList.querySelector('.week-input')?.focus();
       return;
     }
+    const copyButton = event.target.closest('.week-share');
+    if (copyButton) {
+      const link = copyButton.dataset.link;
+      const done = () => { copyButton.classList.add('is-copied'); copyButton.lastChild.textContent = '복사됨'; };
+      if (window.navigator.clipboard?.writeText) window.navigator.clipboard.writeText(link).then(done, () => window.prompt('링크를 복사하세요', link));
+      else window.prompt('링크를 복사하세요', link);
+      done();
+      return;
+    }
+    if (event.target.closest('.week-share-link')) return;
     const rowElement = event.target.closest('.week-row');
     if (!rowElement) return;
     const week = weeks.find((entry) => entry.id === rowElement.dataset.week);
@@ -519,7 +525,7 @@ if (creativeBoard) {
     if (event.target.closest('.week-save')) {
       rowElement.querySelectorAll('.week-input').forEach((field) => { week[field.dataset.field] = field.value.trim() || week[field.dataset.field]; });
       editingWeekId = null;
-      save(week);
+      save();
       renderWeekList();
       return;
     }
@@ -529,10 +535,10 @@ if (creativeBoard) {
       return;
     }
     if (event.target.closest('.week-delete')) {
-      if (!window.confirm(`'${week.title || week.label}'을(를) 삭제할까요? 카드 ${week.rows.length}건이 함께 사라집니다.`)) return;
+      if (!window.confirm(`'${weekName(week)}'을(를) 삭제할까요? 카드 ${week.rows.length}건이 함께 사라집니다.`)) return;
       weeks = weeks.filter((entry) => entry.id !== week.id);
       editingWeekId = null;
-      save(null);
+      save();
       renderWeekList();
       return;
     }
@@ -543,6 +549,9 @@ if (creativeBoard) {
   boardView.querySelector('.back-to-list').addEventListener('click', backToList);
 
   renderWeekList();
+
+  const linkedId = window.location.hash.startsWith('#creative-planning/') ? window.location.hash.slice('#creative-planning/'.length) : '';
+  if (linkedId && weeks.some((week) => week.id === linkedId)) openWeek(linkedId);
 }
 
 document.querySelectorAll('.tree-group').forEach((group) => {
@@ -565,11 +574,12 @@ document.querySelectorAll('[data-view]').forEach((item) => {
     document.querySelector('.channel-section').hidden = isCreativePlanning;
     document.querySelector('.notes-section').hidden = isCreativePlanning;
     document.querySelector('#creative-board').hidden = !isCreativePlanning;
-    history.replaceState(null, '', isCreativePlanning ? '#creative-planning' : '#dashboard');
+    const keepWeek = isCreativePlanning && location.hash.startsWith('#creative-planning/');
+    history.replaceState(null, '', isCreativePlanning ? (keepWeek ? location.hash : '#creative-planning') : '#dashboard');
   });
 });
 
-if (window.location.hash === '#creative-planning') {
+if (window.location.hash.startsWith('#creative-planning')) {
   document.querySelector("button[data-view='광고소재 기획']")?.click();
 }
 
