@@ -900,7 +900,9 @@ if (filenameTool) {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (stored && typeof stored === 'object') {
       state = { ...defaults, ...(stored.state || {}) };
-      if (!Array.isArray(state.customTypes)) state.customTypes = [];
+      state.customTypes = (Array.isArray(state.customTypes) ? state.customTypes : [])
+        .map((entry) => (typeof entry === 'string' ? { name: entry, code: entry } : entry))
+        .filter((entry) => entry && entry.name && entry.code);
       issued = Array.isArray(stored.issued) ? stored.issued : [];
       watermark = stored.watermark && typeof stored.watermark === 'object' ? { ...stored.watermark } : {};
     }
@@ -914,7 +916,7 @@ if (filenameTool) {
   const codeOf = (typeName) => {
     const known = MESSAGE_TYPES.find(([name]) => name === typeName);
     if (known) return known[1];
-    return state.customTypes.includes(typeName) ? typeName : '';
+    return (state.customTypes.find((entry) => entry.name === typeName) || {}).code || '';
   };
 
   // 최종행사명 = 행사일자(YYMMDD) + 상품명 + 행사채널 + 행사명 (시트 표기 순서)
@@ -1034,6 +1036,56 @@ if (filenameTool) {
       });
   };
 
+  let modal = { open: false, name: '', code: '', error: '' };
+
+  const openCustomModal = () => {
+    modal = { open: true, name: '', code: '', error: '' };
+    render();
+    filenameTool.querySelector('[data-new="name"]')?.focus();
+  };
+
+  const closeCustomModal = () => {
+    modal = { open: false, name: '', code: '', error: '' };
+    render();
+  };
+
+  const registerCustomType = () => {
+    const name = modal.name.trim();
+    const code = modal.code.trim();
+    if (!name) return (modal.error = '메시지 유형명을 적어 주세요.'), render();
+    if (!code) return (modal.error = '파일명 코드를 적어 주세요.'), render();
+    if (!CODE_RULE.test(code)) {
+      modal.error = '파일명 코드는 영문과 숫자만 쓸 수 있습니다. (한글 · 띄어쓰기 · 특수문자 불가)';
+      return render();
+    }
+    const taken = MESSAGE_TYPES.some(([value]) => value === name) || state.customTypes.some((entry) => entry.name === name);
+    if (taken) {
+      modal.error = '이미 있는 메시지 유형명입니다.';
+      return render();
+    }
+    state.customTypes = [...state.customTypes, { name, code }];
+    state.type = name;
+    modal = { open: false, name: '', code: '', error: '' };
+    save();
+    issueOne();
+  };
+
+  const customModalMarkup = () => (modal.open ? `
+      <div class="tool-modal">
+        <div class="tool-modal-backdrop"></div>
+        <div class="tool-modal-panel" role="dialog" aria-label="메시지 유형 직접 추가">
+          <h3>메시지 유형 직접 추가</h3>
+          <label>메시지 유형명<input type="text" data-new="name" value="${escapeHtml(modal.name)}" placeholder="예: 신년 프로모션"></label>
+          <label>파일명<input type="text" data-new="code" value="${escapeHtml(modal.code)}" placeholder="예: newyear"></label>
+          <p class="tool-modal-hint">파일명은 영문 · 숫자만 됩니다. 한글 · 띄어쓰기 · 특수문자는 넣을 수 없습니다.</p>
+          ${modal.error ? `<p class="tool-modal-error">${escapeHtml(modal.error)}</p>` : ''}
+          <div class="tool-modal-actions">
+            <button type="button" class="tool-modal-cancel">취소</button>
+            <button type="button" class="tool-modal-submit">등록</button>
+          </div>
+        </div>
+      </div>` : '');
+
   const render = () => {
     const code = codeOf(state.type);
     const seq = code ? nextSequence(code) : 0;
@@ -1057,7 +1109,7 @@ if (filenameTool) {
           <label>메시지 유형<select data-field="type">
             <option value="${CUSTOM_OPTION}">직접 작성하기…</option>
             <option value=""${state.type ? '' : ' selected'}>선택 안 함</option>
-            ${state.customTypes.map((value) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}
+            ${state.customTypes.map((entry) => `<option${entry.name === state.type ? ' selected' : ''}>${escapeHtml(entry.name)}</option>`).join('')}
             ${MESSAGE_TYPES.map(([value]) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}
           </select></label>
           <div class="tool-final-box">
@@ -1099,6 +1151,8 @@ if (filenameTool) {
         </table></div>` : '<p class="tool-empty">아직 발번한 파일명이 없습니다.</p>'}
       </section>
 
+      ${customModalMarkup()}
+
       <div class="tool-footer">
         <button type="button" class="tool-reset"><i data-lucide="eraser"></i>전체 지우기</button>
         <button type="button" class="tool-submit"${pending().length ? '' : ' disabled'}><i data-lucide="upload"></i>최종완료${pending().length ? ` (${pending().length})` : ''}</button>
@@ -1121,6 +1175,11 @@ if (filenameTool) {
 
   // 텍스트 칸은 여기서만 반영한다. change 에서 다시 그리면 blur 직후의 클릭이 삼켜진다.
   filenameTool.addEventListener('input', (event) => {
+    const newField = event.target.closest('[data-new]');
+    if (newField) {
+      modal[newField.dataset.new] = newField.value;
+      return;
+    }
     const field = event.target.closest('[data-field]');
     if (!field || field.tagName === 'SELECT' || field.type === 'date') return;
     state[field.dataset.field] = field.value;
@@ -1132,29 +1191,12 @@ if (filenameTool) {
     if (copy) copy.dataset.copy = name;
   });
 
-  const askCustomCode = () => {
-    const guide = '파일명에 쓸 코드를 영문/숫자로 적어 주세요.\n(한글 · 띄어쓰기 · 특수문자 불가, 예: newyear)';
-    let value = window.prompt(guide, '');
-    while (value !== null && !CODE_RULE.test(value.trim())) {
-      window.alert('영문과 숫자만 쓸 수 있습니다.\n한글, 띄어쓰기, 특수문자는 넣을 수 없습니다.');
-      value = window.prompt(guide, value.trim());
-    }
-    return value === null ? '' : value.trim();
-  };
-
   filenameTool.addEventListener('change', (event) => {
     const field = event.target.closest('[data-field]');
     if (!field || (field.tagName !== 'SELECT' && field.type !== 'date' && field.type !== 'checkbox')) return;
     if (field.dataset.field === 'type' && field.value === CUSTOM_OPTION) {
-      const code = askCustomCode();
-      if (!code) {
-        field.value = state.type;
-        return;
-      }
-      if (!state.customTypes.includes(code)) state.customTypes = [...state.customTypes, code];
-      state.type = code;
-      save();
-      issueOne();
+      field.value = state.type;
+      openCustomModal();
       return;
     }
     state[field.dataset.field] = field.type === 'checkbox' ? field.checked : field.value;
@@ -1171,6 +1213,9 @@ if (filenameTool) {
   });
 
   filenameTool.addEventListener('click', (event) => {
+    if (event.target.closest('.tool-modal-submit')) return registerCustomType();
+    if (event.target.closest('.tool-modal-cancel') || event.target.closest('.tool-modal-backdrop')) return closeCustomModal();
+
     const copy = event.target.closest('.tool-copy');
     if (copy) return copyText(copy.dataset.copy, copy);
 
@@ -1217,6 +1262,15 @@ if (filenameTool) {
       issued = issued.filter((entry) => entry.id !== id);
       save();
       render();
+    }
+  });
+
+  filenameTool.addEventListener('keydown', (event) => {
+    if (!modal.open) return;
+    if (event.key === 'Escape') closeCustomModal();
+    if (event.key === 'Enter' && event.target.closest('[data-new]')) {
+      event.preventDefault();
+      registerCustomType();
     }
   });
 
