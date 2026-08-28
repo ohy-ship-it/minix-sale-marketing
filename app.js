@@ -30,16 +30,17 @@ if (creativeBoard) {
 
   const SCHEMA = [
     { key: 'name', name: '이름', type: 'title', icon: 'type' },
-    { key: 'event', name: '행사명', type: 'text', icon: 'align-left' },
     { key: 'status', name: '상태', type: 'status', icon: 'loader', options: STATUS_OPTIONS },
-    { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS },
-    { key: 'channel', name: '행사채널', type: 'select', icon: 'circle-chevron-down', options: CHANNEL_OPTIONS },
-    { key: 'owners', name: '담당자', type: 'multi_select', icon: 'users', options: OWNER_OPTIONS },
-    { key: 'eventDate', name: '행사일자', type: 'date', icon: 'calendar' },
-    { key: 'dueDate', name: '희망전달날짜', type: 'date', icon: 'calendar' },
     { key: 'sku', name: 'SKU', type: 'multi_select', icon: 'tag', options: SKU_OPTIONS },
-    { key: 'done', name: '세팅', type: 'checkbox', icon: 'square-check' },
+    { key: 'channel', name: '행사채널', type: 'select', icon: 'circle-chevron-down', options: CHANNEL_OPTIONS },
+    { key: 'event', name: '행사명', type: 'text', icon: 'align-left' },
+    { key: 'owners', name: '담당자', type: 'multi_select', icon: 'users', options: OWNER_OPTIONS },
+    { key: 'eventDate', name: '행사일정', type: 'date', icon: 'calendar' },
+    { key: 'dueDate', name: '전달희망일정', type: 'date', icon: 'calendar' },
+    { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS },
   ];
+  // 보드 카드에 노출할 속성 (요청받은 순서)
+  const CARD_PROPS = ['status', 'sku', 'channel', 'event', 'owners', 'eventDate', 'dueDate'];
   const propByKey = Object.fromEntries(SCHEMA.map((prop) => [prop.key, prop]));
   const colorOf = (prop, value) => (prop.options || []).find(([option]) => option === value)?.[1] || 'default';
 
@@ -52,11 +53,11 @@ if (creativeBoard) {
   };
 
   const SEED = [
-    { name: '[당일/사후] 카카오톡딜위크', event: '카카오톡딜위크', status: '요청', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-10', end: '2026-09-13' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더mini'], done: false },
-    { name: '[상시/오프-온라인] 하이마트 미니 런칭기념 행사', event: '하이마트 미니 런칭기념 행사', status: '진행 중', media: ['메타'], channel: '하이마트', owners: ['김서영', '김진빈'], eventDate: { start: '2026-09-06', end: '2026-09-08' }, dueDate: { start: '2026-09-03' }, sku: ['더플렌더mini'], done: false },
-    { name: '[당일/상시] 브티나는 생활 MLC', event: '브티나는 생활 MLC', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-스마트채널', 'GFA-피드'], channel: 'CJ', owners: ['이정민', '오해영'], eventDate: { start: '2026-09-02', end: '2026-09-04' }, dueDate: { start: '2026-08-31' }, sku: ['더플렌더mini', '더플렌더max'], done: false },
-    { name: '[당일] 오늘의집 라이브', event: '오늘의집 라이브', status: '진행 중', media: ['브랜드검색', '메타'], channel: '오늘의집', owners: ['오해영', '김서영'], eventDate: { start: '2026-09-09' }, dueDate: { start: '2026-09-07' }, sku: ['더플렌더mini'], done: false },
-    { name: '[당일] 현대홈쇼핑 MLC', event: '현대홈쇼핑 MLC', status: '전달 완료', media: ['메타', '브랜드검색'], channel: '현대홈쇼핑', owners: ['김진빈', '이정민'], eventDate: { start: '2026-08-31' }, dueDate: { start: '2026-08-27' }, sku: ['더 에어드라이'], done: false },
+    { name: '[당일/사후] 카카오톡딜위크', event: '카카오톡딜위크', status: '요청', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-10', end: '2026-09-13' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더mini'] },
+    { name: '[상시/오프-온라인] 하이마트 미니 런칭기념 행사', event: '하이마트 미니 런칭기념 행사', status: '진행 중', media: ['메타'], channel: '하이마트', owners: ['김서영', '김진빈'], eventDate: { start: '2026-09-06', end: '2026-09-08' }, dueDate: { start: '2026-09-03' }, sku: ['더플렌더mini'] },
+    { name: '[당일/상시] 브티나는 생활 MLC', event: '브티나는 생활 MLC', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-스마트채널', 'GFA-피드'], channel: 'CJ', owners: ['이정민', '오해영'], eventDate: { start: '2026-09-02', end: '2026-09-04' }, dueDate: { start: '2026-08-31' }, sku: ['더플렌더mini', '더플렌더max'] },
+    { name: '[당일] 오늘의집 라이브', event: '오늘의집 라이브', status: '진행 중', media: ['브랜드검색', '메타'], channel: '오늘의집', owners: ['오해영', '김서영'], eventDate: { start: '2026-09-09' }, dueDate: { start: '2026-09-07' }, sku: ['더플렌더mini'] },
+    { name: '[당일] 현대홈쇼핑 MLC', event: '현대홈쇼핑 MLC', status: '전달 완료', media: ['메타', '브랜드검색'], channel: '현대홈쇼핑', owners: ['김진빈', '이정민'], eventDate: { start: '2026-08-31' }, dueDate: { start: '2026-08-27' }, sku: ['더 에어드라이'] },
   ];
 
   const STORAGE_KEY = 'minix-creative-requests-v2';
@@ -73,7 +74,6 @@ if (creativeBoard) {
     eventDate: row.eventDate?.start ? { start: row.eventDate.start, end: row.eventDate.end || '' } : null,
     dueDate: row.dueDate?.start ? { start: row.dueDate.start, end: row.dueDate.end || '' } : null,
     sku: Array.isArray(row.sku) ? row.sku : [],
-    done: Boolean(row.done),
   });
 
   let rows;
@@ -133,6 +133,24 @@ if (creativeBoard) {
     renderBoard();
   };
 
+  const DATE_LABEL = { eventDate: '행사', dueDate: '전달 희망' };
+  const cardLine = (row, key) => {
+    const prop = propByKey[key];
+    const value = row[key];
+    if (prop.type === 'multi_select') {
+      if (!value.length) return '';
+      const marks = key === 'owners' ? value.map(ownerChip) : value.map((item) => chip(prop, item));
+      return `<div class="chips">${marks.join('')}</div>`;
+    }
+    if (prop.type === 'status' || prop.type === 'select') {
+      return value ? `<div class="chips">${chip(prop, value)}</div>` : '';
+    }
+    if (prop.type === 'date') {
+      return value ? `<p><span class="card-key">${DATE_LABEL[key]}</span>${escapeHtml(formatDate(value))}</p>` : '';
+    }
+    return value ? `<p>${escapeHtml(value)}</p>` : '';
+  };
+
   const renderBoard = () => {
     const shown = visibleRows();
     board.innerHTML = STATUS_OPTIONS.map(([status]) => {
@@ -140,13 +158,7 @@ if (creativeBoard) {
       const cards = group.map((row) => `
         <article class="notion-card" draggable="true" data-id="${row.id}">
           <h3>${escapeHtml(row.name || '제목 없음')}</h3>
-          <p>${escapeHtml(formatDate(row.eventDate)) || '일정 미정'}</p>
-          <span class="setting">${row.done ? '☑' : '□'} 세팅</span>
-          <div class="chips">${[
-            ...row.sku.map((value) => chip(propByKey.sku, value)),
-            ...row.owners.map((value) => ownerChip(value)),
-          ].join('')}</div>
-          <small>${escapeHtml(formatDate(row.dueDate))}</small>
+          ${CARD_PROPS.map((key) => cardLine(row, key)).join('')}
         </article>`).join('');
       return `<div class="notion-column ${COLUMN_CLASS[status]}" data-status="${escapeHtml(status)}">
         <div class="notion-column-title"><span>● ${escapeHtml(status)}</span><b>${group.length}</b></div>
@@ -164,9 +176,6 @@ if (creativeBoard) {
     const value = row[prop.key];
     if (prop.type === 'title' || prop.type === 'text') {
       return `<input class="peek-input" data-edit="${prop.key}" value="${escapeHtml(value)}" placeholder="비어 있음">`;
-    }
-    if (prop.type === 'checkbox') {
-      return `<input class="peek-check" type="checkbox" data-edit="${prop.key}"${value ? ' checked' : ''}>`;
     }
     if (prop.type === 'date') {
       return `<span class="peek-date">
@@ -308,7 +317,7 @@ if (creativeBoard) {
 
   peek.addEventListener('input', (event) => {
     const field = event.target.closest('[data-edit]');
-    if (!field || field.type === 'date' || field.type === 'checkbox') return;
+    if (!field || field.type === 'date') return;
     const row = rows.find((entry) => entry.id === openId);
     if (!row) return;
     row[field.dataset.edit] = field.value;
@@ -321,8 +330,7 @@ if (creativeBoard) {
     const row = rows.find((entry) => entry.id === openId);
     if (!row) return;
     const key = field.dataset.edit;
-    if (field.type === 'checkbox') row[key] = field.checked;
-    else if (field.type === 'date') {
+    if (field.type === 'date') {
       const current = row[key] || { start: '', end: '' };
       const next = { ...current, [field.dataset.part]: field.value };
       row[key] = next.start ? next : null;
