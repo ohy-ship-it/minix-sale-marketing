@@ -318,15 +318,15 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 
 /* 대시보드 표용 전역 규칙 table{min-width:1050px} 을 이 표에서는 푼다 */
 .tool-table{min-width:0}
-.tool-table th:nth-child(4),.tool-table td:nth-child(4){width:1%;white-space:nowrap}
+.tool-table th:nth-child(5),.tool-table td:nth-child(5){width:1%;white-space:nowrap}
+.tool-table th:nth-child(2),.tool-table td:nth-child(2){white-space:nowrap}
 .tool-table td:nth-child(1) code{overflow-wrap:anywhere}
 
 /* 최종행사명 표시 */
 .tool-grid-second{margin-top:10px;align-items:end}
-.tool-final-box{grid-column:2/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px;border:1px solid #eeede8;border-radius:8px;background:#fbfbf8;padding:8px 11px;min-height:38px;box-sizing:border-box}
+.tool-final-box{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px;border:1px solid #eeede8;border-radius:8px;background:#fbfbf8;padding:8px 11px;min-height:38px;box-sizing:border-box}
 .tool-final-label{flex:none;font-size:11px;font-weight:700;color:#8c8c85}
 .tool-final{flex:1;min-width:0;font:700 12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#20211e;overflow-wrap:anywhere}
-@media(max-width:760px){.tool-final-box{grid-column:1/-1}}
 
 /* 입력값 전체 지우기 */
 .tool-footer{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:2px}

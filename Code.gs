@@ -1,5 +1,5 @@
 var SHEET_ID = '1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E';
-var HEADER = ['파일명', '메시지 유형', '최종행사명', '발번시각'];
+var HEADER = ['파일명', '매체', '메시지 유형', '최종행사명', '발번시각'];
 
 function doPost(e) {
   try {
@@ -10,6 +10,7 @@ function doPost(e) {
     rows.forEach(function (row) {
       sheet.appendRow([
         row.filename || '',
+        row.media || '',
         row.type || '',
         row.campaign || '',
         row.createdAt ? new Date(row.createdAt) : new Date()

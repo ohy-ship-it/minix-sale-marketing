@@ -870,6 +870,9 @@ if (filenameTool) {
   const PRODUCTS = ['더플렌더MAX', '더플렌더mini', '더플렌더', '더플렌더PLUS', '더슬림', '더시프트', '더에어드라이',
     '식기세척기', '건조기', '건조기필터', '건조기시트', '하드필터', '하드락필터', '푸드컨테이너', '식기세제', '악세사리'];
 
+  const MEDIA_OPTIONS = ['메타', 'GFA-피드', 'GFA-쇼핑소식', 'GFA-스마트채널',
+    '카카오-비즈보드', '카카오-디스플레이', '구글-디멘드젠', '마케팅팀'];
+
   const VERTICAL_SUFFIX = '(세로)';
   const STORAGE_KEY = 'minix-filename-tool-v3';
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -885,7 +888,7 @@ if (filenameTool) {
   const DEFAULT_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxubxtNp5D0X0lGVdNuu2SHQq6kGYO7_RllCicbSqOK0IzfKtrEV_4Cbw-ZznZxYB6P/exec';
   const endpointUrl = () => localStorage.getItem(ENDPOINT_KEY) || DEFAULT_ENDPOINT;
 
-  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', type: MESSAGE_TYPES[0][0], vertical: false };
+  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', media: '', type: MESSAGE_TYPES[0][0], vertical: false };
   let state = { ...defaults };
   let issued = [];
   // 한 번 나간 번호는 목록에서 지워도 다시 쓰지 않는다
@@ -934,6 +937,7 @@ if (filenameTool) {
       id: newId(),
       code,
       seq,
+      media: state.media,
       type: state.type,
       campaign: finalName(),
       filename: `${code}-${seq}`,
@@ -970,6 +974,7 @@ if (filenameTool) {
 
   const rowsForSheet = (list) => list.map((entry) => ({
     filename: entry.filename,
+    media: entry.media || '',
     type: entry.type,
     campaign: entry.campaign,
     createdAt: entry.createdAt || '',
@@ -989,8 +994,8 @@ if (filenameTool) {
 
     // 주소가 없을 때만 표로 복사한 뒤 시트를 열어 붙여넣게 한다
     if (!endpoint) {
-      const header = ['파일명', '메시지 유형', '최종행사명'].join('\t');
-      copyText([header, ...list.map((entry) => [entry.filename, entry.type, entry.campaign].join('\t'))].join('\n'), button);
+      const header = ['파일명', '매체', '메시지 유형', '최종행사명'].join('\t');
+      copyText([header, ...list.map((entry) => [entry.filename, entry.media || '', entry.type, entry.campaign].join('\t'))].join('\n'), button);
       window.alert(list.length + '건을 클립보드에 복사했습니다. 열리는 시트에 붙여넣어 주세요.\n\n'
         + '자동 적재를 쓰려면 한 번만 설정하면 됩니다.\n'
         + '1) 시트 → 확장 프로그램 → Apps Script\n'
@@ -1040,6 +1045,7 @@ if (filenameTool) {
           <label class="tool-wide">행사명<input type="text" data-field="event" value="${escapeHtml(state.event)}" placeholder="예: 음쓰해방위크"></label>
         </div>
         <div class="tool-grid tool-grid-second">
+          <label>매체<select data-field="media"><option value=""${state.media ? '' : ' selected'}>선택 안 함</option>${MEDIA_OPTIONS.map((value) => `<option${value === state.media ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
           <label>메시지 유형<select data-field="type"><option value=""${state.type ? '' : ' selected'}>선택 안 함</option>${MESSAGE_TYPES.map(([value]) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
           <div class="tool-final-box">
             <span class="tool-final-label">최종행사명</span>
@@ -1065,9 +1071,10 @@ if (filenameTool) {
           </div>
         </div>
         ${issued.length ? `<div class="tool-table-wrap"><table class="tool-table">
-          <thead><tr><th>파일명</th><th>메시지 유형</th><th>최종행사명</th><th></th></tr></thead>
+          <thead><tr><th>파일명</th><th>매체</th><th>메시지 유형</th><th>최종행사명</th><th></th></tr></thead>
           <tbody>${issued.map((entry) => `<tr data-id="${entry.id}"${entry.vertical ? ' class="is-vertical"' : ''}>
             <td><code>${escapeHtml(entry.filename)}</code></td>
+            <td>${escapeHtml(entry.media) || '<span class="tool-blank">-</span>'}</td>
             <td>${escapeHtml(entry.type)}</td>
             <td class="tool-campaign">${escapeHtml(entry.campaign) || '<span class="tool-blank">-</span>'}</td>
             <td><div class="tool-row-actions">
@@ -1148,7 +1155,7 @@ if (filenameTool) {
 
     if (event.target.closest('.tool-reset')) {
       if (issued.length && !window.confirm(`입력값과 발번 목록 ${issuedCount()}건을 모두 지울까요?`)) return;
-      state = { date: '', channel: '', product: '', event: '', type: '', vertical: false };
+      state = { date: '', channel: '', product: '', event: '', media: '', type: '', vertical: false };
       issued = [];
       save();
       render();
@@ -1156,8 +1163,8 @@ if (filenameTool) {
     }
 
     if (event.target.closest('.tool-copy-all')) {
-      const header = ['파일명', '메시지 유형', '최종행사명'].join('\t');
-      const body = baseEntries().map((entry) => [entry.filename, entry.type, entry.campaign].join('\t'));
+      const header = ['파일명', '매체', '메시지 유형', '최종행사명'].join('\t');
+      const body = baseEntries().map((entry) => [entry.filename, entry.media || '', entry.type, entry.campaign].join('\t'));
       return copyText([header, ...body].join('\n'), event.target.closest('.tool-copy-all'));
     }
 
