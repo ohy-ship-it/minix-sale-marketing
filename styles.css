@@ -111,22 +111,20 @@ body:has(#creative-board:not([hidden])) .topbar{display:none}
 .week-add{display:flex;align-items:center;gap:6px;border:0;border-radius:6px;background:#2f86d9;color:#fff;padding:8px 12px;font:700 11px inherit;cursor:pointer}
 .week-add svg{width:13px}
 .week-table{width:100%;border-collapse:collapse;font-size:12px}
-.week-table th{padding:10px 12px;background:#faf8f4;border-bottom:1px solid #eee7dc;color:#8a8477;font-size:11px;font-weight:700;text-align:left}
+.week-table th{padding:8px 10px;background:#faf8f4;border-bottom:1px solid #eee7dc;color:#8a8477;font-size:11px;font-weight:700;text-align:left}
 .week-table th:first-child{border-radius:7px 0 0 0}
 .week-table th:last-child{border-radius:0 7px 0 0}
 .week-row{border-bottom:1px solid #f0efeb;cursor:pointer}
 .week-row:hover{background:#faf9f7}
 .week-row.is-editing{background:#f6f9fc;cursor:default}
-.week-table td{padding:11px 12px;vertical-align:middle}
+.week-table td{padding:8px 10px;vertical-align:middle}
 .week-month{font-weight:700;color:#20211e;white-space:nowrap}
 .week-count{color:#8c8c85;white-space:nowrap}
-/* 건수 이후 열은 내용만큼만 차지하고, 남는 폭은 월/주차가 쓴다 */
 /* 전역 td{text-align:center} 를 덮어 헤더와 값의 왼쪽을 맞춘다 */
 .week-table th,.week-table td{text-align:left;width:1%;white-space:nowrap}
-/* 남는 폭은 주차 열이 흡수해 건수/공유/삭제/수정은 오른쪽에 붙는다 */
-.week-table th:nth-child(3),.week-table td:nth-child(3){width:auto;min-width:110px}
-.week-table th:nth-child(1),.week-table td:nth-child(1){min-width:82px}
-.week-table th:nth-child(2),.week-table td:nth-child(2){min-width:64px}
+/* 남는 폭은 건수와 공유 사이의 빈 열이 흡수한다 (년도~건수는 붙고 버튼은 오른쪽) */
+.week-table th.week-spacer,.week-table td.week-spacer{width:auto;min-width:0;padding:0}
+.week-table th:nth-child(3),.week-table td:nth-child(3){min-width:64px}
 .week-share{display:inline-flex;align-items:center;gap:4px;vertical-align:middle;border:1px solid #e3e2dc;border-radius:6px;background:#fff;color:#555;font:600 11px inherit;padding:4px 8px;cursor:pointer}
 .week-share:hover{background:#f4f4f1}
 .week-share svg{width:12px}
@@ -158,7 +156,6 @@ body:has(#creative-board:not([hidden])) .topbar{display:none}
 
 .week-year{color:#8c8c85;white-space:nowrap}
 .week-table-wrap{overflow-x:auto}
-.week-table{min-width:640px}
 
 /* 보드의 SKU별 건수 */
 .sku-summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-bottom:10px;padding:9px 11px;border:1px solid #eeede8;border-radius:8px;background:#fcfcfa}
@@ -186,7 +183,6 @@ body:has(#creative-board:not([hidden])) .topbar{display:none}
   .peek-panel{padding:14px 14px 40px}
   .peek-row{grid-template-columns:1fr;gap:2px}
   .week-head{flex-wrap:wrap;gap:8px}
-  .week-table{min-width:520px}
   .week-table th:nth-child(3),.week-table td:nth-child(3){min-width:84px}
 }
 
@@ -219,4 +215,14 @@ body:has(#creative-board:not([hidden])) .topbar{display:none}
 
 /* 사이드바 메뉴가 한 글자씩 쪼개지지 않게 */
 .tree-group,.tree-item,.tree-link{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.week-table{min-width:560px}
+
+/* 표는 내용만큼만 넓게 (열 사이 빈 공간 제거) */
+.week-table{min-width:0}
+.week-table-wrap{max-width:100%}
+
+/* 편집 행의 월 / 주차 드롭다운 */
+
+/* 편집 행 입력칸은 내용 폭에 맞춘다 (셀이 내용 기준이라 100% 는 찌그러진다) */
+.week-input{width:auto;min-width:0}
+input.week-input{width:78px}
+select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}

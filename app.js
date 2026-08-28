@@ -79,9 +79,12 @@ if (creativeBoard) {
     mediaNotes: row.mediaNotes && typeof row.mediaNotes === 'object' ? { ...row.mediaNotes } : {},
   });
 
+  const MONTH_CHOICES = Array.from({ length: 12 }, (unused, index) => `${index + 1}월`);
+  const WEEK_CHOICES = ['1주차', '2주차', '3주차', '4주차', '5주차'];
+
   const yearFor = (date) => `${date.getFullYear()}년`;
   const monthFor = (date) => `${date.getMonth() + 1}월`;
-  const weekNoFor = (date) => `${Math.ceil(date.getDate() / 7)}주차`;
+  const weekNoFor = (date) => WEEK_CHOICES[Math.min(Math.ceil(date.getDate() / 7), WEEK_CHOICES.length) - 1];
 
   const normalizeWeek = (week) => {
     // 예전 구조("8월 4주차" 한 덩어리)를 월/주차로 나눠 받는다
@@ -469,11 +472,12 @@ if (creativeBoard) {
   const WEEK_FACETS = [
     { key: 'year', label: '년도', icon: 'calendar-range', color: 'blue' },
     { key: 'month', label: '월', icon: 'calendar', color: 'default' },
-    { key: 'week', label: '주차', icon: 'calendar-days', color: 'orange' },
+    { key: 'week', label: '주차', icon: 'calendar-days', color: 'orange', fixed: WEEK_CHOICES },
   ];
   const weekFilter = Object.fromEntries(WEEK_FACETS.map((facet) => [facet.key, []]));
   const byNumber = (a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0);
-  const weekOptions = (key) => [...new Set(weeks.map((week) => week[key]).filter(Boolean))].sort(byNumber);
+  const weekOptions = (facet) => facet.fixed
+    || [...new Set(weeks.map((week) => week[facet.key]).filter(Boolean))].sort(byNumber);
   const anyWeekFilter = () => WEEK_FACETS.some((facet) => weekFilter[facet.key].length > 0);
   const filteredWeeks = () => (anyWeekFilter()
     ? weeks.filter((week) => WEEK_FACETS.every((facet) => !weekFilter[facet.key].length || weekFilter[facet.key].includes(week[facet.key])))
@@ -488,18 +492,19 @@ if (creativeBoard) {
       <div class="week-filters">
         ${WEEK_FACETS.map((facet) => `<div class="week-filter-row${weekFilter[facet.key].length ? ' is-active' : ''}">
           <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
-          <span class="filter-options">${weekOptions(facet.key).map((value) => `<button type="button" class="week-filter-chip chip chip-${facet.color}${weekFilter[facet.key].includes(value) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(value)}" aria-pressed="${weekFilter[facet.key].includes(value)}">${escapeHtml(value)}</button>`).join('')}</span>
+          <span class="filter-options">${weekOptions(facet).map((value) => `<button type="button" class="week-filter-chip chip chip-${facet.color}${weekFilter[facet.key].includes(value) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(value)}" aria-pressed="${weekFilter[facet.key].includes(value)}">${escapeHtml(value)}</button>`).join('')}</span>
         </div>`).join('')}
         ${anyWeekFilter() ? `<div class="filter-summary"><button type="button" class="week-filter-clear">전체 보기</button><span class="filter-count">${filteredWeeks().length}건 표시</span></div>` : ''}
       </div>
       <div class="week-table-wrap"><table class="week-table">
-        <thead><tr><th>년도</th><th>월</th><th>주차</th><th>건수</th><th>공유</th><th>삭제</th><th>수정</th></tr></thead>
+        <thead><tr><th>년도</th><th>월</th><th>주차</th><th>건수</th><th class="week-spacer"></th><th>공유</th><th>삭제</th><th>수정</th></tr></thead>
         <tbody>${filteredWeeks().map((week) => (week.id === editingWeekId ? `
           <tr class="week-row is-editing" data-week="${week.id}">
             <td><input class="week-input" data-field="year" value="${escapeHtml(week.year)}" placeholder="2026년"></td>
-            <td><input class="week-input" data-field="month" value="${escapeHtml(week.month)}" placeholder="8월"></td>
-            <td><input class="week-input" data-field="week" value="${escapeHtml(week.week)}" placeholder="4주차"></td>
+            <td><select class="week-input" data-field="month">${MONTH_CHOICES.map((name) => `<option${name === week.month ? ' selected' : ''}>${name}</option>`).join('')}</select></td>
+            <td><select class="week-input" data-field="week">${WEEK_CHOICES.map((name) => `<option${name === week.week ? ' selected' : ''}>${name}</option>`).join('')}</select></td>
             <td class="week-count">${skuCount(week)}건</td>
+            <td class="week-spacer"></td>
             <td colspan="3"><div class="week-edit-actions"><button type="button" class="week-save">저장</button><button type="button" class="week-cancel">취소</button></div></td>
           </tr>` : `
           <tr class="week-row" data-week="${week.id}">
@@ -507,10 +512,11 @@ if (creativeBoard) {
             <td class="week-month">${escapeHtml(week.month)}</td>
             <td><span class="chip chip-orange">${escapeHtml(week.week)}</span></td>
             <td class="week-count">${skuCount(week)}건</td>
+            <td class="week-spacer"></td>
             <td><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
             <td><button type="button" class="week-delete">삭제</button></td>
             <td><button type="button" class="week-edit" aria-label="수정"><i data-lucide="pencil"></i></button></td>
-          </tr>`)).join('') || '<tr class="week-empty"><td colspan="7">해당하는 주차가 없습니다.</td></tr>'}</tbody>
+          </tr>`)).join('') || '<tr class="week-empty"><td colspan="8">해당하는 주차가 없습니다.</td></tr>'}</tbody>
       </table></div>`;
     lucide.createIcons();
   };
