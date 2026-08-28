@@ -13,7 +13,8 @@ if (creativeBoard) {
     .replaceAll('네어드라이', '더 에어드라이');
   lucide.createIcons();
 
-  const savedRequests = JSON.parse(localStorage.getItem('minix-creative-requests') || '[]');
+  const storedRequests = localStorage.getItem('minix-creative-requests');
+  const savedRequests = JSON.parse(storedRequests || '[]');
   const columns = {
     요청: '.request-column',
     '진행 중': '.progress-column',
@@ -39,6 +40,20 @@ if (creativeBoard) {
     column.querySelector('.notion-column-title b').textContent = count;
   });
 
+  let suppressClick = false;
+  const attachCardHandlers = (card) => {
+    card.draggable = true;
+    card.addEventListener('click', () => { if (!suppressClick) openEditor(card); });
+    card.addEventListener('dragstart', () => card.classList.add('is-dragging'));
+    card.addEventListener('dragend', () => {
+      card.classList.remove('is-dragging');
+      suppressClick = true;
+      window.setTimeout(() => { suppressClick = false; }, 0);
+      saveRequests();
+      updateCounts();
+    });
+  };
+
   const addCard = ({ title, date: dueDate, product, assignee, status }) => {
     const column = creativeBoard.querySelector(columns[status] || columns.요청);
     const addButton = column.querySelector('.new-page');
@@ -49,10 +64,8 @@ if (creativeBoard) {
     card.dataset.product = product;
     card.dataset.assignee = assignee;
     card.innerHTML = `<h3>${title}</h3><p>${dueDate || '일정 미정'}</p><span class="setting">□ 세팅</span><div class="chips"><span>${product || '상품 미정'}</span><span>${assignee || '담당자 미정'}</span></div><small>방금 생성</small>`;
-    card.addEventListener('click', () => openEditor(card));
     column.insertBefore(card, addButton);
-    card.addEventListener('dragstart', () => card.classList.add('is-dragging'));
-    card.addEventListener('dragend', () => { card.classList.remove('is-dragging'); saveRequests(); updateCounts(); });
+    attachCardHandlers(card);
   };
 
   const form = document.createElement('form');
@@ -126,7 +139,6 @@ if (creativeBoard) {
       editingCard.dataset.assignee = request.assignee;
       editingCard.innerHTML = `<h3>${request.title}</h3><p>${request.date || '일정 미정'}</p><span class="setting">□ 세팅</span><div class="chips"><span>${request.product || '상품 미정'}</span><span>${request.assignee || '담당자 미정'}</span></div><small>수정됨</small>`;
       targetColumn.insertBefore(editingCard, targetColumn.querySelector('.new-page'));
-      editingCard.addEventListener('click', () => openEditor(editingCard));
     } else {
       addCard(request);
     }
@@ -136,10 +148,11 @@ if (creativeBoard) {
   });
   creativeBoard.querySelectorAll('.notion-card').forEach((card) => {
     card.classList.add('custom-request');
-    card.draggable = true;
-    card.addEventListener('click', () => openEditor(card));
-    card.addEventListener('dragstart', () => card.classList.add('is-dragging'));
-    card.addEventListener('dragend', () => { card.classList.remove('is-dragging'); saveRequests(); updateCounts(); });
+    const chips = card.querySelectorAll('.chips span');
+    card.dataset.date = card.querySelector('p').textContent;
+    card.dataset.product = chips[0]?.textContent || '';
+    card.dataset.assignee = chips[1]?.textContent || '';
+    attachCardHandlers(card);
   });
   creativeBoard.querySelectorAll('.notion-column').forEach((column) => {
     column.addEventListener('dragover', (event) => event.preventDefault());
@@ -151,6 +164,7 @@ if (creativeBoard) {
       updateCounts();
     });
   });
+  if (storedRequests) creativeBoard.querySelectorAll('.notion-card').forEach((card) => card.remove());
   savedRequests.forEach(addCard);
   updateCounts();
 }
