@@ -443,6 +443,17 @@ if (creativeBoard) {
   });
 
   let editingWeekId = null;
+  const weekFilter = { month: [], week: [] };
+  const WEEK_FACETS = [
+    { key: 'month', label: '월', icon: 'calendar', color: 'default' },
+    { key: 'week', label: '주차', icon: 'calendar-days', color: 'orange' },
+  ];
+  const byNumber = (a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0);
+  const weekOptions = (key) => [...new Set(weeks.map((week) => week[key]).filter(Boolean))].sort(byNumber);
+  const anyWeekFilter = () => WEEK_FACETS.some((facet) => weekFilter[facet.key].length > 0);
+  const filteredWeeks = () => (anyWeekFilter()
+    ? weeks.filter((week) => WEEK_FACETS.every((facet) => !weekFilter[facet.key].length || weekFilter[facet.key].includes(week[facet.key])))
+    : weeks);
 
   const renderWeekList = () => {
     weekList.innerHTML = `
@@ -450,21 +461,28 @@ if (creativeBoard) {
         <h2>주간 리포트</h2>
         <button type="button" class="week-add"><i data-lucide="plus"></i>주간 리포트 추가</button>
       </div>
+      <div class="week-filters">
+        ${WEEK_FACETS.map((facet) => `<div class="week-filter-row${weekFilter[facet.key].length ? ' is-active' : ''}">
+          <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
+          ${weekOptions(facet.key).map((value) => `<button type="button" class="week-filter-chip chip chip-${facet.color}${weekFilter[facet.key].includes(value) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(value)}" aria-pressed="${weekFilter[facet.key].includes(value)}">${escapeHtml(value)}</button>`).join('')}
+        </div>`).join('')}
+        ${anyWeekFilter() ? `<div class="filter-summary"><button type="button" class="week-filter-clear">전체 보기</button><span class="filter-count">${filteredWeeks().length}건 표시</span></div>` : ''}
+      </div>
       <table class="week-table">
         <thead><tr><th>월</th><th>주차</th><th>공유링크</th><th></th></tr></thead>
-        <tbody>${weeks.map((week) => (week.id === editingWeekId ? `
+        <tbody>${filteredWeeks().map((week) => (week.id === editingWeekId ? `
           <tr class="week-row is-editing" data-week="${week.id}">
             <td><input class="week-input" data-field="month" value="${escapeHtml(week.month)}" placeholder="8월"></td>
             <td><input class="week-input" data-field="week" value="${escapeHtml(week.week)}" placeholder="4주차"></td>
-            <td class="week-share-cell">${escapeHtml(shareLink(week))}</td>
+            <td class="week-share-cell"><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
             <td class="week-actions"><button type="button" class="week-save">저장</button><button type="button" class="week-cancel">취소</button></td>
           </tr>` : `
           <tr class="week-row" data-week="${week.id}">
             <td class="week-month">${escapeHtml(week.month)}</td>
             <td><span class="chip chip-orange">${escapeHtml(week.week)}</span><small>${week.rows.length}건</small></td>
-            <td class="week-share-cell"><a class="week-share-link" href="${escapeHtml(shareLink(week))}">${escapeHtml(shareLink(week))}</a><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
+            <td class="week-share-cell"><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
             <td class="week-actions"><button type="button" class="week-edit" aria-label="수정"><i data-lucide="pencil"></i></button><button type="button" class="week-delete">삭제</button></td>
-          </tr>`)).join('')}</tbody>
+          </tr>`)).join('') || '<tr class="week-empty"><td colspan="4">해당하는 주차가 없습니다.</td></tr>'}</tbody>
       </table>`;
     lucide.createIcons();
   };
@@ -511,7 +529,20 @@ if (creativeBoard) {
       done();
       return;
     }
-    if (event.target.closest('.week-share-link')) return;
+    const facetButton = event.target.closest('.week-filter-chip');
+    if (facetButton) {
+      const { facet, value } = facetButton.dataset;
+      weekFilter[facet] = weekFilter[facet].includes(value)
+        ? weekFilter[facet].filter((entry) => entry !== value)
+        : [...weekFilter[facet], value];
+      renderWeekList();
+      return;
+    }
+    if (event.target.closest('.week-filter-clear')) {
+      WEEK_FACETS.forEach((facet) => { weekFilter[facet.key] = []; });
+      renderWeekList();
+      return;
+    }
     const rowElement = event.target.closest('.week-row');
     if (!rowElement) return;
     const week = weeks.find((entry) => entry.id === rowElement.dataset.week);
