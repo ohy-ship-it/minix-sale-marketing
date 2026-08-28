@@ -757,6 +757,7 @@ document.querySelectorAll('.tree-group').forEach((group) => {
 const VIEWS = {
   '광고소재 기획': { section: '#creative-board', hash: '#creative-planning' },
   '광고소재 파일명': { section: '#filename-tool', hash: '#filename' },
+  '광고소재 검수': { section: '#creative-checker', hash: '#creative-check' },
 };
 const DASHBOARD_PARTS = ['.content-tabs', '.target-section', '.channel-section', '.notes-section'];
 
@@ -774,6 +775,18 @@ document.querySelectorAll('[data-view]').forEach((item) => {
     history.replaceState(null, '', view ? (keepDetail ? location.hash : view.hash) : '#dashboard');
   });
 });
+
+// 검수 화면은 처음 열릴 때만 iframe 을 불러온다 (서버가 잠들어 있어 첫 로딩이 느리다)
+const creativeChecker = document.querySelector('#creative-checker');
+if (creativeChecker) {
+  const frame = creativeChecker.querySelector('iframe');
+  const loadFrame = () => { if (!frame.getAttribute('src')) frame.src = frame.dataset.src; };
+  new MutationObserver(() => { if (!creativeChecker.hidden) loadFrame(); })
+    .observe(creativeChecker, { attributes: true, attributeFilter: ['hidden'] });
+  if (!creativeChecker.hidden) loadFrame();
+  creativeChecker.querySelector('.checker-reload').addEventListener('click', () => { frame.src = frame.dataset.src; });
+  creativeChecker.querySelector('.checker-open').addEventListener('click', () => window.open(frame.dataset.src, '_blank', 'noopener'));
+}
 
 const openedView = Object.entries(VIEWS).find(([, entry]) => window.location.hash.startsWith(entry.hash));
 if (openedView) document.querySelector(`button[data-view='${openedView[0]}']`)?.click();
