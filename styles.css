@@ -263,6 +263,7 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .board-summaries .sku-summary:last-child{margin-bottom:0}
 
 /* 매체 칸 삭제 */
-.media-remove{display:inline-flex;align-items:center;border:0;background:none;color:#00000038;padding:2px;margin-left:2px;cursor:pointer;border-radius:4px}
+/* 삭제 버튼은 칸 오른쪽 끝에 */
+.media-remove{display:inline-flex;align-items:center;border:0;background:none;color:#00000038;padding:2px;margin-left:auto;cursor:pointer;border-radius:4px}
 .media-remove:hover{color:#d44c47;background:#ffffffb3}
 .media-remove svg{width:13px}
