@@ -866,6 +866,10 @@ if (filenameTool) {
   const CHANNELS = ['네이버', '오늘의집', '카카오', 'CJ', 'G마켓', '29CM', '컬리', '이마트', '11번가',
     '하이마트', '전자랜드', '현대홈쇼핑', '롯데홈쇼핑', '롯데', '쿠팡', '자사몰', '공구', '오프라인', '이벤트', 'KOL 라이브'];
 
+  // 시트의 행사명에 쓰인 제품 토큰과 제품 코드표를 합친 목록
+  const PRODUCTS = ['더플렌더MAX', '더플렌더mini', '더플렌더', '더플렌더PLUS', '더슬림', '더시프트', '더에어드라이',
+    '식기세척기', '건조기', '건조기필터', '건조기시트', '하드필터', '하드락필터', '푸드컨테이너', '식기세제', '악세사리'];
+
   const VERTICAL_SUFFIX = '(세로)';
   const STORAGE_KEY = 'minix-filename-tool-v3';
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -875,7 +879,7 @@ if (filenameTool) {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   };
 
-  const defaults = { date: todayIso(), channel: CHANNELS[0], event: '', type: MESSAGE_TYPES[0][0] };
+  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', type: MESSAGE_TYPES[0][0] };
   let state = { ...defaults };
   let issued = [];
   try {
@@ -892,11 +896,11 @@ if (filenameTool) {
 
   const codeOf = (typeName) => (MESSAGE_TYPES.find(([name]) => name === typeName) || [, ''])[1];
 
-  // 최종행사명 = 행사일자(YYMMDD) + 행사채널 + 행사명
+  // 최종행사명 = 행사일자(YYMMDD) + 상품명 + 행사채널 + 행사명 (시트 표기 순서)
   const finalName = () => {
     const [year, month, day] = (state.date || '').split('-');
     const stamp = year && month && day ? `${year.slice(2)}${month}${day}` : '';
-    return [stamp, state.channel, state.event.trim()].filter(Boolean).join('_');
+    return [stamp, state.product, state.channel, state.event.trim()].filter(Boolean).join('_');
   };
 
   // 파일명 = 메시지코드-순번 (시트의 마지막 번호에서 이어서)
@@ -942,6 +946,7 @@ if (filenameTool) {
         <div class="tool-grid">
           <label>행사일자<input type="date" data-field="date" value="${escapeHtml(state.date)}"></label>
           <label>행사채널<select data-field="channel"><option value=""${state.channel ? '' : ' selected'}>선택 안 함</option>${CHANNELS.map((value) => `<option${value === state.channel ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
+          <label>상품명<select data-field="product"><option value=""${state.product ? '' : ' selected'}>선택 안 함</option>${PRODUCTS.map((value) => `<option${value === state.product ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
           <label class="tool-wide">행사명<input type="text" data-field="event" value="${escapeHtml(state.event)}" placeholder="예: 음쓰해방위크"></label>
         </div>
         <div class="tool-grid tool-grid-second">
@@ -984,7 +989,7 @@ if (filenameTool) {
 
       <div class="tool-footer">
         <button type="button" class="tool-reset"><i data-lucide="eraser"></i>전체 지우기</button>
-        <small>행사일자 · 행사채널 · 행사명 · 메시지 유형을 비웁니다. 발번 목록은 그대로 둡니다.</small>
+        <small>행사일자 · 행사채널 · 상품명 · 행사명 · 메시지 유형을 비웁니다. 발번 목록은 그대로 둡니다.</small>
       </div>`;
     lucide.createIcons();
   };
@@ -1030,7 +1035,7 @@ if (filenameTool) {
     if (event.target.closest('.tool-add')) return issuePair();
 
     if (event.target.closest('.tool-reset')) {
-      state = { date: '', channel: '', event: '', type: '' };
+      state = { date: '', channel: '', product: '', event: '', type: '' };
       save();
       render();
       return;
