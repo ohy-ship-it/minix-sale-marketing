@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>minix 마케팅 대시보드</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">m</span><div><strong>minix</strong><small>통합 워크스페이스</small></div></div>
+    <nav class="tree-nav" aria-label="주 메뉴">
+      <button class="tree-group is-open" type="button"><span>퍼포먼스</span><i data-lucide="chevron-down"></i></button>
+      <div class="tree-children">
+        <button class="tree-item is-active" type="button" data-view="행사별 성과"><i data-lucide="calendar-days"></i>행사별 성과</button>
+        <button class="tree-item" type="button" data-view="매체별 성과"><i data-lucide="chart-no-axes-combined"></i>매체별 성과</button>
+        <button class="tree-item" type="button" data-view="SKU별 성과"><i data-lucide="boxes"></i>SKU별 성과</button>
+      </div>
+      <button class="tree-group is-open" type="button"><span>콘텐츠</span><i data-lucide="chevron-down"></i></button>
+      <div class="tree-children">
+        <button class="tree-item" type="button" data-view="광고소재 기획"><i data-lucide="lightbulb"></i>광고소재 기획</button>
+        <button class="tree-item" type="button" data-view="광고소재 검수"><i data-lucide="clipboard-check"></i>광고소재 검수</button>
+      </div>
+      <button class="tree-link" type="button" data-view="KOL라이브"><i data-lucide="radio"></i><span>KOL라이브</span></button>
+      <button class="tree-group is-open" type="button"><span>오퍼레이션</span><i data-lucide="chevron-down"></i></button>
+      <div class="tree-children">
+        <button class="tree-item" type="button" data-view="주간미팅(w/ 세일즈팀)"><i data-lucide="messages-square"></i>주간미팅(w/ 세일즈팀)</button>
+        <button class="tree-item" type="button" data-view="온보딩 자료"><i data-lucide="book-open-check"></i>온보딩 자료</button>
+      </div>
+    </nav>
+    <div class="sidebar-footer"><div><span class="status-dot"></span> 11명 접속 중</div><small>세일즈 · 마케팅 · v1.0</small></div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="page-title"><span class="title-icon"><i data-lucide="chart-no-axes-column-increasing"></i></span><h1 id="page-heading">행사별 성과</h1></div>
+      <div class="top-actions"><select id="month-select" aria-label="조회 월"><option>26년 8월</option><option>26년 7월</option><option>26년 6월</option></select><span class="updated"><span class="status-dot"></span>진행중 <b>갱신 2026. 8. 28. 오후 5:02:31</b></span><button class="refresh-button" id="refresh-button" type="button"><i data-lucide="refresh-cw"></i>새로고침</button></div>
+    </header>
+
+    <section class="content">
+      <div class="content-tabs"><button class="tab active" type="button">대시보드</button><button class="tab" type="button">마감예상</button></div>
+      <section class="section-block target-section"><div class="section-heading"><h2>월 목표 달성 진척</h2><span class="date-pill">2026. 8. 1 - 8. 27 기준</span></div>
+        <div class="target-grid">
+          <article class="target-panel"><div class="panel-label"><span class="blue-tag">매출</span><span class="orange-tag">광고비</span></div><div class="rings"><div class="ring-wrap"><div class="ring sales"><strong>72%</strong><small>목표 100%</small></div><b>기간대비 달성률</b></div><div class="ring-wrap"><div class="ring ads"><strong>61%</strong><small>목표 100%</small></div><b>기간대비 집행률</b></div></div><div class="metric-grid"><div><small>기간대비 목표 매출</small><strong>143.7억</strong></div><div><small>기간대비 목표 광고비</small><strong>21.4억</strong></div><div><small>당월 누적 매출</small><strong>103.5억</strong></div><div><small>집행 (매체기준)</small><strong>13.1억</strong></div><div><small>기간 목표 대비</small><strong class="negative">-40.2억</strong></div><div><small>기간 목표 대비</small><strong class="positive">-8.3억 <em>절감</em></strong></div></div></article>
+          <article class="target-panel forecast"><div class="panel-label"><span class="blue-tag">매출</span><span class="orange-tag">광고비</span></div><div class="rings"><div class="ring-wrap"><div class="ring forecast-sales"><strong>70%</strong><small>목표 100%</small></div><b>예상 달성률</b></div><div class="ring-wrap"><div class="ring ads"><strong>61%</strong><small>목표 100%</small></div><b>예상 집행률</b></div></div><div class="metric-grid"><div><small>월 전체 목표 매출</small><strong>165억</strong></div><div><small>월 전체 목표 광고비</small><strong>24.6억</strong></div><div><small>마감 예상 매출</small><strong>115.3억</strong></div><div><small>마감 예상 집행</small><strong>15.1억</strong></div><div><small>목표 대비 GAP</small><strong class="negative">-49.6억</strong></div><div><small>목표 대비 GAP</small><strong class="positive">-9.5억 <em>절감</em></strong></div></div></article>
+        </div>
+      </section>
+      <section class="section-block channel-section"><div class="section-heading"><h2>채널 × 제품 - 기간 대비 달성현황</h2><span class="date-pill">2026년 8월</span></div><div class="table-toolbar"><div class="segmented"><button class="selected" type="button">수량</button><button type="button">매출</button></div><button class="product-select" type="button"><i data-lucide="package"></i> 더클레딘MAX <i data-lucide="chevron-down"></i></button><span>1개 상품 · 채널 24개 · 27일</span></div><div class="table-wrap"><table><thead><tr><th>채널</th><th>목표 수량</th><th>달성 수량</th><th>기간대비 달성률</th><th>8/1</th><th>8/2</th><th>8/3</th><th>8/4</th><th>8/5</th><th>8/6</th><th>8/7</th><th>8/8</th><th>8/9</th><th>8/10</th></tr></thead><tbody><tr class="total"><td><span class="expand">▸</span>온라인 (15)</td><td>16,000</td><td>10,351</td><td><span class="rate">75%</span></td><td>226</td><td>391</td><td>250</td><td>1,358</td><td>182</td><td>1,973</td><td>177</td><td>175</td><td>156</td><td>172</td></tr><tr><td class="sub">쿠팡</td><td>5,500</td><td>4,156</td><td><span class="rate orange">87%</span></td><td>-</td><td>-</td><td>-</td><td>1,205</td><td>-</td><td>1,735</td><td>-</td><td>-</td><td>-</td><td>-</td></tr><tr><td class="sub">네이버</td><td>3,200</td><td>2,480</td><td><span class="rate">78%</span></td><td>110</td><td>187</td><td>140</td><td>153</td><td>89</td><td>238</td><td>121</td><td>95</td><td>78</td><td>102</td></tr></tbody></table></div></section>
+      <section class="section-block notes-section"><div class="section-heading"><h2>팀 메모</h2><span class="autosave-status" id="autosave-status"><i data-lucide="cloud-check"></i>자동 저장됨</span></div><textarea id="team-note" placeholder="회의 내용, 이슈, 다음 액션을 입력하세요."></textarea></section>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

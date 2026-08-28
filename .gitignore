@@ -1,0 +1,6 @@
+google_ads_refresh_token.txt
+client_secret_*.json
+.env
+env.txt
+__pycache__/
+.firebase/
