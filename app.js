@@ -212,6 +212,10 @@ if (creativeBoard) {
               <div class="peek-value">${propertyControl(row, prop)}</div>
             </div>`).join('')}
         </div>
+        <footer class="peek-footer">
+          <p class="peek-warning" hidden>제목을 입력해 주세요.</p>
+          <button type="button" class="peek-done">요청 완료하기</button>
+        </footer>
       </aside>`;
     peek.classList.add('is-open');
     lucide.createIcons();
@@ -281,6 +285,14 @@ if (creativeBoard) {
       save();
       renderBoard();
       return;
+    }
+    if (event.target.closest('.peek-done')) {
+      if (!row.name.trim()) {
+        peek.querySelector('.peek-warning').hidden = false;
+        peek.querySelector('.peek-title').focus();
+        return;
+      }
+      return closePeek();
     }
     const picker = event.target.closest('.peek-picker');
     if (picker) {

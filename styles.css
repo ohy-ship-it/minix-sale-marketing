@@ -79,3 +79,9 @@ body:has(#creative-board:not([hidden])) .topbar{display:none}
 .notion-card p:last-child{margin-bottom:0}
 .notion-card .chips{margin-bottom:6px}
 .card-key{flex:none;color:#a5a49f;font-weight:600}
+
+/* 상세 패널 하단 완료 버튼 */
+.peek-footer{position:sticky;bottom:-40px;margin-top:26px;padding:14px 0 4px;background:linear-gradient(#fff0,#fff 24%)}
+.peek-warning{margin:0 0 8px;font-size:11px;color:#d44c47}
+.peek-done{width:100%;border:0;border-radius:7px;background:#2f86d9;color:#fff;padding:11px;font:700 12px inherit;cursor:pointer}
+.peek-done:hover{background:#2a78c4}
