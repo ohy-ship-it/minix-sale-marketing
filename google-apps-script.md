@@ -16,38 +16,12 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
    >
    > - 메뉴가 안 보이면 시트가 **보기 전용**으로 열린 경우입니다. 편집 권한이 필요합니다.
    > - 계정 언어가 영어면 **Extensions → Apps Script** 입니다.
-3. 기본 코드를 지우고 아래를 붙여넣는다
+3. 기본 코드를 **모두 지우고**, 저장소의 [Code.gs](Code.gs) 파일 내용을 그대로 붙여넣는다
 
-```javascript
-var SHEET_ID = '1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E';
-var HEADER = ['파일명', '메시지 유형', '최종행사명', '발번시각'];
-
-function doPost(e) {
-  try {
-    var sheet = SpreadsheetApp.openById(SHEET_ID).getSheets()[0];
-    if (sheet.getLastRow() === 0) sheet.appendRow(HEADER);
-
-    var rows = JSON.parse(e.postData.contents).rows || [];
-    rows.forEach(function (row) {
-      sheet.appendRow([
-        row.filename || '',
-        row.type || '',
-        row.campaign || '',
-        row.createdAt ? new Date(row.createdAt) : new Date(),
-      ]);
-    });
-
-    return json({ ok: true, added: rows.length });
-  } catch (error) {
-    return json({ ok: false, error: String(error) });
-  }
-}
-
-function json(payload) {
-  return ContentService.createTextOutput(JSON.stringify(payload))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-```
+   > 이 문서(.md) 를 통째로 붙여넣으면 안 됩니다. 설명 문장 때문에
+   > `SyntaxError: Invalid or unexpected token` 이 납니다.
+   > **Code.gs 파일만 열어 전체 선택(Ctrl+A) → 복사** 하세요.
+   > 붙여넣은 뒤 첫 줄이 `var SHEET_ID = ...` 로 시작하면 제대로 된 것입니다.
 
 4. 저장(디스크 아이콘)
 
