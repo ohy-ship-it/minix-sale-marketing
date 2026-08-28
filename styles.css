@@ -284,10 +284,6 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .tool-grid label{display:block;font-size:11px;font-weight:700;color:#8c8c85}
 .tool-grid .tool-wide{grid-column:1/-1}
 .tool-grid input,.tool-grid select{display:block;width:100%;margin-top:5px;border:1px solid #e3e2dc;border-radius:6px;padding:8px;font:400 12px inherit;background:#fff;box-sizing:border-box}
-.tool-output{display:grid;gap:8px;margin-top:14px}
-.tool-result{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border:1px solid #eeede8;border-radius:8px;background:#fbfbf8;padding:9px 11px}
-.tool-result-label{flex:none;width:56px;font-size:11px;font-weight:700;color:#8c8c85}
-.tool-result code{flex:1;min-width:0;font:600 12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#20211e;word-break:break-all}
 .tool-copy,.tool-copy-all,.tool-clear{display:inline-flex;align-items:center;gap:4px;flex:none;border:1px solid #e3e2dc;border-radius:6px;background:#fff;color:#555;font:600 11px inherit;padding:6px 9px;cursor:pointer}
 .tool-copy:hover,.tool-copy-all:hover,.tool-clear:hover{background:#f4f4f1}
 .tool-copy svg,.tool-copy-all svg{width:13px}
@@ -306,10 +302,21 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .tool-table th{padding:8px 10px;background:#faf8f4;border-bottom:1px solid #eee7dc;color:#8a8477;font-size:11px;font-weight:700;text-align:left;white-space:nowrap}
 .tool-table td{padding:8px 10px;border-bottom:1px solid #f0efeb;text-align:left;vertical-align:middle}
 .tool-table code{font:700 12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#2f86d9}
-.tool-table .tool-message{min-width:180px}
 .tool-table .tool-campaign{color:#8c8c85;white-space:nowrap}
 .tool-remove{display:inline-flex;align-items:center;border:0;background:none;color:#00000038;padding:3px;border-radius:4px;cursor:pointer}
 .tool-remove:hover{color:#d44c47;background:#f4f4f1}
 .tool-remove svg{width:13px;display:block}
 .tool-empty{margin:0;padding:22px;text-align:center;color:#a5a49f;font-size:12px}
-@media(max-width:680px){.tool-result-label{width:auto}.tool-result code{flex:1 1 100%}}
+
+.tool-card h3{margin:0}
+.tool-issue{justify-content:space-between}
+.tool-row-actions{display:flex;gap:6px;justify-content:flex-end;white-space:nowrap}
+.tool-table tr.is-vertical code{color:#9065b0}
+/* 행사명은 공백이 없어 그대로 두면 표가 넘친다 */
+.tool-table .tool-campaign{white-space:normal;overflow-wrap:anywhere;color:#8c8c85}
+.tool-blank{color:#c9c8c3}
+
+/* 대시보드 표용 전역 규칙 table{min-width:1050px} 을 이 표에서는 푼다 */
+.tool-table{min-width:0}
+.tool-table th:nth-child(4),.tool-table td:nth-child(4){width:1%;white-space:nowrap}
+.tool-table td:nth-child(1) code{overflow-wrap:anywhere}

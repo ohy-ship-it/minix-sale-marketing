@@ -826,7 +826,7 @@ teamNote.addEventListener('input', () => {
 
 const filenameTool = document.querySelector('#filename-tool');
 if (filenameTool) {
-  // ── 구글시트 "[통합] 콘텐츠 T&D" 에서 옮겨온 표 ──────────────────────────
+  // ── 구글시트 "[통합] 콘텐츠 T&D" 의 메시지 유형 → 코드 표 ──────────────
   const MESSAGE_TYPES = [
     ['페인포인트', 'painpoint'], ['베네핏', 'benefit'], ['소셜프루프', 'social'],
     ['한정성/긴급성', 'urgency'], ['브랜딩', 'branding'], ['가격', 'price'],
@@ -850,7 +850,7 @@ if (filenameTool) {
     ['인기', 'trend'],
   ];
 
-  // 시트에 이미 발번된 마지막 순번 (여기부터 이어서 발번한다)
+  // 시트에 이미 발번된 마지막 순번 (여기서부터 이어 붙인다)
   const SEQ_BASE = [
     ['painpoint', 287], ['benefit', 535], ['social', 107], ['urgency', 448], ['branding', 38], ['price', 100],
     ['usp', 216], ['1miniute', 1], ['1miniute-secondaryUse', 1], ['live', 64], ['cjthemaisonoff', 1], ['promotion', 50],
@@ -862,41 +862,12 @@ if (filenameTool) {
     ['baby', 1], ['1person', 6], ['muse', 2], ['slogan', 1], ['1st', 1], ['trend', 1],
   ];
 
-  const PRODUCTS = [
-    { token: '더플렌더MAX', folder: '더 플렌더 MAX' },
-    { token: '더플렌더mini', folder: '더 플렌더 mini' },
-    { token: '더플렌더', folder: '더 플렌더' },
-    { token: '더플렌더PLUS', folder: '더 플렌더 PLUS' },
-    { token: '더슬림', folder: '더 슬림' },
-    { token: '더시프트', folder: '더 시프트' },
-    { token: '더에어드라이', folder: '더 에어드라이' },
-  ];
-
-  const CHANNELS = ['네이버', '오늘의집', '카카오', 'CJ', 'G마켓', '29CM', '컬리', '이마트', '11번가',
-    '하이마트', '전자랜드', '현대홈쇼핑', '롯데', '자사몰', '공구', '오프라인', '이벤트', 'KOL 라이브'];
-  const PHASES = ['', '당일', '사전', '사후', '상시', '라이브'];
-  const SLOTS = ['피드', '스마트채널', '쇼핑소식', '비즈보드', '비즈보드-썸네일', '비즈보드-오브젝트(누끼)',
-    '디스플레이', '쇼핑', '커뮤니케이션', '소재 전체'];
-  const ROOT = '/앳홈_공유폴더/3. 마케팅팀/미닉스/☆페이드 광고';
-
-  const STORAGE_KEY = 'minix-filename-tool-v1';
+  const VERTICAL_SUFFIX = '(세로)';
+  const STORAGE_KEY = 'minix-filename-tool-v2';
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `f-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
-  const today = new Date();
-  const iso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-
-  const defaults = {
-    date: iso(today),
-    product: '더플렌더MAX',
-    channel: '네이버',
-    event: '',
-    phase: '',
-    slot: '피드',
-    type: MESSAGE_TYPES[0][0],
-    message: '',
-  };
-
+  const defaults = { type: MESSAGE_TYPES[0][0], campaign: '' };
   let state = { ...defaults };
   let issued = [];
   try {
@@ -912,21 +883,6 @@ if (filenameTool) {
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify({ state, issued }));
 
   const codeOf = (typeName) => (MESSAGE_TYPES.find(([name]) => name === typeName) || [, ''])[1];
-  const folderOf = (token) => (PRODUCTS.find((p) => p.token === token) || {}).folder || token;
-
-  // 행사명 = YYMMDD_제품_채널_행사명(구분)
-  const campaignName = () => {
-    const [year, month, day] = state.date.split('-');
-    const stamp = `${year.slice(2)}${month}${day}`;
-    const parts = [stamp, state.product, state.channel, state.event.trim()].filter(Boolean);
-    return parts.join('_') + (state.phase ? `(${state.phase})` : '');
-  };
-
-  // 파일위치 = /앳홈_공유폴더/3. 마케팅팀/미닉스/☆페이드 광고 (YY년)/제품/M월/행사명
-  const folderPath = () => {
-    const [year, month] = state.date.split('-');
-    return `${ROOT} (${year.slice(2)}년)/${folderOf(state.product)}/${Number(month)}월/${campaignName()}`;
-  };
 
   // 파일명 = 메시지코드-순번 (시트의 마지막 번호에서 이어서)
   const nextSequence = (code) => {
@@ -935,76 +891,45 @@ if (filenameTool) {
     return Math.max(base, ...mine, 0) + 1;
   };
 
-  const optionTags = (values, selected) => values
-    .map((value) => `<option value="${escapeHtml(value)}"${value === selected ? ' selected' : ''}>${escapeHtml(value || '없음')}</option>`)
-    .join('');
-
   const render = () => {
-    const name = campaignName();
-    const path = folderPath();
     const code = codeOf(state.type);
-    const preview = `${code}-${nextSequence(code)}`;
+    const seq = nextSequence(code);
+    const preview = `${code}-${seq}`;
     filenameTool.innerHTML = `
       <div class="tool-head">
-        <div>
-          <h2>광고소재 파일명</h2>
-          <p>행사 정보를 넣으면 행사명 · 파일위치가 만들어지고, 메시지마다 고유 파일명을 이어서 발번합니다.</p>
-        </div>
+        <h2>광고소재 파일명</h2>
+        <p>메시지 유형과 행사명을 넣으면 파일명이 발번됩니다. 가로용과 <b>${escapeHtml(VERTICAL_SUFFIX)}</b> 두 개가 한 쌍으로 만들어집니다.</p>
       </div>
 
       <section class="tool-card">
-        <h3>1. 행사 정보</h3>
         <div class="tool-grid">
-          <label>날짜<input type="date" data-field="date" value="${escapeHtml(state.date)}"></label>
-          <label>제품<select data-field="product">${optionTags(PRODUCTS.map((p) => p.token), state.product)}</select></label>
-          <label>채널<select data-field="channel">${optionTags(CHANNELS, state.channel)}</select></label>
-          <label>구분<select data-field="phase">${optionTags(PHASES, state.phase)}</select></label>
-          <label class="tool-wide">행사명<input type="text" data-field="event" value="${escapeHtml(state.event)}" placeholder="예: 음쓰해방위크"></label>
-        </div>
-        <div class="tool-output">
-          <div class="tool-result">
-            <span class="tool-result-label">행사명</span>
-            <code data-copy-text="${escapeHtml(name)}">${escapeHtml(name)}</code>
-            <button type="button" class="tool-copy" data-copy="${escapeHtml(name)}"><i data-lucide="copy"></i>복사</button>
-          </div>
-          <div class="tool-result">
-            <span class="tool-result-label">파일위치</span>
-            <code data-copy-text="${escapeHtml(path)}">${escapeHtml(path)}</code>
-            <button type="button" class="tool-copy" data-copy="${escapeHtml(path)}"><i data-lucide="copy"></i>복사</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="tool-card">
-        <h3>2. 소재 파일명 발번</h3>
-        <div class="tool-grid">
-          <label>구좌<select data-field="slot">${optionTags(SLOTS, state.slot)}</select></label>
-          <label>메시지 유형<select data-field="type">${optionTags(MESSAGE_TYPES.map(([n]) => n), state.type)}</select></label>
-          <label class="tool-wide">메시지<input type="text" data-field="message" value="${escapeHtml(state.message)}" placeholder="예: 최대 43% 할인 타임딜"></label>
+          <label>메시지 유형<select data-field="type">${MESSAGE_TYPES.map(([name]) => `<option${name === state.type ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
+          <label class="tool-wide">행사명<input type="text" data-field="campaign" value="${escapeHtml(state.campaign)}" placeholder="예: 260827_더플렌더mini_네이버_음쓰해방위크(당일)"></label>
         </div>
         <div class="tool-issue">
-          <span>다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code></span>
+          <span>다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code> <code class="tool-next">${escapeHtml(preview + VERTICAL_SUFFIX)}</code></span>
           <button type="button" class="tool-add"><i data-lucide="plus"></i>발번하기</button>
         </div>
       </section>
 
       <section class="tool-card">
         <div class="tool-list-head">
-          <h3>3. 발번 목록 <small>${issued.length}건</small></h3>
+          <h3>발번 목록 <small>${issued.length}건</small></h3>
           <div class="tool-list-actions">
             <button type="button" class="tool-copy-all"${issued.length ? '' : ' disabled'}><i data-lucide="clipboard-list"></i>표로 복사</button>
             <button type="button" class="tool-clear"${issued.length ? '' : ' disabled'}>전체 비우기</button>
           </div>
         </div>
         ${issued.length ? `<div class="tool-table-wrap"><table class="tool-table">
-          <thead><tr><th>파일명</th><th>구좌</th><th>메시지 유형</th><th>메시지</th><th>행사명</th><th></th></tr></thead>
-          <tbody>${issued.map((entry) => `<tr data-id="${entry.id}">
+          <thead><tr><th>파일명</th><th>메시지 유형</th><th>행사명</th><th></th></tr></thead>
+          <tbody>${issued.map((entry) => `<tr data-id="${entry.id}"${entry.vertical ? ' class="is-vertical"' : ''}>
             <td><code>${escapeHtml(entry.filename)}</code></td>
-            <td>${escapeHtml(entry.slot)}</td>
             <td>${escapeHtml(entry.type)}</td>
-            <td class="tool-message">${escapeHtml(entry.message)}</td>
-            <td class="tool-campaign">${escapeHtml(entry.campaign)}</td>
-            <td><button type="button" class="tool-remove" aria-label="삭제"><i data-lucide="x"></i></button></td>
+            <td class="tool-campaign">${escapeHtml(entry.campaign) || '<span class="tool-blank">-</span>'}</td>
+            <td><div class="tool-row-actions">
+              <button type="button" class="tool-copy" data-copy="${escapeHtml(entry.filename)}"><i data-lucide="copy"></i>복사</button>
+              <button type="button" class="tool-remove" aria-label="삭제"><i data-lucide="x"></i></button>
+            </div></td>
           </tr>`).join('')}</tbody>
         </table></div>` : '<p class="tool-empty">아직 발번한 파일명이 없습니다.</p>'}
       </section>`;
@@ -1022,25 +947,17 @@ if (filenameTool) {
     done();
   };
 
+  // 텍스트 칸은 input 에서만 반영한다. change 에서 다시 그리면 blur 직후의 클릭이 삼켜진다.
   filenameTool.addEventListener('input', (event) => {
     const field = event.target.closest('[data-field]');
-    if (!field || field.tagName === 'SELECT' || field.type === 'date') return;
+    if (!field || field.tagName === 'SELECT') return;
     state[field.dataset.field] = field.value;
     save();
-    const name = campaignName();
-    const path = folderPath();
-    filenameTool.querySelectorAll('[data-copy-text]').forEach((node, index) => {
-      const value = index === 0 ? name : path;
-      node.textContent = value;
-      node.dataset.copyText = value;
-      node.nextElementSibling.dataset.copy = value;
-    });
   });
 
   filenameTool.addEventListener('change', (event) => {
     const field = event.target.closest('[data-field]');
-    // 텍스트 칸은 input 에서 이미 반영한다. 여기서 다시 그리면 blur 직후의 클릭이 삼켜진다.
-    if (!field || (field.tagName !== 'SELECT' && field.type !== 'date')) return;
+    if (!field || field.tagName !== 'SELECT') return;
     state[field.dataset.field] = field.value;
     save();
     render();
@@ -1053,26 +970,20 @@ if (filenameTool) {
     if (event.target.closest('.tool-add')) {
       const code = codeOf(state.type);
       const seq = nextSequence(code);
-      issued.unshift({
-        id: newId(),
-        filename: `${code}-${seq}`,
-        code,
-        seq,
-        slot: state.slot,
-        type: state.type,
-        message: state.message.trim(),
-        campaign: campaignName(),
-        path: folderPath(),
-      });
-      state.message = '';
+      const base = { code, seq, type: state.type, campaign: state.campaign.trim() };
+      issued = [
+        { ...base, id: newId(), filename: `${code}-${seq}` },
+        { ...base, id: newId(), filename: `${code}-${seq}${VERTICAL_SUFFIX}`, vertical: true },
+        ...issued,
+      ];
       save();
       render();
       return;
     }
 
     if (event.target.closest('.tool-copy-all')) {
-      const header = ['파일명', '구좌', '메시지 유형', '메시지', '행사명', '파일위치'].join('\t');
-      const body = issued.map((entry) => [entry.filename, entry.slot, entry.type, entry.message, entry.campaign, entry.path].join('\t'));
+      const header = ['파일명', '메시지 유형', '행사명'].join('\t');
+      const body = issued.map((entry) => [entry.filename, entry.type, entry.campaign].join('\t'));
       return copyText([header, ...body].join('\n'), event.target.closest('.tool-copy-all'));
     }
 
