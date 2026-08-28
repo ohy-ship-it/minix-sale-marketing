@@ -52,3 +52,20 @@ body:has(#creative-board:not([hidden])) .content-tabs{display:none}
 .peek-option:hover{background:#f4f4f1}
 .peek-option.is-selected::after{content:'✓';margin-left:auto;color:#8c8c85;font-size:11px}
 @media(max-width:900px){.peek-panel{width:100vw;padding:14px 18px 40px}.peek-row{grid-template-columns:104px 1fr}}
+
+/* 보드 화면에서는 상단 헤더를 감춘다 */
+body:has(#creative-board:not([hidden])) .topbar{display:none}
+
+/* 담당자 필터 */
+.owner-filter{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:-4px 0 12px}
+.owner-filter-label{display:flex;align-items:center;gap:6px;margin-right:2px;font-size:11px;font-weight:700;color:#8c8c85}
+.owner-filter-label svg{width:14px}
+.owner-chip{border:0;font:600 10px inherit;padding:5px 10px;cursor:pointer;transition:opacity .12s,box-shadow .12s}
+.owner-chip:hover{box-shadow:0 0 0 1.5px #20211e26}
+.owner-filter.is-active .owner-chip{opacity:.38}
+.owner-filter.is-active .owner-chip.is-on{opacity:1;box-shadow:0 0 0 1.5px #20211e59}
+.owner-clear{margin-left:4px;border:1px solid #e3e2dc;border-radius:5px;background:#fff;color:#555;font:600 10px inherit;padding:5px 9px;cursor:pointer}
+.owner-clear:hover{background:#f4f4f1}
+.owner-count{font-size:10px;color:#8c8c85}
+.chip-owner{cursor:pointer}
+.chip-owner:hover{box-shadow:0 0 0 1.5px #20211e33}

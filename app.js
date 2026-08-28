@@ -96,6 +96,7 @@ if (creativeBoard) {
     return date.end ? `${formatDay(date.start)} → ${formatDay(date.end)}` : formatDay(date.start);
   };
   const chip = (prop, value) => `<span class="chip chip-${colorOf(prop, value)}">${escapeHtml(value)}</span>`;
+  const ownerChip = (value) => `<span class="chip chip-${colorOf(propByKey.owners, value)} chip-owner" data-owner="${escapeHtml(value)}" role="button" tabindex="0" title="${escapeHtml(value)} 담당 카드만 보기">${escapeHtml(value)}</span>`;
 
   const board = document.createElement('div');
   board.className = 'notion-board';
@@ -103,18 +104,41 @@ if (creativeBoard) {
   peek.className = 'peek';
   creativeBoard.innerHTML = `
     <div class="notion-toolbar"><button class="board-view-button" type="button"><i data-lucide="columns-3"></i>보드 보기</button><div class="board-tools"><i data-lucide="list-filter"></i><i data-lucide="arrow-down-up"></i><i data-lucide="zap"></i><i data-lucide="wand-sparkles"></i><i data-lucide="search"></i><i data-lucide="sliders-horizontal"></i><button class="new-page-button" type="button"><i data-lucide="plus"></i>새로 만들기 <i data-lucide="chevron-down"></i></button></div></div>`;
+  const filters = document.createElement('div');
+  filters.className = 'owner-filter';
+  creativeBoard.appendChild(filters);
   creativeBoard.appendChild(board);
   creativeBoard.appendChild(peek);
 
   let searchTerm = '';
+  let ownerFilter = [];
   let sortMode = 'manual';
   let openId = null;
 
   const visibleRows = () => {
     const keyword = searchTerm.trim().toLowerCase();
-    if (!keyword) return rows;
-    return rows.filter((row) => [row.name, row.event, ...row.sku, ...row.owners, ...row.media, row.channel]
-      .join(' ').toLowerCase().includes(keyword));
+    return rows.filter((row) => {
+      if (ownerFilter.length && !row.owners.some((owner) => ownerFilter.includes(owner))) return false;
+      if (!keyword) return true;
+      return [row.name, row.event, ...row.sku, ...row.owners, ...row.media, row.channel]
+        .join(' ').toLowerCase().includes(keyword);
+    });
+  };
+
+  const renderFilters = () => {
+    const shown = visibleRows().length;
+    filters.classList.toggle('is-active', ownerFilter.length > 0);
+    filters.innerHTML = `<span class="owner-filter-label"><i data-lucide="users"></i>담당자</span>`
+      + OWNER_OPTIONS.map(([name, color]) => `<button type="button" class="owner-chip chip chip-${color}${ownerFilter.includes(name) ? ' is-on' : ''}" data-filter="${escapeHtml(name)}" aria-pressed="${ownerFilter.includes(name)}">${escapeHtml(name)}</button>`).join('')
+      + (ownerFilter.length || searchTerm.trim()
+        ? `<button type="button" class="owner-clear">전체 보기</button><span class="owner-count">${shown}개 표시</span>`
+        : '');
+    lucide.createIcons();
+  };
+
+  const toggleOwner = (name) => {
+    ownerFilter = ownerFilter.includes(name) ? ownerFilter.filter((entry) => entry !== name) : [...ownerFilter, name];
+    renderBoard();
   };
 
   const renderBoard = () => {
@@ -129,7 +153,7 @@ if (creativeBoard) {
           <span class="setting">${row.done ? '☑' : '□'} 세팅</span>
           <div class="chips">${[
             ...row.sku.map((value) => chip(propByKey.sku, value)),
-            ...row.owners.map((value) => chip(propByKey.owners, value)),
+            ...row.owners.map((value) => ownerChip(value)),
           ].join('')}</div>
           <small>${escapeHtml(formatDate(row.dueDate))}</small>
         </article>`).join('');
@@ -140,6 +164,7 @@ if (creativeBoard) {
       </div>`;
     }).join('');
     lucide.createIcons();
+    renderFilters();
   };
 
   const closePeek = () => { openId = null; peek.innerHTML = ''; peek.classList.remove('is-open'); };
@@ -211,8 +236,20 @@ if (creativeBoard) {
       openPeek(row.id);
       return;
     }
+    const ownerTag = event.target.closest('[data-owner]');
+    if (ownerTag) return toggleOwner(ownerTag.dataset.owner);
     const card = event.target.closest('.notion-card');
     if (card) openPeek(card.dataset.id);
+  });
+
+  filters.addEventListener('click', (event) => {
+    const chipButton = event.target.closest('.owner-chip');
+    if (chipButton) return toggleOwner(chipButton.dataset.filter);
+    if (event.target.closest('.owner-clear')) {
+      ownerFilter = [];
+      searchTerm = '';
+      renderBoard();
+    }
   });
 
   let draggingId = null;
@@ -317,6 +354,12 @@ if (creativeBoard) {
           const keyword = window.prompt('카드 검색', searchTerm);
           if (keyword === null) return;
           searchTerm = keyword;
+          renderBoard();
+          return;
+        }
+        if (label === '필터') {
+          ownerFilter = [];
+          searchTerm = '';
           renderBoard();
           return;
         }
