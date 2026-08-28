@@ -30,9 +30,10 @@ if (creativeBoard) {
 
   const SCHEMA = [
     { key: 'name', name: '이름', type: 'title', icon: 'type' },
-    { key: 'status', name: '상태', type: 'status', icon: 'loader', options: STATUS_OPTIONS },
     { key: 'sku', name: 'SKU', type: 'multi_select', icon: 'tag', options: SKU_OPTIONS },
-    { key: 'channel', name: '행사채널', type: 'select', icon: 'circle-chevron-down', options: CHANNEL_OPTIONS },
+    { key: 'status', name: '상태', type: 'status', icon: 'loader', options: STATUS_OPTIONS },
+    // 행사채널은 값은 보관하되 화면에는 내보내지 않는다
+    { key: 'channel', name: '행사채널', type: 'select', icon: 'circle-chevron-down', options: CHANNEL_OPTIONS, hidden: true },
     { key: 'event', name: '행사명', type: 'text', icon: 'align-left' },
     { key: 'owners', name: '담당자', type: 'multi_select', icon: 'users', options: OWNER_OPTIONS },
     { key: 'eventDate', name: '행사일정', type: 'date', icon: 'calendar' },
@@ -41,7 +42,7 @@ if (creativeBoard) {
     { key: 'creativeCount', name: '소재 갯수', type: 'computed', icon: 'hash' },
   ];
   // 보드 카드에 노출할 속성 (요청받은 순서)
-  const CARD_PROPS = ['sku', 'channel', 'owners', 'dueDate', 'creativeCount'];
+  const CARD_PROPS = ['sku', 'owners', 'dueDate', 'creativeCount'];
   const propByKey = Object.fromEntries(SCHEMA.map((prop) => [prop.key, prop]));
   const colorOf = (prop, value) => (prop.options || []).find(([option]) => option === value)?.[1] || 'default';
 
@@ -188,12 +189,9 @@ if (creativeBoard) {
       || row[facet.key].some((value) => active[facet.key].includes(value))))
     : rows);
 
-  // 요청 건수는 카드의 SKU 수만큼 센다 (SKU 미지정 카드는 1건)
-  const weightOf = (row) => Math.max(row.sku.length, 1);
-
-  const renderTally = (label, icon, tally, colorFor) => {
+  const renderTally = (label, icon, tally, colorFor, emptyText = '요청 없음') => {
     const entries = [...tally.entries()];
-    if (!entries.length) return `<div class="sku-summary"><span class="sku-summary-label"><i data-lucide="${icon}"></i>${escapeHtml(label)}</span><span class="sku-summary-empty">요청 없음</span></div>`;
+    if (!entries.length) return `<div class="sku-summary"><span class="sku-summary-label"><i data-lucide="${icon}"></i>${escapeHtml(label)}</span><span class="sku-summary-empty">${escapeHtml(emptyText)}</span></div>`;
     const total = entries.reduce((sum, [, count]) => sum + count, 0);
     return `<div class="sku-summary">
       <span class="sku-summary-label"><i data-lucide="${icon}"></i>${escapeHtml(label)}</span>
@@ -214,19 +212,22 @@ if (creativeBoard) {
     return renderTally('SKU 건수', 'layers', ordered, (name) => (name === '미지정' ? 'gray' : colorOf(propByKey.sku, name)));
   };
 
-  // 행사별 건수 (행사명 기준, 같은 단위로 센다)
-  const renderEventSummary = () => {
+  // 담당자별 소재 갯수 (매체별 입력 합계를 담당자에게 붙인다)
+  const renderOwnerSummary = () => {
     const counts = new Map();
     visibleRows().forEach((row) => {
-      const name = row.event.trim() || '미지정';
-      counts.set(name, (counts.get(name) || 0) + weightOf(row));
+      const total = creativeTotal(row);
+      if (!total) return;
+      const names = row.owners.length ? row.owners : ['미지정'];
+      names.forEach((name) => counts.set(name, (counts.get(name) || 0) + total));
     });
-    const ordered = new Map([...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko')));
-    return renderTally('행사별 건수', 'calendar-check', ordered, (name) => (name === '미지정' ? 'gray' : 'default'));
+    const order = [...OWNER_OPTIONS.map(([name]) => name), '미지정'];
+    const ordered = new Map(order.filter((name) => counts.has(name)).map((name) => [name, counts.get(name)]));
+    return renderTally('담당자별 소재 갯수', 'users', ordered, (name) => (name === '미지정' ? 'gray' : colorOf(propByKey.owners, name)), '소재 갯수 입력 없음');
   };
 
   const renderFilters = () => {
-    filters.innerHTML = `<div class="board-summaries">${renderSkuSummary()}${renderEventSummary()}</div>` + FACETS.map((facet) => `<div class="filter-row${active[facet.key].length ? ' is-active' : ''}">
+    filters.innerHTML = `<div class="board-summaries">${renderSkuSummary()}${renderOwnerSummary()}</div>` + FACETS.map((facet) => `<div class="filter-row${active[facet.key].length ? ' is-active' : ''}">
         <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
         <span class="filter-options">${facet.options.map(([name, color]) => `<button type="button" class="filter-chip chip chip-${color}${active[facet.key].includes(name) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(name)}" aria-pressed="${active[facet.key].includes(name)}">${escapeHtml(name)}</button>`).join('')}</span>
       </div>`).join('')
@@ -346,7 +347,7 @@ if (creativeBoard) {
         </header>
         <textarea class="peek-title" rows="1" data-edit="name" placeholder="제목 없음">${escapeHtml(row.name)}</textarea>
         <div class="peek-props">
-          ${SCHEMA.filter((prop) => prop.key !== 'name').map((prop) => `
+          ${SCHEMA.filter((prop) => prop.key !== 'name' && !prop.hidden).map((prop) => `
             <div class="peek-row">
               <span class="peek-label"><i data-lucide="${prop.icon}"></i>${escapeHtml(prop.name)}</span>
               <div class="peek-value">${propertyControl(row, prop)}</div>
