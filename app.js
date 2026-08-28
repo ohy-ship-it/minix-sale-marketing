@@ -60,7 +60,7 @@ if (creativeBoard) {
     { name: '[당일] 현대홈쇼핑 MLC', event: '현대홈쇼핑 MLC', status: '전달 완료', media: ['메타', '브랜드검색'], channel: '현대홈쇼핑', owners: ['김진빈', '이정민'], eventDate: { start: '2026-08-31' }, dueDate: { start: '2026-08-27' }, sku: ['더 에어드라이'] },
   ];
 
-  const NOTE_TEMPLATE = '전달 희망일정 : \n소재 소구/ 갯수 : ';
+  const NOTE_TEMPLATE = '전달 희망일정 : \n소재 소구 : ';
   const STORAGE_KEY = 'minix-creative-weeks-v1';
   const LEGACY_KEY = 'minix-creative-requests-v2';
   const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -77,6 +77,7 @@ if (creativeBoard) {
     dueDate: row.dueDate?.start ? { start: row.dueDate.start, end: row.dueDate.end || '' } : null,
     sku: Array.isArray(row.sku) ? row.sku : [],
     mediaNotes: row.mediaNotes && typeof row.mediaNotes === 'object' ? { ...row.mediaNotes } : {},
+    mediaCounts: row.mediaCounts && typeof row.mediaCounts === 'object' ? { ...row.mediaCounts } : {},
   });
 
   const MONTH_CHOICES = Array.from({ length: 12 }, (unused, index) => `${index + 1}월`);
@@ -275,8 +276,11 @@ if (creativeBoard) {
     if (!row.media.length) return '';
     return `<div class="media-notes">
       ${row.media.map((name) => `<section class="media-note note-${colorOf(propByKey.media, name)}">
-        <span class="chip chip-${colorOf(propByKey.media, name)}">${escapeHtml(name)}</span>
-        <textarea class="media-note-input" data-note="${escapeHtml(name)}" rows="6" spellcheck="false">${escapeHtml(row.mediaNotes[name] ?? NOTE_TEMPLATE)}</textarea>
+        <div class="media-note-head">
+          <span class="chip chip-${colorOf(propByKey.media, name)}">${escapeHtml(name)}</span>
+          <label class="media-count">소재 갯수<input type="number" min="0" step="1" data-count="${escapeHtml(name)}" value="${escapeHtml(row.mediaCounts[name] ?? '')}" placeholder="-"></label>
+        </div>
+        <textarea class="media-note-input" data-note="${escapeHtml(name)}" rows="6" spellcheck="false" placeholder="요청 내용을 자유롭게 적어 주세요.">${escapeHtml(row.mediaNotes[name] ?? NOTE_TEMPLATE)}</textarea>
       </section>`).join('')}
     </div>`;
   };
@@ -418,6 +422,15 @@ if (creativeBoard) {
   });
 
   peek.addEventListener('input', (event) => {
+    const count = event.target.closest('[data-count]');
+    if (count) {
+      const row = rows.find((entry) => entry.id === openId);
+      if (!row) return;
+      if (count.value === '') delete row.mediaCounts[count.dataset.count];
+      else row.mediaCounts[count.dataset.count] = count.value;
+      save();
+      return;
+    }
     const note = event.target.closest('[data-note]');
     if (note) {
       const row = rows.find((entry) => entry.id === openId);
@@ -446,16 +459,6 @@ if (creativeBoard) {
       row[key] = next.start ? next : null;
     } else return;
     commit();
-  });
-
-  peek.addEventListener('focusout', (event) => {
-    const note = event.target.closest('[data-note]');
-    if (!note || note.value.trim()) return;
-    const row = rows.find((entry) => entry.id === openId);
-    if (!row) return;
-    row.mediaNotes[note.dataset.note] = NOTE_TEMPLATE;
-    note.value = NOTE_TEMPLATE;
-    save();
   });
 
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && openId) closePeek(); });
