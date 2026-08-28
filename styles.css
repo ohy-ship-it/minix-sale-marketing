@@ -340,3 +340,18 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .tool-vertical{border:1px solid #dbc9e6;border-radius:6px;background:#fff;color:#9065b0;font:600 11px inherit;padding:6px 9px;cursor:pointer;white-space:nowrap}
 .tool-vertical:hover{background:#f1eaf5}
 .tool-vertical:disabled{border-color:#eeede8;background:#fbfbf8;color:#b6b5b0;cursor:default}
+
+/* 세로형 체크박스 · 최종완료 */
+.tool-issue-actions{display:inline-flex;align-items:center;gap:10px}
+.tool-check{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#555;cursor:pointer}
+.tool-check input{width:15px;height:15px;margin:0;accent-color:#9065b0;cursor:pointer}
+.tool-submit{display:inline-flex;align-items:center;gap:5px;border:0;border-radius:6px;background:#448361;color:#fff;font:700 11px inherit;padding:8px 12px;cursor:pointer}
+.tool-submit:hover{background:#3b7255}
+.tool-submit:disabled{opacity:.45;cursor:default}
+.tool-submit.is-sending{opacity:.6}
+.tool-submit svg{width:13px}
+.tool-endpoint{display:inline-flex;align-items:center;border:1px solid #e3e2dc;border-radius:6px;background:#fff;color:#8c8c85;padding:8px;cursor:pointer}
+.tool-endpoint:hover{background:#f4f4f1;color:#555}
+.tool-endpoint svg{width:14px;display:block}
+.tool-sent{display:inline-flex;align-items:center;gap:3px;color:#448361;font-size:11px;font-weight:700;white-space:nowrap}
+.tool-sent svg{width:12px}

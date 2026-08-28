@@ -879,7 +879,10 @@ if (filenameTool) {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   };
 
-  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', type: MESSAGE_TYPES[0][0] };
+  const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E/edit';
+  const ENDPOINT_KEY = 'minix-filename-endpoint';
+
+  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', type: MESSAGE_TYPES[0][0], vertical: false };
   let state = { ...defaults };
   let issued = [];
   // 한 번 나간 번호는 목록에서 지워도 다시 쓰지 않는다
@@ -924,28 +927,75 @@ if (filenameTool) {
     const code = codeOf(state.type);
     if (!code) return;
     const seq = nextSequence(code);
-    issued = [{ id: newId(), code, seq, type: state.type, campaign: finalName(), filename: `${code}-${seq}` }, ...issued];
+    issued = [{
+      id: newId(),
+      code,
+      seq,
+      type: state.type,
+      campaign: finalName(),
+      filename: `${code}-${seq}${state.vertical ? VERTICAL_SUFFIX : ''}`,
+      vertical: Boolean(state.vertical),
+      createdAt: new Date().toISOString(),
+    }, ...issued];
     watermark[code] = Math.max(watermark[code] || 0, seq);
     save();
     render();
     scrollToList();
   };
 
-  const hasVertical = (entry) => issued.some((other) => other.vertical && other.filename === entry.filename + VERTICAL_SUFFIX);
+  // 건수는 번호 기준으로 센다 (같은 번호의 가로/세로는 한 건)
+  const issuedCount = () => new Set(issued.map((entry) => `${entry.code}-${entry.seq}`)).size;
+  const pending = () => issued.filter((entry) => !entry.sent);
 
-  const addVertical = (id) => {
-    const index = issued.findIndex((entry) => entry.id === id);
-    const entry = issued[index];
-    if (!entry || entry.vertical || hasVertical(entry)) return;
-    issued.splice(index + 1, 0, { ...entry, id: newId(), filename: entry.filename + VERTICAL_SUFFIX, vertical: true });
+  const rowsForSheet = (list) => list.map((entry) => ({
+    filename: entry.filename,
+    type: entry.type,
+    campaign: entry.campaign,
+    createdAt: entry.createdAt || '',
+  }));
+
+  const markSent = (list) => {
+    const ids = new Set(list.map((entry) => entry.id));
+    issued = issued.map((entry) => (ids.has(entry.id) ? { ...entry, sent: true } : entry));
     save();
     render();
+  };
+
+  const sendToSheet = (button) => {
+    const list = pending();
+    if (!list.length) return;
+    const endpoint = localStorage.getItem(ENDPOINT_KEY);
+
+    // 연동 전에는 표로 복사한 뒤 시트를 열어 붙여넣을 수 있게 한다
+    if (!endpoint) {
+      const header = ['파일명', '메시지 유형', '최종행사명'].join('\t');
+      copyText([header, ...list.map((entry) => [entry.filename, entry.type, entry.campaign].join('\t'))].join('\n'), button);
+      window.alert('구글시트 연동이 아직 설정되지 않았습니다.\n\n' + list.length + '건을 클립보드에 복사했습니다. 열리는 시트에 붙여넣어 주세요.\n(톱니바퀴 버튼에서 Apps Script URL을 넣으면 자동 적재됩니다)');
+      window.open(SHEET_URL, '_blank', 'noopener');
+      markSent(list);
+      return;
+    }
+
+    button.disabled = true;
+    button.classList.add('is-sending');
+    window.fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ rows: rowsForSheet(list) }),
+    })
+      .then((response) => (response.ok ? response.json().catch(() => ({ ok: true })) : Promise.reject(new Error('HTTP ' + response.status))))
+      .then(() => { markSent(list); })
+      .catch((error) => {
+        button.disabled = false;
+        button.classList.remove('is-sending');
+        window.alert('시트 적재에 실패했습니다.\n' + error.message + '\n\n톱니바퀴 버튼에서 Apps Script URL을 확인해 주세요.');
+      });
   };
 
   const render = () => {
     const code = codeOf(state.type);
     const seq = code ? nextSequence(code) : 0;
-    const preview = code ? `${code}-${seq}` : '';
+    const preview = code ? `${code}-${seq}${state.vertical ? VERTICAL_SUFFIX : ''}` : '';
     const name = finalName();
     filenameTool.innerHTML = `
       <div class="tool-head">
@@ -972,13 +1022,16 @@ if (filenameTool) {
           <span>${code
             ? `다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code>`
             : '메시지 유형을 고르면 발번됩니다.'}</span>
-          <button type="button" class="tool-add"${code ? '' : ' disabled'}><i data-lucide="plus"></i>같은 유형 하나 더</button>
+          <span class="tool-issue-actions">
+            <button type="button" class="tool-add"${code ? '' : ' disabled'}><i data-lucide="plus"></i>같은 유형 하나 더</button>
+            <label class="tool-check"><input type="checkbox" data-field="vertical"${state.vertical ? ' checked' : ''}>세로형</label>
+          </span>
         </div>
       </section>
 
       <section class="tool-card">
         <div class="tool-list-head">
-          <h3>발번 목록 <small>${issued.filter((entry) => !entry.vertical).length}건</small></h3>
+          <h3>발번 목록 <small>${issuedCount()}건</small></h3>
           <div class="tool-list-actions">
             <button type="button" class="tool-copy-all"${issued.length ? '' : ' disabled'}><i data-lucide="clipboard-list"></i>표로 복사</button>
             <button type="button" class="tool-clear"${issued.length ? '' : ' disabled'}>전체 비우기</button>
@@ -991,7 +1044,7 @@ if (filenameTool) {
             <td>${escapeHtml(entry.type)}</td>
             <td class="tool-campaign">${escapeHtml(entry.campaign) || '<span class="tool-blank">-</span>'}</td>
             <td><div class="tool-row-actions">
-              ${entry.vertical ? '' : `<button type="button" class="tool-vertical" data-id="${entry.id}"${hasVertical(entry) ? ' disabled' : ''}>${hasVertical(entry) ? '세로형 있음' : '세로형 추가'}</button>`}
+              ${entry.sent ? '<span class="tool-sent"><i data-lucide="check"></i>적재됨</span>' : ''}
               <button type="button" class="tool-copy" data-copy="${escapeHtml(entry.filename)}"><i data-lucide="copy"></i>복사</button>
               <button type="button" class="tool-remove" aria-label="삭제"><i data-lucide="x"></i></button>
             </div></td>
@@ -1001,6 +1054,8 @@ if (filenameTool) {
 
       <div class="tool-footer">
         <button type="button" class="tool-reset"><i data-lucide="eraser"></i>전체 지우기</button>
+        <button type="button" class="tool-submit"${pending().length ? '' : ' disabled'}><i data-lucide="upload"></i>최종완료${pending().length ? ` (${pending().length})` : ''}</button>
+        <button type="button" class="tool-endpoint" title="구글시트 연동 설정"><i data-lucide="settings"></i></button>
         <small>행사일자 · 행사채널 · 상품명 · 행사명 · 메시지 유형을 비웁니다. 발번 목록은 그대로 둡니다.</small>
       </div>`;
     lucide.createIcons();
@@ -1032,8 +1087,8 @@ if (filenameTool) {
 
   filenameTool.addEventListener('change', (event) => {
     const field = event.target.closest('[data-field]');
-    if (!field || (field.tagName !== 'SELECT' && field.type !== 'date')) return;
-    state[field.dataset.field] = field.value;
+    if (!field || (field.tagName !== 'SELECT' && field.type !== 'date' && field.type !== 'checkbox')) return;
+    state[field.dataset.field] = field.type === 'checkbox' ? field.checked : field.value;
     save();
     // 메시지 유형을 고르는 순간 발번한다
     if (field.dataset.field === 'type') issueOne();
@@ -1046,8 +1101,18 @@ if (filenameTool) {
 
     if (event.target.closest('.tool-add')) return issueOne();
 
-    const vertical = event.target.closest('.tool-vertical');
-    if (vertical) return addVertical(vertical.dataset.id);
+    if (event.target.closest('.tool-endpoint')) {
+      const current = localStorage.getItem(ENDPOINT_KEY) || '';
+      const next = window.prompt('구글시트에 적재할 Apps Script 웹 앱 URL을 넣어 주세요.\n(비우면 연동을 끕니다)', current);
+      if (next === null) return;
+      if (next.trim()) localStorage.setItem(ENDPOINT_KEY, next.trim());
+      else localStorage.removeItem(ENDPOINT_KEY);
+      render();
+      return;
+    }
+
+    const submit = event.target.closest('.tool-submit');
+    if (submit) return sendToSheet(submit);
 
     if (event.target.closest('.tool-reset')) {
       state = { date: '', channel: '', product: '', event: '', type: '' };
