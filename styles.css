@@ -335,3 +335,8 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .tool-reset svg{width:13px}
 .tool-footer small{color:#a5a49f;font-size:11px}
 .tool-add:disabled{opacity:.45;cursor:default;background:#9dc2e6}
+
+/* 세로형 추가 */
+.tool-vertical{border:1px solid #dbc9e6;border-radius:6px;background:#fff;color:#9065b0;font:600 11px inherit;padding:6px 9px;cursor:pointer;white-space:nowrap}
+.tool-vertical:hover{background:#f1eaf5}
+.tool-vertical:disabled{border-color:#eeede8;background:#fbfbf8;color:#b6b5b0;cursor:default}

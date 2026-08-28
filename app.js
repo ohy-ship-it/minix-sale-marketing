@@ -882,17 +882,21 @@ if (filenameTool) {
   const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', type: MESSAGE_TYPES[0][0] };
   let state = { ...defaults };
   let issued = [];
+  // 한 번 나간 번호는 목록에서 지워도 다시 쓰지 않는다
+  let watermark = {};
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (stored && typeof stored === 'object') {
       state = { ...defaults, ...(stored.state || {}) };
       issued = Array.isArray(stored.issued) ? stored.issued : [];
+      watermark = stored.watermark && typeof stored.watermark === 'object' ? { ...stored.watermark } : {};
     }
   } catch {
     state = { ...defaults };
     issued = [];
+    watermark = {};
   }
-  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify({ state, issued }));
+  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify({ state, issued, watermark }));
 
   const codeOf = (typeName) => (MESSAGE_TYPES.find(([name]) => name === typeName) || [, ''])[1];
 
@@ -907,7 +911,7 @@ if (filenameTool) {
   const nextSequence = (code) => {
     const base = (SEQ_BASE.find(([c]) => c === code) || [, 0])[1];
     const mine = issued.filter((entry) => entry.code === code).map((entry) => entry.seq);
-    return Math.max(base, ...mine, 0) + 1;
+    return Math.max(base, watermark[code] || 0, ...mine, 0) + 1;
   };
 
   const scrollToList = () => {
@@ -916,19 +920,26 @@ if (filenameTool) {
     try { head.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch { /* 스크롤 미지원 환경 */ }
   };
 
-  const issuePair = () => {
+  const issueOne = () => {
     const code = codeOf(state.type);
     if (!code) return;
     const seq = nextSequence(code);
-    const base = { code, seq, type: state.type, campaign: finalName() };
-    issued = [
-      { ...base, id: newId(), filename: `${code}-${seq}` },
-      { ...base, id: newId(), filename: `${code}-${seq}${VERTICAL_SUFFIX}`, vertical: true },
-      ...issued,
-    ];
+    issued = [{ id: newId(), code, seq, type: state.type, campaign: finalName(), filename: `${code}-${seq}` }, ...issued];
+    watermark[code] = Math.max(watermark[code] || 0, seq);
     save();
     render();
     scrollToList();
+  };
+
+  const hasVertical = (entry) => issued.some((other) => other.vertical && other.filename === entry.filename + VERTICAL_SUFFIX);
+
+  const addVertical = (id) => {
+    const index = issued.findIndex((entry) => entry.id === id);
+    const entry = issued[index];
+    if (!entry || entry.vertical || hasVertical(entry)) return;
+    issued.splice(index + 1, 0, { ...entry, id: newId(), filename: entry.filename + VERTICAL_SUFFIX, vertical: true });
+    save();
+    render();
   };
 
   const render = () => {
@@ -939,7 +950,7 @@ if (filenameTool) {
     filenameTool.innerHTML = `
       <div class="tool-head">
         <h2>광고소재 파일명</h2>
-        <p>행사 정보를 채우고 메시지 유형을 고르면 바로 발번되어 아래 목록에 쌓입니다. 가로용과 <b>${escapeHtml(VERTICAL_SUFFIX)}</b> 두 개가 한 쌍입니다.</p>
+        <p>행사 정보를 채우고 메시지 유형을 고르면 파일명이 발번됩니다. <b>${escapeHtml(VERTICAL_SUFFIX)}</b> 는 목록에서 <b>세로형 추가</b>를 누를 때만 붙습니다.</p>
       </div>
 
       <section class="tool-card">
@@ -959,7 +970,7 @@ if (filenameTool) {
         </div>
         <div class="tool-issue">
           <span>${code
-            ? `다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code> <code class="tool-next">${escapeHtml(preview + VERTICAL_SUFFIX)}</code>`
+            ? `다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code>`
             : '메시지 유형을 고르면 발번됩니다.'}</span>
           <button type="button" class="tool-add"${code ? '' : ' disabled'}><i data-lucide="plus"></i>같은 유형 하나 더</button>
         </div>
@@ -967,7 +978,7 @@ if (filenameTool) {
 
       <section class="tool-card">
         <div class="tool-list-head">
-          <h3>발번 목록 <small>${issued.length}건</small></h3>
+          <h3>발번 목록 <small>${issued.filter((entry) => !entry.vertical).length}건</small></h3>
           <div class="tool-list-actions">
             <button type="button" class="tool-copy-all"${issued.length ? '' : ' disabled'}><i data-lucide="clipboard-list"></i>표로 복사</button>
             <button type="button" class="tool-clear"${issued.length ? '' : ' disabled'}>전체 비우기</button>
@@ -980,6 +991,7 @@ if (filenameTool) {
             <td>${escapeHtml(entry.type)}</td>
             <td class="tool-campaign">${escapeHtml(entry.campaign) || '<span class="tool-blank">-</span>'}</td>
             <td><div class="tool-row-actions">
+              ${entry.vertical ? '' : `<button type="button" class="tool-vertical" data-id="${entry.id}"${hasVertical(entry) ? ' disabled' : ''}>${hasVertical(entry) ? '세로형 있음' : '세로형 추가'}</button>`}
               <button type="button" class="tool-copy" data-copy="${escapeHtml(entry.filename)}"><i data-lucide="copy"></i>복사</button>
               <button type="button" class="tool-remove" aria-label="삭제"><i data-lucide="x"></i></button>
             </div></td>
@@ -1024,7 +1036,7 @@ if (filenameTool) {
     state[field.dataset.field] = field.value;
     save();
     // 메시지 유형을 고르는 순간 발번한다
-    if (field.dataset.field === 'type') issuePair();
+    if (field.dataset.field === 'type') issueOne();
     else render();
   });
 
@@ -1032,7 +1044,10 @@ if (filenameTool) {
     const copy = event.target.closest('.tool-copy');
     if (copy) return copyText(copy.dataset.copy, copy);
 
-    if (event.target.closest('.tool-add')) return issuePair();
+    if (event.target.closest('.tool-add')) return issueOne();
+
+    const vertical = event.target.closest('.tool-vertical');
+    if (vertical) return addVertical(vertical.dataset.id);
 
     if (event.target.closest('.tool-reset')) {
       state = { date: '', channel: '', product: '', event: '', type: '' };
