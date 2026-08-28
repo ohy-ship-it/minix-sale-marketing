@@ -887,7 +887,7 @@ if (filenameTool) {
 
   const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E/edit';
   // 배포한 Apps Script 웹 앱
-  const ENDPOINT = 'https://script.google.com/macros/s/AKfycbxubxtNp5D0X0lGVdNuu2SHQq6kGYO7_RllCicbSqOK0IzfKtrEV_4Cbw-ZznZxYB6P/exec';
+  const ENDPOINT = 'https://script.google.com/macros/s/AKfycbz7krvW2pqnYblNnNSuzHIi4uBHg42KvGlZU30tDc2b_wH-HyUKd8Z3Hdk0Cj9giPKO/exec';
   // 발번 목록에 보이는 정보 그대로 시트에 적재한다
   const SHEET_COLUMNS = [
     { key: 'filename', label: '파일명' },
