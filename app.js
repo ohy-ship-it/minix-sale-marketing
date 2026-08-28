@@ -38,9 +38,10 @@ if (creativeBoard) {
     { key: 'eventDate', name: '행사일정', type: 'date', icon: 'calendar' },
     { key: 'dueDate', name: '전달희망일정', type: 'date', icon: 'calendar' },
     { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS },
+    { key: 'creativeCount', name: '소재 갯수', type: 'computed', icon: 'hash' },
   ];
   // 보드 카드에 노출할 속성 (요청받은 순서)
-  const CARD_PROPS = ['sku', 'channel', 'owners', 'dueDate'];
+  const CARD_PROPS = ['sku', 'channel', 'owners', 'dueDate', 'creativeCount'];
   const propByKey = Object.fromEntries(SCHEMA.map((prop) => [prop.key, prop]));
   const colorOf = (prop, value) => (prop.options || []).find(([option]) => option === value)?.[1] || 'default';
 
@@ -144,6 +145,9 @@ if (creativeBoard) {
     if (!date?.start) return '';
     return date.end ? `${formatDay(date.start)} → ${formatDay(date.end)}` : formatDay(date.start);
   };
+  const sumOfDigits = (text) => (String(text ?? '').match(/\d+/g) || []).reduce((sum, part) => sum + Number(part), 0);
+  const creativeTotal = (row) => row.media.reduce((sum, name) => sum + sumOfDigits(row.mediaCounts[name]), 0);
+
   const chip = (prop, value) => `<span class="chip chip-${colorOf(prop, value)}">${escapeHtml(value)}</span>`;
   const filterChip = (key, value) => `<span class="chip chip-${colorOf(propByKey[key], value)} chip-filter" data-facet="${key}" data-value="${escapeHtml(value)}" role="button" tabindex="0" title="${escapeHtml(value)} 카드만 보기">${escapeHtml(value)}</span>`;
 
@@ -240,6 +244,10 @@ if (creativeBoard) {
   const DATE_LABEL = { eventDate: '행사', dueDate: '전달 희망' };
   const cardLine = (row, key) => {
     const prop = propByKey[key];
+    if (prop.type === 'computed') {
+      const total = creativeTotal(row);
+      return total ? `<p><span class="card-key">${escapeHtml(prop.name)}</span>${total}개</p>` : '';
+    }
     const value = row[key];
     if (prop.type === 'multi_select') {
       if (!value.length) return '';
@@ -279,6 +287,10 @@ if (creativeBoard) {
   const closePeek = () => { openId = null; peek.innerHTML = ''; peek.classList.remove('is-open'); };
 
   const propertyControl = (row, prop) => {
+    if (prop.type === 'computed') {
+      const total = creativeTotal(row);
+      return `<span class="peek-computed" data-computed="${prop.key}">${total ? `${total}개` : '비어 있음'}<small>매체별 입력 합계</small></span>`;
+    }
     const value = row[prop.key];
     if (prop.type === 'title' || prop.type === 'text') {
       return `<input class="peek-input" data-edit="${prop.key}" value="${escapeHtml(value)}" placeholder="비어 있음">`;
@@ -477,6 +489,12 @@ if (creativeBoard) {
       if (count.value === '') delete row.mediaCounts[count.dataset.count];
       else row.mediaCounts[count.dataset.count] = count.value;
       save();
+      renderBoard();
+      const totalField = peek.querySelector('[data-computed="creativeCount"]');
+      if (totalField) {
+        const total = creativeTotal(row);
+        totalField.firstChild.textContent = total ? `${total}개` : '비어 있음';
+      }
       return;
     }
     const note = event.target.closest('[data-note]');

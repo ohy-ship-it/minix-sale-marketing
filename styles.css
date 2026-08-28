@@ -267,3 +267,7 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .media-remove{display:inline-flex;align-items:center;border:0;background:none;color:#00000038;padding:2px;margin-left:auto;cursor:pointer;border-radius:4px}
 .media-remove:hover{color:#d44c47;background:#ffffffb3}
 .media-remove svg{width:13px}
+
+/* 계산으로 채워지는 속성 */
+.peek-computed{display:inline-flex;align-items:baseline;gap:7px;padding:6px 7px;font-size:12px;color:#20211e}
+.peek-computed small{font-size:10px;color:#b6b5b0}
