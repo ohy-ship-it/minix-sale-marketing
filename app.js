@@ -14,6 +14,18 @@ document.querySelectorAll('[data-view]').forEach((item) => {
     document.querySelectorAll('[data-view]').forEach((entry) => entry.classList.remove('is-active'));
     item.classList.add('is-active');
     document.querySelector('#page-heading').textContent = item.dataset.view;
+    const isCreativePlanning = item.dataset.view === '광고소재 기획';
+    document.querySelector('.target-section').hidden = isCreativePlanning;
+    document.querySelector('.channel-section').hidden = isCreativePlanning;
+    document.querySelector('.notes-section').hidden = isCreativePlanning;
+    document.querySelector('#creative-board').hidden = !isCreativePlanning;
+  });
+});
+
+document.querySelectorAll('.week-button').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.week-button').forEach((entry) => entry.classList.remove('active'));
+    button.classList.add('active');
   });
 });
 
