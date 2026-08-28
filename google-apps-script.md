@@ -10,6 +10,12 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 
 1. 위 시트를 연다
 2. 상단 메뉴 **확장 프로그램 → Apps Script**
+
+   > 따로 설치할 게 없습니다. 시트 제목 아래 메뉴 줄에 이미 있습니다.
+   > `파일  수정  보기  삽입  서식  데이터  도구  **확장 프로그램**  도움말`
+   >
+   > - 메뉴가 안 보이면 시트가 **보기 전용**으로 열린 경우입니다. 편집 권한이 필요합니다.
+   > - 계정 언어가 영어면 **Extensions → Apps Script** 입니다.
 3. 기본 코드를 지우고 아래를 붙여넣는다
 
 ```javascript
