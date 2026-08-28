@@ -60,6 +60,7 @@ if (creativeBoard) {
     { name: '[당일] 현대홈쇼핑 MLC', event: '현대홈쇼핑 MLC', status: '전달 완료', media: ['메타', '브랜드검색'], channel: '현대홈쇼핑', owners: ['김진빈', '이정민'], eventDate: { start: '2026-08-31' }, dueDate: { start: '2026-08-27' }, sku: ['더 에어드라이'] },
   ];
 
+  const NOTE_TEMPLATE = '전달 희망일정 : \n소재 소구/ 갯수 : ';
   const STORAGE_KEY = 'minix-creative-requests-v2';
   const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
@@ -74,6 +75,7 @@ if (creativeBoard) {
     eventDate: row.eventDate?.start ? { start: row.eventDate.start, end: row.eventDate.end || '' } : null,
     dueDate: row.dueDate?.start ? { start: row.dueDate.start, end: row.dueDate.end || '' } : null,
     sku: Array.isArray(row.sku) ? row.sku : [],
+    mediaNotes: row.mediaNotes && typeof row.mediaNotes === 'object' ? { ...row.mediaNotes } : {},
   });
 
   let rows;
@@ -194,6 +196,16 @@ if (creativeBoard) {
       </div>`;
   };
 
+  const renderMediaNotes = (row) => {
+    if (!row.media.length) return '';
+    return `<div class="media-notes">
+      ${row.media.map((name) => `<section class="media-note note-${colorOf(propByKey.media, name)}">
+        <span class="chip chip-${colorOf(propByKey.media, name)}">${escapeHtml(name)}</span>
+        <textarea class="media-note-input" data-note="${escapeHtml(name)}" rows="6" spellcheck="false">${escapeHtml(row.mediaNotes[name] ?? NOTE_TEMPLATE)}</textarea>
+      </section>`).join('')}
+    </div>`;
+  };
+
   const renderPeek = () => {
     const row = rows.find((entry) => entry.id === openId);
     if (!row) return closePeek();
@@ -212,6 +224,7 @@ if (creativeBoard) {
               <div class="peek-value">${propertyControl(row, prop)}</div>
             </div>`).join('')}
         </div>
+        ${renderMediaNotes(row)}
         <footer class="peek-footer">
           <p class="peek-warning" hidden>제목을 입력해 주세요.</p>
           <button type="button" class="peek-done">요청 완료하기</button>
@@ -308,6 +321,7 @@ if (creativeBoard) {
       const picked = option.dataset.option;
       if (prop.type === 'multi_select') {
         row[key] = row[key].includes(picked) ? row[key].filter((item) => item !== picked) : [...row[key], picked];
+        if (key === 'media' && row.media.includes(picked) && row.mediaNotes[picked] === undefined) row.mediaNotes[picked] = NOTE_TEMPLATE;
       } else {
         row[key] = row[key] === picked ? '' : picked;
       }
@@ -328,6 +342,14 @@ if (creativeBoard) {
   });
 
   peek.addEventListener('input', (event) => {
+    const note = event.target.closest('[data-note]');
+    if (note) {
+      const row = rows.find((entry) => entry.id === openId);
+      if (!row) return;
+      row.mediaNotes[note.dataset.note] = note.value;
+      save();
+      return;
+    }
     const field = event.target.closest('[data-edit]');
     if (!field || field.type === 'date') return;
     const row = rows.find((entry) => entry.id === openId);
@@ -348,6 +370,16 @@ if (creativeBoard) {
       row[key] = next.start ? next : null;
     } else return;
     commit();
+  });
+
+  peek.addEventListener('focusout', (event) => {
+    const note = event.target.closest('[data-note]');
+    if (!note || note.value.trim()) return;
+    const row = rows.find((entry) => entry.id === openId);
+    if (!row) return;
+    row.mediaNotes[note.dataset.note] = NOTE_TEMPLATE;
+    note.value = NOTE_TEMPLATE;
+    save();
   });
 
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && openId) closePeek(); });

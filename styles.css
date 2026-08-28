@@ -85,3 +85,20 @@ body:has(#creative-board:not([hidden])) .topbar{display:none}
 .peek-warning{margin:0 0 8px;font-size:11px;color:#d44c47}
 .peek-done{width:100%;border:0;border-radius:7px;background:#2f86d9;color:#fff;padding:11px;font:700 12px inherit;cursor:pointer}
 .peek-done:hover{background:#2a78c4}
+
+/* 매체별 요청사항 */
+.media-notes{display:grid;gap:14px;margin-top:22px}
+.media-note{border:1px solid;border-radius:9px;padding:10px}
+.media-note .chip{display:inline-block;margin-bottom:8px;background:#fff9;font-weight:700}
+.media-note-input{display:block;width:100%;border:0;border-radius:6px;background:#fffc;padding:9px 10px;font:400 12px/1.7 inherit;color:#20211e;resize:vertical;min-height:104px}
+.media-note-input:focus{outline:2px solid #20211e26;outline-offset:-2px}
+.note-default{background:#f4f4f2;border-color:#d9d8d4}
+.note-gray{background:#f1f1ef;border-color:#d9d8d4}
+.note-brown{background:#f7ede8;border-color:#e2cec3}
+.note-orange{background:#fdeee2;border-color:#f5d2b4}
+.note-yellow{background:#fdf5e3;border-color:#f2dfae}
+.note-green{background:#e9f4ea;border-color:#c7e1c9}
+.note-blue{background:#e5f0f6;border-color:#bdd9e7}
+.note-purple{background:#f1eaf5;border-color:#dbc9e6}
+.note-pink{background:#faedf3;border-color:#eecfdd}
+.note-red{background:#fdeae7;border-color:#f6cbc4}
