@@ -49,6 +49,7 @@ if (creativeBoard) {
     card.dataset.product = product;
     card.dataset.assignee = assignee;
     card.innerHTML = `<h3>${title}</h3><p>${dueDate || '일정 미정'}</p><span class="setting">□ 세팅</span><div class="chips"><span>${product || '상품 미정'}</span><span>${assignee || '담당자 미정'}</span></div><small>방금 생성</small>`;
+    card.addEventListener('click', () => openEditor(card));
     column.insertBefore(card, addButton);
     card.addEventListener('dragstart', () => card.classList.add('is-dragging'));
     card.addEventListener('dragend', () => { card.classList.remove('is-dragging'); saveRequests(); updateCounts(); });
@@ -58,7 +59,18 @@ if (creativeBoard) {
   form.className = 'request-modal';
   form.innerHTML = `<div class="modal-backdrop"></div><div class="modal-panel"><div class="modal-heading"><h2>광고소재 요청</h2><button type="button" class="modal-close" aria-label="닫기">×</button></div><label>요청 제목<input name="title" required placeholder="예: 9월 프로모션 배너"></label><label>일정<input name="date" placeholder="예: 2026년 9월 10일"></label><label>상품<input name="product" placeholder="예: 더플렌더mini"></label><label>담당자<input name="assignee" placeholder="예: 홍길동"></label><label>상태<select name="status"><option>요청</option><option>진행 중</option><option>전달 완료</option><option>최종 완료(세팅)</option><option>홀딩/리터치</option></select></label><button class="modal-submit" type="submit">보드에 추가</button></div>`;
   creativeBoard.appendChild(form);
-  const openForm = () => { form.classList.add('is-visible'); form.querySelector('input').focus(); };
+  let editingCard = null;
+  const openForm = () => { editingCard = null; form.reset(); form.classList.add('is-visible'); form.querySelector('input').focus(); };
+  const openEditor = (card) => {
+    editingCard = card;
+    form.elements.title.value = card.querySelector('h3').textContent;
+    form.elements.date.value = card.dataset.date || card.querySelector('p').textContent;
+    form.elements.product.value = card.dataset.product || card.querySelector('.chips span')?.textContent || '';
+    form.elements.assignee.value = card.dataset.assignee || card.querySelectorAll('.chips span')[1]?.textContent || '';
+    form.elements.status.value = card.closest('.notion-column').querySelector('.notion-column-title span').textContent.replace('● ', '');
+    form.classList.add('is-visible');
+    form.querySelector('input').focus();
+  };
   const closeForm = () => { form.classList.remove('is-visible'); form.reset(); };
   creativeBoard.querySelectorAll('.new-page, #new-request, .new-page-button').forEach((button) => button.addEventListener('click', openForm));
   const boardTools = creativeBoard.querySelector('.board-tools');
@@ -104,13 +116,26 @@ if (creativeBoard) {
   form.querySelector('.modal-backdrop').addEventListener('click', closeForm);
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    addCard(Object.fromEntries(new FormData(form)));
+    const request = Object.fromEntries(new FormData(form));
+    if (editingCard) {
+      const targetColumn = creativeBoard.querySelector(columns[request.status] || columns.요청);
+      editingCard.dataset.date = request.date;
+      editingCard.dataset.product = request.product;
+      editingCard.dataset.assignee = request.assignee;
+      editingCard.innerHTML = `<h3>${request.title}</h3><p>${request.date || '일정 미정'}</p><span class="setting">□ 세팅</span><div class="chips"><span>${request.product || '상품 미정'}</span><span>${request.assignee || '담당자 미정'}</span></div><small>수정됨</small>`;
+      targetColumn.insertBefore(editingCard, targetColumn.querySelector('.new-page'));
+      editingCard.addEventListener('click', () => openEditor(editingCard));
+    } else {
+      addCard(request);
+    }
     saveRequests();
     updateCounts();
     closeForm();
   });
   creativeBoard.querySelectorAll('.notion-card').forEach((card) => {
+    card.classList.add('custom-request');
     card.draggable = true;
+    card.addEventListener('click', () => openEditor(card));
     card.addEventListener('dragstart', () => card.classList.add('is-dragging'));
     card.addEventListener('dragend', () => { card.classList.remove('is-dragging'); saveRequests(); updateCounts(); });
   });
