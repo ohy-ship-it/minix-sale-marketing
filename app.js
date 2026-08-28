@@ -873,6 +873,9 @@ if (filenameTool) {
   const MEDIA_OPTIONS = ['메타', 'GFA-피드', 'GFA-쇼핑소식', 'GFA-스마트채널',
     '카카오-비즈보드', '카카오-디스플레이', '구글-디멘드젠', '마케팅팀'];
 
+  const CUSTOM_OPTION = '__custom__';
+  const CODE_RULE = /^[A-Za-z0-9]+$/;
+
   const VERTICAL_SUFFIX = '(세로)';
   const STORAGE_KEY = 'minix-filename-tool-v3';
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -888,7 +891,7 @@ if (filenameTool) {
   const DEFAULT_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxubxtNp5D0X0lGVdNuu2SHQq6kGYO7_RllCicbSqOK0IzfKtrEV_4Cbw-ZznZxYB6P/exec';
   const endpointUrl = () => localStorage.getItem(ENDPOINT_KEY) || DEFAULT_ENDPOINT;
 
-  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', media: '', type: MESSAGE_TYPES[0][0], vertical: false };
+  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', media: '', type: MESSAGE_TYPES[0][0], vertical: false, customTypes: [] };
   let state = { ...defaults };
   let issued = [];
   // 한 번 나간 번호는 목록에서 지워도 다시 쓰지 않는다
@@ -897,6 +900,7 @@ if (filenameTool) {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (stored && typeof stored === 'object') {
       state = { ...defaults, ...(stored.state || {}) };
+      if (!Array.isArray(state.customTypes)) state.customTypes = [];
       issued = Array.isArray(stored.issued) ? stored.issued : [];
       watermark = stored.watermark && typeof stored.watermark === 'object' ? { ...stored.watermark } : {};
     }
@@ -907,7 +911,11 @@ if (filenameTool) {
   }
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify({ state, issued, watermark }));
 
-  const codeOf = (typeName) => (MESSAGE_TYPES.find(([name]) => name === typeName) || [, ''])[1];
+  const codeOf = (typeName) => {
+    const known = MESSAGE_TYPES.find(([name]) => name === typeName);
+    if (known) return known[1];
+    return state.customTypes.includes(typeName) ? typeName : '';
+  };
 
   // 최종행사명 = 행사일자(YYMMDD) + 상품명 + 행사채널 + 행사명 (시트 표기 순서)
   const finalName = () => {
@@ -1046,7 +1054,12 @@ if (filenameTool) {
         </div>
         <div class="tool-grid tool-grid-second">
           <label>매체<select data-field="media"><option value=""${state.media ? '' : ' selected'}>선택 안 함</option>${MEDIA_OPTIONS.map((value) => `<option${value === state.media ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
-          <label>메시지 유형<select data-field="type"><option value=""${state.type ? '' : ' selected'}>선택 안 함</option>${MESSAGE_TYPES.map(([value]) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
+          <label>메시지 유형<select data-field="type">
+            <option value="${CUSTOM_OPTION}">직접 작성하기…</option>
+            <option value=""${state.type ? '' : ' selected'}>선택 안 함</option>
+            ${state.customTypes.map((value) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}
+            ${MESSAGE_TYPES.map(([value]) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}
+          </select></label>
           <div class="tool-final-box">
             <span class="tool-final-label">최종행사명</span>
             <code class="tool-final">${escapeHtml(name) || '<span class="tool-blank">행사 정보를 입력하세요</span>'}</code>
@@ -1119,9 +1132,31 @@ if (filenameTool) {
     if (copy) copy.dataset.copy = name;
   });
 
+  const askCustomCode = () => {
+    const guide = '파일명에 쓸 코드를 영문/숫자로 적어 주세요.\n(한글 · 띄어쓰기 · 특수문자 불가, 예: newyear)';
+    let value = window.prompt(guide, '');
+    while (value !== null && !CODE_RULE.test(value.trim())) {
+      window.alert('영문과 숫자만 쓸 수 있습니다.\n한글, 띄어쓰기, 특수문자는 넣을 수 없습니다.');
+      value = window.prompt(guide, value.trim());
+    }
+    return value === null ? '' : value.trim();
+  };
+
   filenameTool.addEventListener('change', (event) => {
     const field = event.target.closest('[data-field]');
     if (!field || (field.tagName !== 'SELECT' && field.type !== 'date' && field.type !== 'checkbox')) return;
+    if (field.dataset.field === 'type' && field.value === CUSTOM_OPTION) {
+      const code = askCustomCode();
+      if (!code) {
+        field.value = state.type;
+        return;
+      }
+      if (!state.customTypes.includes(code)) state.customTypes = [...state.customTypes, code];
+      state.type = code;
+      save();
+      issueOne();
+      return;
+    }
     state[field.dataset.field] = field.type === 'checkbox' ? field.checked : field.value;
     if (field.dataset.field === 'vertical') {
       syncVertical();
@@ -1155,7 +1190,7 @@ if (filenameTool) {
 
     if (event.target.closest('.tool-reset')) {
       if (issued.length && !window.confirm(`입력값과 발번 목록 ${issuedCount()}건을 모두 지울까요?`)) return;
-      state = { date: '', channel: '', product: '', event: '', media: '', type: '', vertical: false };
+      state = { date: '', channel: '', product: '', event: '', media: '', type: '', vertical: false, customTypes: state.customTypes };
       issued = [];
       save();
       render();
