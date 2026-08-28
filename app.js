@@ -12,6 +12,81 @@ if (creativeBoard) {
     .replaceAll('빕타나는 생활 MLC', '브티나는 생활 MLC')
     .replaceAll('네어드라이', '더 에어드라이');
   lucide.createIcons();
+
+  const savedRequests = JSON.parse(localStorage.getItem('minix-creative-requests') || '[]');
+  const columns = {
+    요청: '.request-column',
+    '진행 중': '.progress-column',
+    '전달 완료': '.delivered-column',
+    '최종 완료(세팅)': '.final-column',
+    '홀딩/리터치': '.hold-column',
+  };
+
+  const saveRequests = () => {
+    const requests = [...creativeBoard.querySelectorAll('.custom-request')].map((card) => ({
+      title: card.querySelector('h3').textContent,
+      date: card.dataset.date,
+      product: card.dataset.product,
+      assignee: card.dataset.assignee,
+      status: card.closest('.notion-column').querySelector('.notion-column-title span').textContent.replace('● ', ''),
+    }));
+    localStorage.setItem('minix-creative-requests', JSON.stringify(requests));
+  };
+
+  const updateCounts = () => Object.entries(columns).forEach(([status, selector]) => {
+    const column = creativeBoard.querySelector(selector);
+    const count = column.querySelectorAll('.notion-card').length;
+    column.querySelector('.notion-column-title b').textContent = count;
+  });
+
+  const addCard = ({ title, date: dueDate, product, assignee, status }) => {
+    const column = creativeBoard.querySelector(columns[status] || columns.요청);
+    const addButton = column.querySelector('.new-page');
+    const card = document.createElement('article');
+    card.className = 'notion-card custom-request';
+    card.draggable = true;
+    card.dataset.date = dueDate;
+    card.dataset.product = product;
+    card.dataset.assignee = assignee;
+    card.innerHTML = `<h3>${title}</h3><p>${dueDate || '일정 미정'}</p><span class="setting">□ 세팅</span><div class="chips"><span>${product || '상품 미정'}</span><span>${assignee || '담당자 미정'}</span></div><small>방금 생성</small>`;
+    column.insertBefore(card, addButton);
+    card.addEventListener('dragstart', () => card.classList.add('is-dragging'));
+    card.addEventListener('dragend', () => { card.classList.remove('is-dragging'); saveRequests(); updateCounts(); });
+  };
+
+  const form = document.createElement('form');
+  form.className = 'request-modal';
+  form.innerHTML = `<div class="modal-backdrop"></div><div class="modal-panel"><div class="modal-heading"><h2>광고소재 요청</h2><button type="button" class="modal-close" aria-label="닫기">×</button></div><label>요청 제목<input name="title" required placeholder="예: 9월 프로모션 배너"></label><label>일정<input name="date" placeholder="예: 2026년 9월 10일"></label><label>상품<input name="product" placeholder="예: 더플렌더mini"></label><label>담당자<input name="assignee" placeholder="예: 홍길동"></label><label>상태<select name="status"><option>요청</option><option>진행 중</option><option>전달 완료</option><option>최종 완료(세팅)</option><option>홀딩/리터치</option></select></label><button class="modal-submit" type="submit">보드에 추가</button></div>`;
+  creativeBoard.appendChild(form);
+  const openForm = () => { form.classList.add('is-visible'); form.querySelector('input').focus(); };
+  const closeForm = () => { form.classList.remove('is-visible'); form.reset(); };
+  creativeBoard.querySelectorAll('.new-page, #new-request, .new-page-button').forEach((button) => button.addEventListener('click', openForm));
+  form.querySelector('.modal-close').addEventListener('click', closeForm);
+  form.querySelector('.modal-backdrop').addEventListener('click', closeForm);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    addCard(Object.fromEntries(new FormData(form)));
+    saveRequests();
+    updateCounts();
+    closeForm();
+  });
+  creativeBoard.querySelectorAll('.notion-card').forEach((card) => {
+    card.draggable = true;
+    card.addEventListener('dragstart', () => card.classList.add('is-dragging'));
+    card.addEventListener('dragend', () => { card.classList.remove('is-dragging'); saveRequests(); updateCounts(); });
+  });
+  creativeBoard.querySelectorAll('.notion-column').forEach((column) => {
+    column.addEventListener('dragover', (event) => event.preventDefault());
+    column.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const card = creativeBoard.querySelector('.is-dragging');
+      if (card) column.insertBefore(card, column.querySelector('.new-page'));
+      saveRequests();
+      updateCounts();
+    });
+  });
+  savedRequests.forEach(addCard);
+  updateCounts();
 }
 
 document.querySelectorAll('.tree-group').forEach((group) => {
