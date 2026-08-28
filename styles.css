@@ -327,3 +327,11 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .tool-final-label{flex:none;font-size:11px;font-weight:700;color:#8c8c85}
 .tool-final{flex:1;min-width:0;font:700 12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#20211e;overflow-wrap:anywhere}
 @media(max-width:760px){.tool-final-box{grid-column:1/-1}}
+
+/* 입력값 전체 지우기 */
+.tool-footer{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:2px}
+.tool-reset{display:inline-flex;align-items:center;gap:5px;border:1px solid #e3e2dc;border-radius:6px;background:#fff;color:#555;font:600 11px inherit;padding:8px 12px;cursor:pointer}
+.tool-reset:hover{border-color:#f0c6c2;background:#fdeae7;color:#d44c47}
+.tool-reset svg{width:13px}
+.tool-footer small{color:#a5a49f;font-size:11px}
+.tool-add:disabled{opacity:.45;cursor:default;background:#9dc2e6}

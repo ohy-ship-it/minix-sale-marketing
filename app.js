@@ -914,6 +914,7 @@ if (filenameTool) {
 
   const issuePair = () => {
     const code = codeOf(state.type);
+    if (!code) return;
     const seq = nextSequence(code);
     const base = { code, seq, type: state.type, campaign: finalName() };
     issued = [
@@ -928,8 +929,8 @@ if (filenameTool) {
 
   const render = () => {
     const code = codeOf(state.type);
-    const seq = nextSequence(code);
-    const preview = `${code}-${seq}`;
+    const seq = code ? nextSequence(code) : 0;
+    const preview = code ? `${code}-${seq}` : '';
     const name = finalName();
     filenameTool.innerHTML = `
       <div class="tool-head">
@@ -940,11 +941,11 @@ if (filenameTool) {
       <section class="tool-card">
         <div class="tool-grid">
           <label>행사일자<input type="date" data-field="date" value="${escapeHtml(state.date)}"></label>
-          <label>행사채널<select data-field="channel">${CHANNELS.map((value) => `<option${value === state.channel ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
+          <label>행사채널<select data-field="channel"><option value=""${state.channel ? '' : ' selected'}>선택 안 함</option>${CHANNELS.map((value) => `<option${value === state.channel ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
           <label class="tool-wide">행사명<input type="text" data-field="event" value="${escapeHtml(state.event)}" placeholder="예: 음쓰해방위크"></label>
         </div>
         <div class="tool-grid tool-grid-second">
-          <label>메시지 유형<select data-field="type">${MESSAGE_TYPES.map(([value]) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
+          <label>메시지 유형<select data-field="type"><option value=""${state.type ? '' : ' selected'}>선택 안 함</option>${MESSAGE_TYPES.map(([value]) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
           <div class="tool-final-box">
             <span class="tool-final-label">최종행사명</span>
             <code class="tool-final">${escapeHtml(name) || '<span class="tool-blank">행사 정보를 입력하세요</span>'}</code>
@@ -952,8 +953,10 @@ if (filenameTool) {
           </div>
         </div>
         <div class="tool-issue">
-          <span>다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code> <code class="tool-next">${escapeHtml(preview + VERTICAL_SUFFIX)}</code></span>
-          <button type="button" class="tool-add"><i data-lucide="plus"></i>같은 유형 하나 더</button>
+          <span>${code
+            ? `다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code> <code class="tool-next">${escapeHtml(preview + VERTICAL_SUFFIX)}</code>`
+            : '메시지 유형을 고르면 발번됩니다.'}</span>
+          <button type="button" class="tool-add"${code ? '' : ' disabled'}><i data-lucide="plus"></i>같은 유형 하나 더</button>
         </div>
       </section>
 
@@ -977,7 +980,12 @@ if (filenameTool) {
             </div></td>
           </tr>`).join('')}</tbody>
         </table></div>` : '<p class="tool-empty">아직 발번한 파일명이 없습니다.</p>'}
-      </section>`;
+      </section>
+
+      <div class="tool-footer">
+        <button type="button" class="tool-reset"><i data-lucide="eraser"></i>전체 지우기</button>
+        <small>행사일자 · 행사채널 · 행사명 · 메시지 유형을 비웁니다. 발번 목록은 그대로 둡니다.</small>
+      </div>`;
     lucide.createIcons();
   };
 
@@ -1020,6 +1028,13 @@ if (filenameTool) {
     if (copy) return copyText(copy.dataset.copy, copy);
 
     if (event.target.closest('.tool-add')) return issuePair();
+
+    if (event.target.closest('.tool-reset')) {
+      state = { date: '', channel: '', event: '', type: '' };
+      save();
+      render();
+      return;
+    }
 
     if (event.target.closest('.tool-copy-all')) {
       const header = ['파일명', '메시지 유형', '최종행사명'].join('\t');
