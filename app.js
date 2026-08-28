@@ -1086,6 +1086,33 @@ if (filenameTool) {
         </div>
       </div>` : '');
 
+  let typeOpen = false;
+
+  const typeControl = () => `
+    <div class="tool-select${typeOpen ? ' is-open' : ''}">
+      <button type="button" class="tool-select-button" data-toggle="type">${escapeHtml(state.type || '선택 안 함')}<i data-lucide="chevron-down"></i></button>
+      ${typeOpen ? `<div class="tool-select-panel">
+        <button type="button" class="tool-select-option is-action" data-pick="${CUSTOM_OPTION}"><i data-lucide="plus"></i>직접 작성하기…</button>
+        <button type="button" class="tool-select-option${state.type ? '' : ' is-on'}" data-pick="">선택 안 함</button>
+        ${state.customTypes.length ? '<div class="tool-select-divider">직접 추가한 유형</div>' : ''}
+        ${state.customTypes.map((entry) => `<div class="tool-select-row">
+          <button type="button" class="tool-select-option${entry.name === state.type ? ' is-on' : ''}" data-pick="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}<small>${escapeHtml(entry.code)}</small></button>
+          <button type="button" class="tool-custom-remove" data-name="${escapeHtml(entry.name)}" aria-label="${escapeHtml(entry.name)} 삭제" title="삭제"><i data-lucide="x"></i></button>
+        </div>`).join('')}
+        <div class="tool-select-divider">기본 유형</div>
+        ${MESSAGE_TYPES.map(([name, code]) => `<button type="button" class="tool-select-option${name === state.type ? ' is-on' : ''}" data-pick="${escapeHtml(name)}">${escapeHtml(name)}<small>${escapeHtml(code)}</small></button>`).join('')}
+      </div>` : ''}
+    </div>`;
+
+  const pickType = (value) => {
+    typeOpen = false;
+    if (value === CUSTOM_OPTION) return openCustomModal();
+    state.type = value;
+    save();
+    if (value) issueOne();
+    else render();
+  };
+
   const render = () => {
     const code = codeOf(state.type);
     const seq = code ? nextSequence(code) : 0;
@@ -1106,25 +1133,13 @@ if (filenameTool) {
         </div>
         <div class="tool-grid tool-grid-second">
           <label>매체<select data-field="media"><option value=""${state.media ? '' : ' selected'}>선택 안 함</option>${MEDIA_OPTIONS.map((value) => `<option${value === state.media ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
-          <label>메시지 유형<select data-field="type">
-            <option value="${CUSTOM_OPTION}">직접 작성하기…</option>
-            <option value=""${state.type ? '' : ' selected'}>선택 안 함</option>
-            ${state.customTypes.map((entry) => `<option${entry.name === state.type ? ' selected' : ''}>${escapeHtml(entry.name)}</option>`).join('')}
-            ${MESSAGE_TYPES.map(([value]) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}
-          </select></label>
+          <div class="tool-field">메시지 유형${typeControl()}</div>
           <div class="tool-final-box">
             <span class="tool-final-label">최종행사명</span>
             <code class="tool-final">${escapeHtml(name) || '<span class="tool-blank">행사 정보를 입력하세요</span>'}</code>
             <button type="button" class="tool-copy" data-copy="${escapeHtml(name)}"><i data-lucide="copy"></i>복사</button>
           </div>
         </div>
-        ${state.customTypes.length ? `<div class="tool-custom-types">
-          <span class="tool-custom-label">직접 추가한 유형</span>
-          ${state.customTypes.map((entry) => `<span class="tool-custom-chip${entry.name === state.type ? ' is-on' : ''}">
-            <b>${escapeHtml(entry.name)}</b><small>${escapeHtml(entry.code)}</small>
-            <button type="button" class="tool-custom-remove" data-name="${escapeHtml(entry.name)}" aria-label="${escapeHtml(entry.name)} 삭제" title="목록에서 삭제"><i data-lucide="x"></i></button>
-          </span>`).join('')}
-        </div>` : ''}
         <div class="tool-issue">
           <span>${code
             ? `다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code>`
@@ -1201,11 +1216,6 @@ if (filenameTool) {
   filenameTool.addEventListener('change', (event) => {
     const field = event.target.closest('[data-field]');
     if (!field || (field.tagName !== 'SELECT' && field.type !== 'date' && field.type !== 'checkbox')) return;
-    if (field.dataset.field === 'type' && field.value === CUSTOM_OPTION) {
-      field.value = state.type;
-      openCustomModal();
-      return;
-    }
     state[field.dataset.field] = field.type === 'checkbox' ? field.checked : field.value;
     if (field.dataset.field === 'vertical') {
       syncVertical();
@@ -1223,6 +1233,15 @@ if (filenameTool) {
     if (event.target.closest('.tool-modal-submit')) return registerCustomType();
     if (event.target.closest('.tool-modal-cancel') || event.target.closest('.tool-modal-backdrop')) return closeCustomModal();
 
+    if (event.target.closest('[data-toggle="type"]')) {
+      typeOpen = !typeOpen;
+      render();
+      return;
+    }
+
+    const pick = event.target.closest('[data-pick]');
+    if (pick) return pickType(pick.dataset.pick);
+
     const removeCustom = event.target.closest('.tool-custom-remove');
     if (removeCustom) {
       const name = removeCustom.dataset.name;
@@ -1231,6 +1250,12 @@ if (filenameTool) {
       save();
       render();
       return;
+    }
+
+    // 드롭다운 밖을 누르면 닫는다
+    if (typeOpen && !event.target.closest('.tool-select')) {
+      typeOpen = false;
+      render();
     }
 
     const copy = event.target.closest('.tool-copy');
@@ -1282,7 +1307,20 @@ if (filenameTool) {
     }
   });
 
+  document.addEventListener('click', (event) => {
+    if (!typeOpen) return;
+    // 방금 다시 그리면서 떨어져 나온 요소는 "바깥 클릭"이 아니다
+    if (!event.target.isConnected || filenameTool.contains(event.target)) return;
+    typeOpen = false;
+    render();
+  });
+
   filenameTool.addEventListener('keydown', (event) => {
+    if (typeOpen && event.key === 'Escape') {
+      typeOpen = false;
+      render();
+      return;
+    }
     if (!modal.open) return;
     if (event.key === 'Escape') closeCustomModal();
     if (event.key === 'Enter' && event.target.closest('[data-new]')) {
