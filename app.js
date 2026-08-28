@@ -103,34 +103,26 @@ if (creativeBoard) {
   const peek = document.createElement('div');
   peek.className = 'peek';
   creativeBoard.innerHTML = `
-    <div class="notion-toolbar"><button class="board-view-button" type="button"><i data-lucide="columns-3"></i>보드 보기</button><div class="board-tools"><i data-lucide="list-filter"></i><i data-lucide="arrow-down-up"></i><i data-lucide="zap"></i><i data-lucide="wand-sparkles"></i><i data-lucide="search"></i><i data-lucide="sliders-horizontal"></i><button class="new-page-button" type="button"><i data-lucide="plus"></i>새로 만들기 <i data-lucide="chevron-down"></i></button></div></div>`;
+    <div class="notion-toolbar"><button class="new-page-button" type="button"><i data-lucide="plus"></i>요청하기</button></div>`;
   const filters = document.createElement('div');
   filters.className = 'owner-filter';
   creativeBoard.appendChild(filters);
   creativeBoard.appendChild(board);
   creativeBoard.appendChild(peek);
 
-  let searchTerm = '';
   let ownerFilter = [];
-  let sortMode = 'manual';
   let openId = null;
 
-  const visibleRows = () => {
-    const keyword = searchTerm.trim().toLowerCase();
-    return rows.filter((row) => {
-      if (ownerFilter.length && !row.owners.some((owner) => ownerFilter.includes(owner))) return false;
-      if (!keyword) return true;
-      return [row.name, row.event, ...row.sku, ...row.owners, ...row.media, row.channel]
-        .join(' ').toLowerCase().includes(keyword);
-    });
-  };
+  const visibleRows = () => (ownerFilter.length
+    ? rows.filter((row) => row.owners.some((owner) => ownerFilter.includes(owner)))
+    : rows);
 
   const renderFilters = () => {
     const shown = visibleRows().length;
     filters.classList.toggle('is-active', ownerFilter.length > 0);
     filters.innerHTML = `<span class="owner-filter-label"><i data-lucide="users"></i>담당자</span>`
       + OWNER_OPTIONS.map(([name, color]) => `<button type="button" class="owner-chip chip chip-${color}${ownerFilter.includes(name) ? ' is-on' : ''}" data-filter="${escapeHtml(name)}" aria-pressed="${ownerFilter.includes(name)}">${escapeHtml(name)}</button>`).join('')
-      + (ownerFilter.length || searchTerm.trim()
+      + (ownerFilter.length
         ? `<button type="button" class="owner-clear">전체 보기</button><span class="owner-count">${shown}개 표시</span>`
         : '');
     lucide.createIcons();
@@ -144,8 +136,7 @@ if (creativeBoard) {
   const renderBoard = () => {
     const shown = visibleRows();
     board.innerHTML = STATUS_OPTIONS.map(([status]) => {
-      let group = shown.filter((row) => row.status === status);
-      if (sortMode === 'name') group = [...group].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+      const group = shown.filter((row) => row.status === status);
       const cards = group.map((row) => `
         <article class="notion-card" draggable="true" data-id="${row.id}">
           <h3>${escapeHtml(row.name || '제목 없음')}</h3>
@@ -229,7 +220,7 @@ if (creativeBoard) {
     const addButton = event.target.closest('.new-page');
     if (addButton) {
       const status = addButton.closest('.notion-column').dataset.status;
-      const row = normalize({ status });
+      const row = normalize({ status, owners: [...ownerFilter] });
       rows.push(row);
       save();
       renderBoard();
@@ -247,7 +238,6 @@ if (creativeBoard) {
     if (chipButton) return toggleOwner(chipButton.dataset.filter);
     if (event.target.closest('.owner-clear')) {
       ownerFilter = [];
-      searchTerm = '';
       renderBoard();
     }
   });
@@ -342,38 +332,8 @@ if (creativeBoard) {
 
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && openId) closePeek(); });
 
-  const boardTools = creativeBoard.querySelector('.board-tools');
-  [['list-filter', '필터'], ['arrow-down-up', '정렬'], ['zap', '자동화'], ['wand-sparkles', '보기 설정'], ['search', '검색'], ['sliders-horizontal', '속성']]
-    .forEach(([icon, label]) => {
-      const button = boardTools.querySelector(`[data-lucide="${icon}"]`);
-      if (!button) return;
-      button.classList.add('board-tool-button');
-      button.setAttribute('title', label);
-      button.addEventListener('click', () => {
-        if (label === '검색') {
-          const keyword = window.prompt('카드 검색', searchTerm);
-          if (keyword === null) return;
-          searchTerm = keyword;
-          renderBoard();
-          return;
-        }
-        if (label === '필터') {
-          ownerFilter = [];
-          searchTerm = '';
-          renderBoard();
-          return;
-        }
-        if (label === '정렬') {
-          sortMode = sortMode === 'name' ? 'manual' : 'name';
-          renderBoard();
-          return;
-        }
-        window.alert(`${label} 기능은 보드 데이터 연결 후 사용할 수 있습니다.`);
-      });
-    });
-  creativeBoard.querySelector('.board-view-button').addEventListener('click', () => creativeBoard.classList.toggle('compact-board'));
   creativeBoard.querySelector('.new-page-button').addEventListener('click', () => {
-    const row = normalize({ status: '요청' });
+    const row = normalize({ status: '요청', owners: [...ownerFilter] });
     rows.push(row);
     save();
     renderBoard();
