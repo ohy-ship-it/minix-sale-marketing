@@ -278,7 +278,7 @@ if (creativeBoard) {
       ${row.media.map((name) => `<section class="media-note note-${colorOf(propByKey.media, name)}">
         <div class="media-note-head">
           <span class="chip chip-${colorOf(propByKey.media, name)}">${escapeHtml(name)}</span>
-          <label class="media-count">소재 갯수<input type="number" min="0" step="1" data-count="${escapeHtml(name)}" value="${escapeHtml(row.mediaCounts[name] ?? '')}" placeholder="-"></label>
+          <label class="media-count">소재 갯수<input type="text" data-count="${escapeHtml(name)}" value="${escapeHtml(row.mediaCounts[name] ?? '')}" placeholder="예: 3종"></label>
         </div>
         <textarea class="media-note-input" data-note="${escapeHtml(name)}" rows="6" spellcheck="false" placeholder="요청 내용을 자유롭게 적어 주세요.">${escapeHtml(row.mediaNotes[name] ?? NOTE_TEMPLATE)}</textarea>
       </section>`).join('')}

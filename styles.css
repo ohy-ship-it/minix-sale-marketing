@@ -94,7 +94,7 @@ body:has(#creative-board:not([hidden])) .topbar{display:none}
 .media-note .chip{display:inline-block;background:#fff9;font-weight:700}
 .media-note-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .media-count{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#6b6b64}
-.media-count input{width:62px;border:1px solid #ffffffcc;border-radius:6px;background:#fffc;padding:5px 7px;font:400 12px inherit;color:#20211e;text-align:right}
+.media-count input{width:104px;border:1px solid #ffffffcc;border-radius:6px;background:#fffc;padding:5px 8px;font:400 12px inherit;color:#20211e}
 .media-count input:focus{outline:2px solid #20211e26;outline-offset:-2px}
 .media-note-input{display:block;width:100%;border:0;border-radius:6px;background:#fffc;padding:9px 10px;font:400 12px/1.7 inherit;color:#20211e;resize:vertical;min-height:104px}
 .media-note-input:focus{outline:2px solid #20211e26;outline-offset:-2px}
