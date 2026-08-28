@@ -753,25 +753,30 @@ document.querySelectorAll('.tree-group').forEach((group) => {
   });
 });
 
+// 전용 화면을 가진 메뉴 (그 외에는 대시보드를 보여준다)
+const VIEWS = {
+  '광고소재 기획': { section: '#creative-board', hash: '#creative-planning' },
+  '광고소재 파일명': { section: '#filename-tool', hash: '#filename' },
+};
+const DASHBOARD_PARTS = ['.content-tabs', '.target-section', '.channel-section', '.notes-section'];
+
 document.querySelectorAll('[data-view]').forEach((item) => {
   item.addEventListener('click', () => {
-    const isCreativePlanning = item.dataset.view === '광고소재 기획';
+    const view = VIEWS[item.dataset.view];
     document.querySelectorAll('[data-view]').forEach((entry) => entry.classList.remove('is-active'));
     item.classList.add('is-active');
     document.querySelector('#page-heading').textContent = item.dataset.view;
-    document.querySelector('.content-tabs').hidden = isCreativePlanning;
-    document.querySelector('.target-section').hidden = isCreativePlanning;
-    document.querySelector('.channel-section').hidden = isCreativePlanning;
-    document.querySelector('.notes-section').hidden = isCreativePlanning;
-    document.querySelector('#creative-board').hidden = !isCreativePlanning;
-    const keepWeek = isCreativePlanning && location.hash.startsWith('#creative-planning/');
-    history.replaceState(null, '', isCreativePlanning ? (keepWeek ? location.hash : '#creative-planning') : '#dashboard');
+    DASHBOARD_PARTS.forEach((selector) => { document.querySelector(selector).hidden = Boolean(view); });
+    Object.values(VIEWS).forEach((entry) => {
+      document.querySelector(entry.section).hidden = !view || entry.section !== view.section;
+    });
+    const keepDetail = view && location.hash.startsWith(`${view.hash}/`);
+    history.replaceState(null, '', view ? (keepDetail ? location.hash : view.hash) : '#dashboard');
   });
 });
 
-if (window.location.hash.startsWith('#creative-planning')) {
-  document.querySelector("button[data-view='광고소재 기획']")?.click();
-}
+const openedView = Object.entries(VIEWS).find(([, entry]) => window.location.hash.startsWith(entry.hash));
+if (openedView) document.querySelector(`button[data-view='${openedView[0]}']`)?.click();
 
 document.querySelectorAll('.week-button').forEach((button) => {
   button.addEventListener('click', () => {
@@ -818,3 +823,275 @@ teamNote.addEventListener('input', () => {
     lucide.createIcons();
   }, 500);
 });
+
+const filenameTool = document.querySelector('#filename-tool');
+if (filenameTool) {
+  // ── 구글시트 "[통합] 콘텐츠 T&D" 에서 옮겨온 표 ──────────────────────────
+  const MESSAGE_TYPES = [
+    ['페인포인트', 'painpoint'], ['베네핏', 'benefit'], ['소셜프루프', 'social'],
+    ['한정성/긴급성', 'urgency'], ['브랜딩', 'branding'], ['가격', 'price'],
+    ['음쓰usp', 'usp'], ['1분미만', '1miniute'], ['1분미만(2차가공)', '1miniute-secondaryUse'],
+    ['라이브', 'live'], ['오프라인이벤트', 'cjthemaisonoff'], ['프로모션', 'promotion'],
+    ['피맥스', 'pmax'], ['쇼핑검색', 'ss'], ['자사몰 메시지', 'message'],
+    ['플친 메시지', 'crm'], ['시즌', 'seasonal'], ['프로모션딥', 'promotion-2'],
+    ['바이럴', 'viral'], ['카카오메시지', 'kaako-message'], ['리뷰', 'review'],
+    ['대응', 'defence'], ['오늘의집', 'ozip'], ['관계 중심 소구', 'relationship'],
+    ['이마트/트레이더스', 'traders'], ['사회적증거', 'social'], ['세일즈행사', 'sales'],
+    ['신뢰성부여', 'trrust'], ['디자인', 'design'], ['사이즈', 'size'],
+    ['자동화CMR', 'acrm'], ['신혼부부', 'newlyweds'], ['무게', 'weight'],
+    ['자동', 'automatic'], ['전기세', 'electric'], ['신제품', 'new'],
+    ['명절', 'holiday'], ['유명인', 'celebrity'], ['사은품', 'gift'],
+    ['보관', 'keep'], ['김냉usp', 'usp'], ['더슬림usp', 'usp'],
+    ['소음', 'noise'], ['비교', 'comparison'], ['품절', 'comparison'],
+    ['분쇄', 'crush'], ['냄새', 'smell'], ['용량', 'volume'],
+    ['채널', 'channel'], ['주방', 'kitchen'], ['이유식', 'baby'],
+    ['에어드라이usp', 'usp'], ['미니usp', 'usp'], ['1인가구', '1person'],
+    ['윤경호', 'muse'], ['슬로건', 'slogan'], ['1등', '1st'],
+    ['인기', 'trend'],
+  ];
+
+  // 시트에 이미 발번된 마지막 순번 (여기부터 이어서 발번한다)
+  const SEQ_BASE = [
+    ['painpoint', 287], ['benefit', 535], ['social', 107], ['urgency', 448], ['branding', 38], ['price', 100],
+    ['usp', 216], ['1miniute', 1], ['1miniute-secondaryUse', 1], ['live', 64], ['cjthemaisonoff', 1], ['promotion', 50],
+    ['pmax', 1], ['ss', 1], ['seasonal', 96], ['promotion-2', 3], ['viral', 48], ['review', 18],
+    ['defence', 4], ['ozip', 2], ['relationship', 8], ['traders', 1], ['sales', 30], ['trrust', 5],
+    ['design', 14], ['size', 29], ['newlyweds', 13], ['weight', 2], ['automatic', 1], ['electric', 1],
+    ['new', 10], ['holiday', 4], ['celebrity', 77], ['gift', 15], ['keep', 1], ['noise', 2],
+    ['comparison', 26], ['crush', 4], ['smell', 4], ['volume', 4], ['channel', 6], ['kitchen', 1],
+    ['baby', 1], ['1person', 6], ['muse', 2], ['slogan', 1], ['1st', 1], ['trend', 1],
+  ];
+
+  const PRODUCTS = [
+    { token: '더플렌더MAX', folder: '더 플렌더 MAX' },
+    { token: '더플렌더mini', folder: '더 플렌더 mini' },
+    { token: '더플렌더', folder: '더 플렌더' },
+    { token: '더플렌더PLUS', folder: '더 플렌더 PLUS' },
+    { token: '더슬림', folder: '더 슬림' },
+    { token: '더시프트', folder: '더 시프트' },
+    { token: '더에어드라이', folder: '더 에어드라이' },
+  ];
+
+  const CHANNELS = ['네이버', '오늘의집', '카카오', 'CJ', 'G마켓', '29CM', '컬리', '이마트', '11번가',
+    '하이마트', '전자랜드', '현대홈쇼핑', '롯데', '자사몰', '공구', '오프라인', '이벤트', 'KOL 라이브'];
+  const PHASES = ['', '당일', '사전', '사후', '상시', '라이브'];
+  const SLOTS = ['피드', '스마트채널', '쇼핑소식', '비즈보드', '비즈보드-썸네일', '비즈보드-오브젝트(누끼)',
+    '디스플레이', '쇼핑', '커뮤니케이션', '소재 전체'];
+  const ROOT = '/앳홈_공유폴더/3. 마케팅팀/미닉스/☆페이드 광고';
+
+  const STORAGE_KEY = 'minix-filename-tool-v1';
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `f-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
+  const today = new Date();
+  const iso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+  const defaults = {
+    date: iso(today),
+    product: '더플렌더MAX',
+    channel: '네이버',
+    event: '',
+    phase: '',
+    slot: '피드',
+    type: MESSAGE_TYPES[0][0],
+    message: '',
+  };
+
+  let state = { ...defaults };
+  let issued = [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (stored && typeof stored === 'object') {
+      state = { ...defaults, ...(stored.state || {}) };
+      issued = Array.isArray(stored.issued) ? stored.issued : [];
+    }
+  } catch {
+    state = { ...defaults };
+    issued = [];
+  }
+  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify({ state, issued }));
+
+  const codeOf = (typeName) => (MESSAGE_TYPES.find(([name]) => name === typeName) || [, ''])[1];
+  const folderOf = (token) => (PRODUCTS.find((p) => p.token === token) || {}).folder || token;
+
+  // 행사명 = YYMMDD_제품_채널_행사명(구분)
+  const campaignName = () => {
+    const [year, month, day] = state.date.split('-');
+    const stamp = `${year.slice(2)}${month}${day}`;
+    const parts = [stamp, state.product, state.channel, state.event.trim()].filter(Boolean);
+    return parts.join('_') + (state.phase ? `(${state.phase})` : '');
+  };
+
+  // 파일위치 = /앳홈_공유폴더/3. 마케팅팀/미닉스/☆페이드 광고 (YY년)/제품/M월/행사명
+  const folderPath = () => {
+    const [year, month] = state.date.split('-');
+    return `${ROOT} (${year.slice(2)}년)/${folderOf(state.product)}/${Number(month)}월/${campaignName()}`;
+  };
+
+  // 파일명 = 메시지코드-순번 (시트의 마지막 번호에서 이어서)
+  const nextSequence = (code) => {
+    const base = (SEQ_BASE.find(([c]) => c === code) || [, 0])[1];
+    const mine = issued.filter((entry) => entry.code === code).map((entry) => entry.seq);
+    return Math.max(base, ...mine, 0) + 1;
+  };
+
+  const optionTags = (values, selected) => values
+    .map((value) => `<option value="${escapeHtml(value)}"${value === selected ? ' selected' : ''}>${escapeHtml(value || '없음')}</option>`)
+    .join('');
+
+  const render = () => {
+    const name = campaignName();
+    const path = folderPath();
+    const code = codeOf(state.type);
+    const preview = `${code}-${nextSequence(code)}`;
+    filenameTool.innerHTML = `
+      <div class="tool-head">
+        <div>
+          <h2>광고소재 파일명</h2>
+          <p>행사 정보를 넣으면 행사명 · 파일위치가 만들어지고, 메시지마다 고유 파일명을 이어서 발번합니다.</p>
+        </div>
+      </div>
+
+      <section class="tool-card">
+        <h3>1. 행사 정보</h3>
+        <div class="tool-grid">
+          <label>날짜<input type="date" data-field="date" value="${escapeHtml(state.date)}"></label>
+          <label>제품<select data-field="product">${optionTags(PRODUCTS.map((p) => p.token), state.product)}</select></label>
+          <label>채널<select data-field="channel">${optionTags(CHANNELS, state.channel)}</select></label>
+          <label>구분<select data-field="phase">${optionTags(PHASES, state.phase)}</select></label>
+          <label class="tool-wide">행사명<input type="text" data-field="event" value="${escapeHtml(state.event)}" placeholder="예: 음쓰해방위크"></label>
+        </div>
+        <div class="tool-output">
+          <div class="tool-result">
+            <span class="tool-result-label">행사명</span>
+            <code data-copy-text="${escapeHtml(name)}">${escapeHtml(name)}</code>
+            <button type="button" class="tool-copy" data-copy="${escapeHtml(name)}"><i data-lucide="copy"></i>복사</button>
+          </div>
+          <div class="tool-result">
+            <span class="tool-result-label">파일위치</span>
+            <code data-copy-text="${escapeHtml(path)}">${escapeHtml(path)}</code>
+            <button type="button" class="tool-copy" data-copy="${escapeHtml(path)}"><i data-lucide="copy"></i>복사</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tool-card">
+        <h3>2. 소재 파일명 발번</h3>
+        <div class="tool-grid">
+          <label>구좌<select data-field="slot">${optionTags(SLOTS, state.slot)}</select></label>
+          <label>메시지 유형<select data-field="type">${optionTags(MESSAGE_TYPES.map(([n]) => n), state.type)}</select></label>
+          <label class="tool-wide">메시지<input type="text" data-field="message" value="${escapeHtml(state.message)}" placeholder="예: 최대 43% 할인 타임딜"></label>
+        </div>
+        <div class="tool-issue">
+          <span>다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code></span>
+          <button type="button" class="tool-add"><i data-lucide="plus"></i>발번하기</button>
+        </div>
+      </section>
+
+      <section class="tool-card">
+        <div class="tool-list-head">
+          <h3>3. 발번 목록 <small>${issued.length}건</small></h3>
+          <div class="tool-list-actions">
+            <button type="button" class="tool-copy-all"${issued.length ? '' : ' disabled'}><i data-lucide="clipboard-list"></i>표로 복사</button>
+            <button type="button" class="tool-clear"${issued.length ? '' : ' disabled'}>전체 비우기</button>
+          </div>
+        </div>
+        ${issued.length ? `<div class="tool-table-wrap"><table class="tool-table">
+          <thead><tr><th>파일명</th><th>구좌</th><th>메시지 유형</th><th>메시지</th><th>행사명</th><th></th></tr></thead>
+          <tbody>${issued.map((entry) => `<tr data-id="${entry.id}">
+            <td><code>${escapeHtml(entry.filename)}</code></td>
+            <td>${escapeHtml(entry.slot)}</td>
+            <td>${escapeHtml(entry.type)}</td>
+            <td class="tool-message">${escapeHtml(entry.message)}</td>
+            <td class="tool-campaign">${escapeHtml(entry.campaign)}</td>
+            <td><button type="button" class="tool-remove" aria-label="삭제"><i data-lucide="x"></i></button></td>
+          </tr>`).join('')}</tbody>
+        </table></div>` : '<p class="tool-empty">아직 발번한 파일명이 없습니다.</p>'}
+      </section>`;
+    lucide.createIcons();
+  };
+
+  const copyText = (text, button) => {
+    const done = () => {
+      if (!button) return;
+      button.classList.add('is-copied');
+      window.setTimeout(() => button.classList.remove('is-copied'), 1200);
+    };
+    if (window.navigator.clipboard?.writeText) window.navigator.clipboard.writeText(text).then(done, () => window.prompt('복사하세요', text));
+    else window.prompt('복사하세요', text);
+    done();
+  };
+
+  filenameTool.addEventListener('input', (event) => {
+    const field = event.target.closest('[data-field]');
+    if (!field || field.tagName === 'SELECT' || field.type === 'date') return;
+    state[field.dataset.field] = field.value;
+    save();
+    const name = campaignName();
+    const path = folderPath();
+    filenameTool.querySelectorAll('[data-copy-text]').forEach((node, index) => {
+      const value = index === 0 ? name : path;
+      node.textContent = value;
+      node.dataset.copyText = value;
+      node.nextElementSibling.dataset.copy = value;
+    });
+  });
+
+  filenameTool.addEventListener('change', (event) => {
+    const field = event.target.closest('[data-field]');
+    // 텍스트 칸은 input 에서 이미 반영한다. 여기서 다시 그리면 blur 직후의 클릭이 삼켜진다.
+    if (!field || (field.tagName !== 'SELECT' && field.type !== 'date')) return;
+    state[field.dataset.field] = field.value;
+    save();
+    render();
+  });
+
+  filenameTool.addEventListener('click', (event) => {
+    const copy = event.target.closest('.tool-copy');
+    if (copy) return copyText(copy.dataset.copy, copy);
+
+    if (event.target.closest('.tool-add')) {
+      const code = codeOf(state.type);
+      const seq = nextSequence(code);
+      issued.unshift({
+        id: newId(),
+        filename: `${code}-${seq}`,
+        code,
+        seq,
+        slot: state.slot,
+        type: state.type,
+        message: state.message.trim(),
+        campaign: campaignName(),
+        path: folderPath(),
+      });
+      state.message = '';
+      save();
+      render();
+      return;
+    }
+
+    if (event.target.closest('.tool-copy-all')) {
+      const header = ['파일명', '구좌', '메시지 유형', '메시지', '행사명', '파일위치'].join('\t');
+      const body = issued.map((entry) => [entry.filename, entry.slot, entry.type, entry.message, entry.campaign, entry.path].join('\t'));
+      return copyText([header, ...body].join('\n'), event.target.closest('.tool-copy-all'));
+    }
+
+    if (event.target.closest('.tool-clear')) {
+      if (!window.confirm(`발번 목록 ${issued.length}건을 모두 지울까요?`)) return;
+      issued = [];
+      save();
+      render();
+      return;
+    }
+
+    const remove = event.target.closest('.tool-remove');
+    if (remove) {
+      const id = remove.closest('tr').dataset.id;
+      issued = issued.filter((entry) => entry.id !== id);
+      save();
+      render();
+    }
+  });
+
+  render();
+}
