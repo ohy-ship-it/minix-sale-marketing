@@ -372,3 +372,14 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .tool-modal-actions button:hover{background:#f4f4f1}
 .tool-modal-submit{border-color:#2f86d9 !important;background:#2f86d9 !important;color:#fff !important}
 .tool-modal-submit:hover{background:#2a78c4 !important}
+
+/* 직접 추가한 메시지 유형 */
+.tool-custom-types{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid #f0efeb}
+.tool-custom-label{margin-right:2px;font-size:11px;font-weight:700;color:#8c8c85}
+.tool-custom-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid #e3e2dc;border-radius:14px;background:#fff;padding:4px 5px 4px 10px}
+.tool-custom-chip.is-on{border-color:#bcd9f2;background:#f2f8fd}
+.tool-custom-chip b{font-size:11px;color:#20211e}
+.tool-custom-chip small{font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#8c8c85}
+.tool-custom-remove{display:inline-flex;align-items:center;border:0;background:none;color:#00000038;padding:2px;border-radius:50%;cursor:pointer}
+.tool-custom-remove:hover{color:#d44c47;background:#fdeae7}
+.tool-custom-remove svg{width:12px;display:block}

@@ -1118,6 +1118,13 @@ if (filenameTool) {
             <button type="button" class="tool-copy" data-copy="${escapeHtml(name)}"><i data-lucide="copy"></i>복사</button>
           </div>
         </div>
+        ${state.customTypes.length ? `<div class="tool-custom-types">
+          <span class="tool-custom-label">직접 추가한 유형</span>
+          ${state.customTypes.map((entry) => `<span class="tool-custom-chip${entry.name === state.type ? ' is-on' : ''}">
+            <b>${escapeHtml(entry.name)}</b><small>${escapeHtml(entry.code)}</small>
+            <button type="button" class="tool-custom-remove" data-name="${escapeHtml(entry.name)}" aria-label="${escapeHtml(entry.name)} 삭제" title="목록에서 삭제"><i data-lucide="x"></i></button>
+          </span>`).join('')}
+        </div>` : ''}
         <div class="tool-issue">
           <span>${code
             ? `다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code>`
@@ -1215,6 +1222,16 @@ if (filenameTool) {
   filenameTool.addEventListener('click', (event) => {
     if (event.target.closest('.tool-modal-submit')) return registerCustomType();
     if (event.target.closest('.tool-modal-cancel') || event.target.closest('.tool-modal-backdrop')) return closeCustomModal();
+
+    const removeCustom = event.target.closest('.tool-custom-remove');
+    if (removeCustom) {
+      const name = removeCustom.dataset.name;
+      state.customTypes = state.customTypes.filter((entry) => entry.name !== name);
+      if (state.type === name) state.type = '';
+      save();
+      render();
+      return;
+    }
 
     const copy = event.target.closest('.tool-copy');
     if (copy) return copyText(copy.dataset.copy, copy);
