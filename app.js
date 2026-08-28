@@ -76,6 +76,7 @@ if (creativeBoard) {
     eventDate: row.eventDate?.start ? { start: row.eventDate.start, end: row.eventDate.end || '' } : null,
     dueDate: row.dueDate?.start ? { start: row.dueDate.start, end: row.dueDate.end || '' } : null,
     sku: Array.isArray(row.sku) ? row.sku : [],
+    note: typeof row.note === 'string' ? row.note : '',
     mediaNotes: row.mediaNotes && typeof row.mediaNotes === 'object' ? { ...row.mediaNotes } : {},
     mediaCounts: row.mediaCounts && typeof row.mediaCounts === 'object' ? { ...row.mediaCounts } : {},
   });
@@ -303,6 +304,7 @@ if (creativeBoard) {
               <div class="peek-value">${propertyControl(row, prop)}</div>
             </div>`).join('')}
         </div>
+        <textarea class="peek-body" data-edit="note" rows="5" spellcheck="false" placeholder="매체를 고르지 않아도 여기에 자유롭게 적을 수 있습니다.">${escapeHtml(row.note)}</textarea>
         ${renderMediaNotes(row)}
         <footer class="peek-footer">
           <p class="peek-warning" hidden>제목을 입력해 주세요.</p>

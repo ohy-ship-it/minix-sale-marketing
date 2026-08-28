@@ -233,3 +233,9 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 
 /* 마지막 필터 줄(주차 / SKU) 아래 여백 */
 .week-filter-row:last-of-type,.filter-row:last-of-type{margin-bottom:0}
+
+/* 매체와 무관한 자유 입력란 */
+.peek-body{display:block;width:100%;margin-top:18px;border:1px solid #eeede8;border-radius:8px;background:#fff;padding:11px 12px;font:400 12px/1.75 inherit;color:#20211e;resize:vertical;min-height:96px;box-sizing:border-box}
+.peek-body:focus{outline:2px solid #20211e1f;outline-offset:-2px}
+.peek-body::placeholder{color:#b6b5b0}
+.media-notes{margin-top:14px}
