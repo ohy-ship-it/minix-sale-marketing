@@ -933,19 +933,37 @@ if (filenameTool) {
       seq,
       type: state.type,
       campaign: finalName(),
-      filename: `${code}-${seq}${state.vertical ? VERTICAL_SUFFIX : ''}`,
-      vertical: Boolean(state.vertical),
+      filename: `${code}-${seq}`,
+      vertical: false,
       createdAt: new Date().toISOString(),
     }, ...issued];
     watermark[code] = Math.max(watermark[code] || 0, seq);
+    if (state.vertical) syncVertical();
     save();
     render();
     scrollToList();
   };
 
-  // 건수는 번호 기준으로 센다 (같은 번호의 가로/세로는 한 건)
-  const issuedCount = () => new Set(issued.map((entry) => `${entry.code}-${entry.seq}`)).size;
-  const pending = () => issued.filter((entry) => !entry.sent);
+  // 세로형 토글: 켜면 가로 파일명마다 (세로) 를 하나씩 붙이고, 끄면 모두 없앤다
+  const syncVertical = () => {
+    if (!state.vertical) {
+      issued = issued.filter((entry) => !entry.vertical);
+      return;
+    }
+    const next = [];
+    issued.forEach((entry) => {
+      if (entry.vertical) return;
+      next.push(entry);
+      const twin = issued.find((other) => other.vertical && other.filename === entry.filename + VERTICAL_SUFFIX);
+      next.push(twin || { ...entry, id: newId(), filename: entry.filename + VERTICAL_SUFFIX, vertical: true, sent: false });
+    });
+    issued = next;
+  };
+
+  // 건수 · 시트 적재는 (세로) 를 뺀 파일명만 센다
+  const baseEntries = () => issued.filter((entry) => !entry.vertical);
+  const issuedCount = () => baseEntries().length;
+  const pending = () => baseEntries().filter((entry) => !entry.sent);
 
   const rowsForSheet = (list) => list.map((entry) => ({
     filename: entry.filename,
@@ -970,7 +988,11 @@ if (filenameTool) {
     if (!endpoint) {
       const header = ['파일명', '메시지 유형', '최종행사명'].join('\t');
       copyText([header, ...list.map((entry) => [entry.filename, entry.type, entry.campaign].join('\t'))].join('\n'), button);
-      window.alert('구글시트 연동이 아직 설정되지 않았습니다.\n\n' + list.length + '건을 클립보드에 복사했습니다. 열리는 시트에 붙여넣어 주세요.\n(톱니바퀴 버튼에서 Apps Script URL을 넣으면 자동 적재됩니다)');
+      window.alert(list.length + '건을 클립보드에 복사했습니다. 열리는 시트에 붙여넣어 주세요.\n\n'
+        + '자동 적재를 쓰려면 한 번만 설정하면 됩니다.\n'
+        + '1) 시트 → 확장 프로그램 → Apps Script\n'
+        + '2) 저장소의 google-apps-script.md 코드를 붙여넣고 웹 앱으로 배포\n'
+        + '3) 나오는 URL 을 [시트 연동] 버튼에 붙여넣기');
       window.open(SHEET_URL, '_blank', 'noopener');
       markSent(list);
       return;
@@ -995,7 +1017,7 @@ if (filenameTool) {
   const render = () => {
     const code = codeOf(state.type);
     const seq = code ? nextSequence(code) : 0;
-    const preview = code ? `${code}-${seq}${state.vertical ? VERTICAL_SUFFIX : ''}` : '';
+    const preview = code ? `${code}-${seq}` : '';
     const name = finalName();
     filenameTool.innerHTML = `
       <div class="tool-head">
@@ -1022,10 +1044,7 @@ if (filenameTool) {
           <span>${code
             ? `다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code>`
             : '메시지 유형을 고르면 발번됩니다.'}</span>
-          <span class="tool-issue-actions">
-            <button type="button" class="tool-add"${code ? '' : ' disabled'}><i data-lucide="plus"></i>같은 유형 하나 더</button>
-            <label class="tool-check"><input type="checkbox" data-field="vertical"${state.vertical ? ' checked' : ''}>세로형</label>
-          </span>
+          <button type="button" class="tool-add"${code ? '' : ' disabled'}><i data-lucide="plus"></i>같은 유형 하나 더</button>
         </div>
       </section>
 
@@ -1033,6 +1052,7 @@ if (filenameTool) {
         <div class="tool-list-head">
           <h3>발번 목록 <small>${issuedCount()}건</small></h3>
           <div class="tool-list-actions">
+            <label class="tool-check"><input type="checkbox" data-field="vertical"${state.vertical ? ' checked' : ''}>세로형</label>
             <button type="button" class="tool-copy-all"${issued.length ? '' : ' disabled'}><i data-lucide="clipboard-list"></i>표로 복사</button>
             <button type="button" class="tool-clear"${issued.length ? '' : ' disabled'}>전체 비우기</button>
           </div>
@@ -1055,7 +1075,7 @@ if (filenameTool) {
       <div class="tool-footer">
         <button type="button" class="tool-reset"><i data-lucide="eraser"></i>전체 지우기</button>
         <button type="button" class="tool-submit"${pending().length ? '' : ' disabled'}><i data-lucide="upload"></i>최종완료${pending().length ? ` (${pending().length})` : ''}</button>
-        <button type="button" class="tool-endpoint" title="구글시트 연동 설정"><i data-lucide="settings"></i></button>
+        <button type="button" class="tool-endpoint" title="구글시트 연동 설정"><i data-lucide="settings"></i>${localStorage.getItem(ENDPOINT_KEY) ? '시트 연동됨' : '시트 연동'}</button>
         <small>행사일자 · 행사채널 · 상품명 · 행사명 · 메시지 유형을 비웁니다. 발번 목록은 그대로 둡니다.</small>
       </div>`;
     lucide.createIcons();
@@ -1089,6 +1109,12 @@ if (filenameTool) {
     const field = event.target.closest('[data-field]');
     if (!field || (field.tagName !== 'SELECT' && field.type !== 'date' && field.type !== 'checkbox')) return;
     state[field.dataset.field] = field.type === 'checkbox' ? field.checked : field.value;
+    if (field.dataset.field === 'vertical') {
+      syncVertical();
+      save();
+      render();
+      return;
+    }
     save();
     // 메시지 유형을 고르는 순간 발번한다
     if (field.dataset.field === 'type') issueOne();
@@ -1123,7 +1149,7 @@ if (filenameTool) {
 
     if (event.target.closest('.tool-copy-all')) {
       const header = ['파일명', '메시지 유형', '최종행사명'].join('\t');
-      const body = issued.map((entry) => [entry.filename, entry.type, entry.campaign].join('\t'));
+      const body = baseEntries().map((entry) => [entry.filename, entry.type, entry.campaign].join('\t'));
       return copyText([header, ...body].join('\n'), event.target.closest('.tool-copy-all'));
     }
 
