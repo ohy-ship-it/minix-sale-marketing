@@ -862,12 +862,20 @@ if (filenameTool) {
     ['baby', 1], ['1person', 6], ['muse', 2], ['slogan', 1], ['1st', 1], ['trend', 1],
   ];
 
+  // 시트에서 실제로 쓰인 행사채널
+  const CHANNELS = ['네이버', '오늘의집', '카카오', 'CJ', 'G마켓', '29CM', '컬리', '이마트', '11번가',
+    '하이마트', '전자랜드', '현대홈쇼핑', '롯데홈쇼핑', '롯데', '쿠팡', '자사몰', '공구', '오프라인', '이벤트', 'KOL 라이브'];
+
   const VERTICAL_SUFFIX = '(세로)';
-  const STORAGE_KEY = 'minix-filename-tool-v2';
+  const STORAGE_KEY = 'minix-filename-tool-v3';
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `f-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const todayIso = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  };
 
-  const defaults = { type: MESSAGE_TYPES[0][0], campaign: '' };
+  const defaults = { date: todayIso(), channel: CHANNELS[0], event: '', type: MESSAGE_TYPES[0][0] };
   let state = { ...defaults };
   let issued = [];
   try {
@@ -884,6 +892,13 @@ if (filenameTool) {
 
   const codeOf = (typeName) => (MESSAGE_TYPES.find(([name]) => name === typeName) || [, ''])[1];
 
+  // 최종행사명 = 행사일자(YYMMDD) + 행사채널 + 행사명
+  const finalName = () => {
+    const [year, month, day] = (state.date || '').split('-');
+    const stamp = year && month && day ? `${year.slice(2)}${month}${day}` : '';
+    return [stamp, state.channel, state.event.trim()].filter(Boolean).join('_');
+  };
+
   // 파일명 = 메시지코드-순번 (시트의 마지막 번호에서 이어서)
   const nextSequence = (code) => {
     const base = (SEQ_BASE.find(([c]) => c === code) || [, 0])[1];
@@ -894,13 +909,13 @@ if (filenameTool) {
   const scrollToList = () => {
     const head = filenameTool.querySelector('.tool-list-head');
     if (!head || typeof head.scrollIntoView !== 'function') return;
-    try { head.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch { /* 스크롤을 지원하지 않는 환경 */ }
+    try { head.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch { /* 스크롤 미지원 환경 */ }
   };
 
   const issuePair = () => {
     const code = codeOf(state.type);
     const seq = nextSequence(code);
-    const base = { code, seq, type: state.type, campaign: state.campaign.trim() };
+    const base = { code, seq, type: state.type, campaign: finalName() };
     issued = [
       { ...base, id: newId(), filename: `${code}-${seq}` },
       { ...base, id: newId(), filename: `${code}-${seq}${VERTICAL_SUFFIX}`, vertical: true },
@@ -915,16 +930,26 @@ if (filenameTool) {
     const code = codeOf(state.type);
     const seq = nextSequence(code);
     const preview = `${code}-${seq}`;
+    const name = finalName();
     filenameTool.innerHTML = `
       <div class="tool-head">
         <h2>광고소재 파일명</h2>
-        <p>행사명을 적고 메시지 유형을 고르면 바로 발번되어 아래 목록에 쌓입니다. 가로용과 <b>${escapeHtml(VERTICAL_SUFFIX)}</b> 두 개가 한 쌍입니다.</p>
+        <p>행사 정보를 채우고 메시지 유형을 고르면 바로 발번되어 아래 목록에 쌓입니다. 가로용과 <b>${escapeHtml(VERTICAL_SUFFIX)}</b> 두 개가 한 쌍입니다.</p>
       </div>
 
       <section class="tool-card">
         <div class="tool-grid">
-          <label class="tool-wide">행사명<input type="text" data-field="campaign" value="${escapeHtml(state.campaign)}" placeholder="예: 260827_더플렌더mini_네이버_음쓰해방위크(당일)"></label>
-          <label>메시지 유형<select data-field="type">${MESSAGE_TYPES.map(([name]) => `<option${name === state.type ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
+          <label>행사일자<input type="date" data-field="date" value="${escapeHtml(state.date)}"></label>
+          <label>행사채널<select data-field="channel">${CHANNELS.map((value) => `<option${value === state.channel ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
+          <label class="tool-wide">행사명<input type="text" data-field="event" value="${escapeHtml(state.event)}" placeholder="예: 음쓰해방위크"></label>
+        </div>
+        <div class="tool-grid tool-grid-second">
+          <label>메시지 유형<select data-field="type">${MESSAGE_TYPES.map(([value]) => `<option${value === state.type ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
+          <div class="tool-final-box">
+            <span class="tool-final-label">최종행사명</span>
+            <code class="tool-final">${escapeHtml(name) || '<span class="tool-blank">행사 정보를 입력하세요</span>'}</code>
+            <button type="button" class="tool-copy" data-copy="${escapeHtml(name)}"><i data-lucide="copy"></i>복사</button>
+          </div>
         </div>
         <div class="tool-issue">
           <span>다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code> <code class="tool-next">${escapeHtml(preview + VERTICAL_SUFFIX)}</code></span>
@@ -941,7 +966,7 @@ if (filenameTool) {
           </div>
         </div>
         ${issued.length ? `<div class="tool-table-wrap"><table class="tool-table">
-          <thead><tr><th>파일명</th><th>메시지 유형</th><th>행사명</th><th></th></tr></thead>
+          <thead><tr><th>파일명</th><th>메시지 유형</th><th>최종행사명</th><th></th></tr></thead>
           <tbody>${issued.map((entry) => `<tr data-id="${entry.id}"${entry.vertical ? ' class="is-vertical"' : ''}>
             <td><code>${escapeHtml(entry.filename)}</code></td>
             <td>${escapeHtml(entry.type)}</td>
@@ -967,20 +992,27 @@ if (filenameTool) {
     done();
   };
 
-  // 텍스트 칸은 input 에서만 반영한다. change 에서 다시 그리면 blur 직후의 클릭이 삼켜진다.
+  // 텍스트 칸은 여기서만 반영한다. change 에서 다시 그리면 blur 직후의 클릭이 삼켜진다.
   filenameTool.addEventListener('input', (event) => {
     const field = event.target.closest('[data-field]');
-    if (!field || field.tagName === 'SELECT') return;
+    if (!field || field.tagName === 'SELECT' || field.type === 'date') return;
     state[field.dataset.field] = field.value;
     save();
+    const name = finalName();
+    const box = filenameTool.querySelector('.tool-final');
+    if (box) box.textContent = name;
+    const copy = filenameTool.querySelector('.tool-final-box .tool-copy');
+    if (copy) copy.dataset.copy = name;
   });
 
   filenameTool.addEventListener('change', (event) => {
     const field = event.target.closest('[data-field]');
-    if (!field || field.tagName !== 'SELECT') return;
+    if (!field || (field.tagName !== 'SELECT' && field.type !== 'date')) return;
     state[field.dataset.field] = field.value;
     save();
-    issuePair();
+    // 메시지 유형을 고르는 순간 발번한다
+    if (field.dataset.field === 'type') issuePair();
+    else render();
   });
 
   filenameTool.addEventListener('click', (event) => {
@@ -990,7 +1022,7 @@ if (filenameTool) {
     if (event.target.closest('.tool-add')) return issuePair();
 
     if (event.target.closest('.tool-copy-all')) {
-      const header = ['파일명', '메시지 유형', '행사명'].join('\t');
+      const header = ['파일명', '메시지 유형', '최종행사명'].join('\t');
       const body = issued.map((entry) => [entry.filename, entry.type, entry.campaign].join('\t'));
       return copyText([header, ...body].join('\n'), event.target.closest('.tool-copy-all'));
     }
