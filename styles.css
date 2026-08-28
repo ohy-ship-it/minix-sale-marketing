@@ -252,3 +252,8 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .media-drag svg{width:13px}
 .media-note.is-dragging{opacity:.45}
 .media-note.is-drop-target{outline:2px dashed #20211e59;outline-offset:2px}
+
+/* 날짜 옆 요일 표기 */
+.peek-date-text{font-size:11px;color:#8c8c85;white-space:nowrap}
+.media-due-text{font-size:10px;font-weight:700;color:#6b6b64;white-space:nowrap}
+.media-count input[type="date"]{width:auto;cursor:pointer}

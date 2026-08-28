@@ -127,10 +127,18 @@ if (creativeBoard) {
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+  const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+  const isIsoDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
+  const weekdayOf = (value) => {
+    if (!isIsoDay(value)) return '';
+    const at = new Date(`${value}T00:00:00`);
+    return Number.isNaN(at.getTime()) ? '' : WEEKDAYS[at.getDay()];
+  };
   const formatDay = (value) => {
     if (!value) return '';
     const [year, month, day] = value.split('-');
-    return `${year}년 ${Number(month)}월 ${Number(day)}일`;
+    const weekday = weekdayOf(value);
+    return `${year}년 ${Number(month)}월 ${Number(day)}일${weekday ? ` (${weekday})` : ''}`;
   };
   const formatDate = (date) => {
     if (!date?.start) return '';
@@ -263,6 +271,7 @@ if (creativeBoard) {
         <span class="peek-arrow"${value?.end ? '' : ' hidden'}>→</span>
         <input type="date" data-edit="${prop.key}" data-part="end" value="${escapeHtml(value?.end || '')}"${value?.end ? '' : ' hidden'}>
         <button type="button" class="peek-range" data-edit="${prop.key}">${value?.end ? '종료일 제거' : '종료일 추가'}</button>
+        ${value?.start ? `<span class="peek-date-text">${escapeHtml(formatDate(value))}</span>` : ''}
       </span>`;
     }
     const selected = prop.type === 'multi_select' ? value : (value ? [value] : []);
@@ -284,7 +293,8 @@ if (creativeBoard) {
             <span class="chip chip-${colorOf(propByKey.media, name)}">${escapeHtml(name)}</span>
           </span>
           <span class="media-note-fields">
-            <label class="media-count">전달 희망일정<input type="text" data-due="${escapeHtml(name)}" value="${escapeHtml(row.mediaDue[name] ?? '')}" placeholder="예: 9월 10일"></label>
+            <label class="media-count">전달 희망일정<input type="date" data-due="${escapeHtml(name)}" value="${isIsoDay(row.mediaDue[name]) ? escapeHtml(row.mediaDue[name]) : ''}"></label>
+            ${row.mediaDue[name] ? `<span class="media-due-text">${escapeHtml(isIsoDay(row.mediaDue[name]) ? formatDay(row.mediaDue[name]) : row.mediaDue[name])}</span>` : ''}
             <label class="media-count">소재 갯수<input type="text" data-count="${escapeHtml(name)}" value="${escapeHtml(row.mediaCounts[name] ?? '')}" placeholder="예: 3종"></label>
           </span>
         </div>
@@ -431,15 +441,6 @@ if (creativeBoard) {
   });
 
   peek.addEventListener('input', (event) => {
-    const due = event.target.closest('[data-due]');
-    if (due) {
-      const row = rows.find((entry) => entry.id === openId);
-      if (!row) return;
-      if (due.value === '') delete row.mediaDue[due.dataset.due];
-      else row.mediaDue[due.dataset.due] = due.value;
-      save();
-      return;
-    }
     const count = event.target.closest('[data-count]');
     if (count) {
       const row = rows.find((entry) => entry.id === openId);
@@ -466,6 +467,15 @@ if (creativeBoard) {
   });
 
   peek.addEventListener('change', (event) => {
+    const due = event.target.closest('[data-due]');
+    if (due) {
+      const row = rows.find((entry) => entry.id === openId);
+      if (!row) return;
+      if (due.value === '') delete row.mediaDue[due.dataset.due];
+      else row.mediaDue[due.dataset.due] = due.value;
+      commit();
+      return;
+    }
     const field = event.target.closest('[data-edit]');
     if (!field) return;
     const row = rows.find((entry) => entry.id === openId);
