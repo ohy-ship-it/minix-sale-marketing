@@ -79,6 +79,7 @@ if (creativeBoard) {
     mediaNotes: row.mediaNotes && typeof row.mediaNotes === 'object' ? { ...row.mediaNotes } : {},
   });
 
+  const yearFor = (date) => `${date.getFullYear()}년`;
   const monthFor = (date) => `${date.getMonth() + 1}월`;
   const weekNoFor = (date) => `${Math.ceil(date.getDate() / 7)}주차`;
 
@@ -87,13 +88,14 @@ if (creativeBoard) {
     const [, oldMonth, oldWeek] = /^\s*(\d+월)\s*(.*)$/.exec(week.label || '') || [];
     return {
       id: week.id || newId(),
+      year: week.year || yearFor(new Date()),
       month: week.month || oldMonth || monthFor(new Date()),
       week: week.week || oldWeek || weekNoFor(new Date()),
       rows: Array.isArray(week.rows) ? week.rows.map(normalize) : [],
     };
   };
 
-  const weekName = (week) => `${week.month} ${week.week}`;
+  const weekName = (week) => `${week.year} ${week.month} ${week.week}`;
   // 요청 건수는 SKU 단위로 센다 (카드 하나에 SKU 2개면 2건, SKU 미지정 카드는 1건)
   const skuCount = (week) => week.rows.reduce((sum, row) => sum + Math.max(row.sku.length, 1), 0);
   const shareLink = (week) => `${window.location.origin}${window.location.pathname}#creative-planning/${week.id}`;
@@ -102,7 +104,7 @@ if (creativeBoard) {
     let legacy = null;
     try { legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null'); } catch { legacy = null; }
     const seedRows = Array.isArray(legacy) && legacy.length ? legacy : SEED;
-    return [normalizeWeek({ month: '8월', week: '4주차', rows: seedRows })];
+    return [normalizeWeek({ year: '2026년', month: '8월', week: '4주차', rows: seedRows })];
   };
 
   let weeks;
@@ -168,8 +170,27 @@ if (creativeBoard) {
       || row[facet.key].some((value) => active[facet.key].includes(value))))
     : rows);
 
+  // 담당자 필터 위에 SKU별 건수를 보여준다 (카드의 SKU 수만큼, 미지정은 1건)
+  const renderSkuSummary = () => {
+    const shown = visibleRows();
+    const tally = new Map();
+    shown.forEach((row) => {
+      if (!row.sku.length) tally.set('미지정', (tally.get('미지정') || 0) + 1);
+      else row.sku.forEach((name) => tally.set(name, (tally.get(name) || 0) + 1));
+    });
+    const order = [...SKU_OPTIONS.map(([name]) => name), '미지정'];
+    const entries = order.filter((name) => tally.has(name));
+    const total = [...tally.values()].reduce((sum, count) => sum + count, 0);
+    if (!entries.length) return '<div class="sku-summary"><span class="sku-summary-label"><i data-lucide="layers"></i>SKU 건수</span><span class="sku-summary-empty">요청 없음</span></div>';
+    return `<div class="sku-summary">
+      <span class="sku-summary-label"><i data-lucide="layers"></i>SKU 건수</span>
+      ${entries.map((name) => `<span class="sku-tally"><span class="chip chip-${name === '미지정' ? 'gray' : colorOf(propByKey.sku, name)}">${escapeHtml(name)}</span><b>${tally.get(name)}건</b></span>`).join('')}
+      <span class="sku-summary-total">합계 ${total}건</span>
+    </div>`;
+  };
+
   const renderFilters = () => {
-    filters.innerHTML = FACETS.map((facet) => `<div class="filter-row${active[facet.key].length ? ' is-active' : ''}">
+    filters.innerHTML = renderSkuSummary() + FACETS.map((facet) => `<div class="filter-row${active[facet.key].length ? ' is-active' : ''}">
         <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
         ${facet.options.map(([name, color]) => `<button type="button" class="filter-chip chip chip-${color}${active[facet.key].includes(name) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(name)}" aria-pressed="${active[facet.key].includes(name)}">${escapeHtml(name)}</button>`).join('')}
       </div>`).join('')
@@ -445,11 +466,12 @@ if (creativeBoard) {
   });
 
   let editingWeekId = null;
-  const weekFilter = { month: [], week: [] };
   const WEEK_FACETS = [
+    { key: 'year', label: '년도', icon: 'calendar-range', color: 'blue' },
     { key: 'month', label: '월', icon: 'calendar', color: 'default' },
     { key: 'week', label: '주차', icon: 'calendar-days', color: 'orange' },
   ];
+  const weekFilter = Object.fromEntries(WEEK_FACETS.map((facet) => [facet.key, []]));
   const byNumber = (a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0);
   const weekOptions = (key) => [...new Set(weeks.map((week) => week[key]).filter(Boolean))].sort(byNumber);
   const anyWeekFilter = () => WEEK_FACETS.some((facet) => weekFilter[facet.key].length > 0);
@@ -470,24 +492,26 @@ if (creativeBoard) {
         </div>`).join('')}
         ${anyWeekFilter() ? `<div class="filter-summary"><button type="button" class="week-filter-clear">전체 보기</button><span class="filter-count">${filteredWeeks().length}건 표시</span></div>` : ''}
       </div>
-      <table class="week-table">
-        <thead><tr><th>월</th><th>주차</th><th>건수</th><th>수정</th><th>공유</th><th>삭제</th></tr></thead>
+      <div class="week-table-wrap"><table class="week-table">
+        <thead><tr><th>년도</th><th>월</th><th>주차</th><th>건수</th><th>수정</th><th>공유</th><th>삭제</th></tr></thead>
         <tbody>${filteredWeeks().map((week) => (week.id === editingWeekId ? `
           <tr class="week-row is-editing" data-week="${week.id}">
+            <td><input class="week-input" data-field="year" value="${escapeHtml(week.year)}" placeholder="2026년"></td>
             <td><input class="week-input" data-field="month" value="${escapeHtml(week.month)}" placeholder="8월"></td>
             <td><input class="week-input" data-field="week" value="${escapeHtml(week.week)}" placeholder="4주차"></td>
             <td class="week-count">${skuCount(week)}건</td>
             <td class="week-edit-actions" colspan="3"><button type="button" class="week-save">저장</button><button type="button" class="week-cancel">취소</button></td>
           </tr>` : `
           <tr class="week-row" data-week="${week.id}">
+            <td class="week-year">${escapeHtml(week.year)}</td>
             <td class="week-month">${escapeHtml(week.month)}</td>
             <td><span class="chip chip-orange">${escapeHtml(week.week)}</span></td>
             <td class="week-count">${skuCount(week)}건</td>
             <td><button type="button" class="week-edit" aria-label="수정"><i data-lucide="pencil"></i></button></td>
             <td><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
             <td><button type="button" class="week-delete">삭제</button></td>
-          </tr>`)).join('') || '<tr class="week-empty"><td colspan="6">해당하는 주차가 없습니다.</td></tr>'}</tbody>
-      </table>`;
+          </tr>`)).join('') || '<tr class="week-empty"><td colspan="7">해당하는 주차가 없습니다.</td></tr>'}</tbody>
+      </table></div>`;
     lucide.createIcons();
   };
 
@@ -516,7 +540,7 @@ if (creativeBoard) {
 
   weekList.addEventListener('click', (event) => {
     if (event.target.closest('.week-add')) {
-      const week = normalizeWeek({ month: monthFor(new Date()), week: weekNoFor(new Date()) });
+      const week = normalizeWeek({ year: yearFor(new Date()), month: monthFor(new Date()), week: weekNoFor(new Date()) });
       weeks.unshift(week);
       editingWeekId = week.id;
       // 필터가 켜져 있으면 새 행이 걸러져 보이지 않으므로 해제한다
