@@ -60,7 +60,8 @@ if (creativeBoard) {
   form.innerHTML = `<div class="modal-backdrop"></div><div class="modal-panel"><div class="modal-heading"><h2>광고소재 요청</h2><button type="button" class="modal-close" aria-label="닫기">×</button></div><label>요청 제목<input name="title" required placeholder="예: 9월 프로모션 배너"></label><label>일정<input name="date" placeholder="예: 2026년 9월 10일"></label><label>상품<input name="product" placeholder="예: 더플렌더mini"></label><label>담당자<input name="assignee" placeholder="예: 홍길동"></label><label>상태<select name="status"><option>요청</option><option>진행 중</option><option>전달 완료</option><option>최종 완료(세팅)</option><option>홀딩/리터치</option></select></label><button class="modal-submit" type="submit">보드에 추가</button></div>`;
   creativeBoard.appendChild(form);
   let editingCard = null;
-  const openForm = () => { editingCard = null; form.reset(); form.classList.add('is-visible'); form.querySelector('input').focus(); };
+  const submitButton = form.querySelector('.modal-submit');
+  const openForm = () => { editingCard = null; form.reset(); submitButton.textContent = '보드에 추가'; form.classList.add('is-visible'); form.querySelector('input').focus(); };
   const openEditor = (card) => {
     editingCard = card;
     form.elements.title.value = card.querySelector('h3').textContent;
@@ -68,6 +69,7 @@ if (creativeBoard) {
     form.elements.product.value = card.dataset.product || card.querySelector('.chips span')?.textContent || '';
     form.elements.assignee.value = card.dataset.assignee || card.querySelectorAll('.chips span')[1]?.textContent || '';
     form.elements.status.value = card.closest('.notion-column').querySelector('.notion-column-title span').textContent.replace('● ', '');
+    submitButton.textContent = '수정 저장';
     form.classList.add('is-visible');
     form.querySelector('input').focus();
   };
