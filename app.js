@@ -11,16 +11,21 @@ document.querySelectorAll('.tree-group').forEach((group) => {
 
 document.querySelectorAll('[data-view]').forEach((item) => {
   item.addEventListener('click', () => {
+    const isCreativePlanning = item.dataset.view === '광고소재 기획';
     document.querySelectorAll('[data-view]').forEach((entry) => entry.classList.remove('is-active'));
     item.classList.add('is-active');
     document.querySelector('#page-heading').textContent = item.dataset.view;
-    const isCreativePlanning = item.dataset.view === '광고소재 기획';
     document.querySelector('.target-section').hidden = isCreativePlanning;
     document.querySelector('.channel-section').hidden = isCreativePlanning;
     document.querySelector('.notes-section').hidden = isCreativePlanning;
     document.querySelector('#creative-board').hidden = !isCreativePlanning;
+    history.replaceState(null, '', isCreativePlanning ? '#creative-planning' : '#dashboard');
   });
 });
+
+if (window.location.hash === '#creative-planning') {
+  document.querySelector("button[data-view='광고소재 기획']")?.click();
+}
 
 document.querySelectorAll('.week-button').forEach((button) => {
   button.addEventListener('click', () => {
