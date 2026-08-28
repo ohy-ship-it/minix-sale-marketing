@@ -881,6 +881,9 @@ if (filenameTool) {
 
   const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E/edit';
   const ENDPOINT_KEY = 'minix-filename-endpoint';
+  // 배포한 Apps Script 웹 앱 (톱니바퀴에서 다른 주소로 덮어쓸 수 있다)
+  const DEFAULT_ENDPOINT = 'https://script.google.com/a/macros/athomecorp.com/s/AKfycbwjk8yxc-69CkjC7Y8Fmq4E5i2FYRZwuV1gobAvbw8l2RviwG6vSMD7bqmHuDWiR-i-/exec';
+  const endpointUrl = () => localStorage.getItem(ENDPOINT_KEY) || DEFAULT_ENDPOINT;
 
   const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', type: MESSAGE_TYPES[0][0], vertical: false };
   let state = { ...defaults };
@@ -982,9 +985,9 @@ if (filenameTool) {
   const sendToSheet = (button) => {
     const list = pending();
     if (!list.length) return;
-    const endpoint = localStorage.getItem(ENDPOINT_KEY);
+    const endpoint = endpointUrl();
 
-    // 연동 전에는 표로 복사한 뒤 시트를 열어 붙여넣을 수 있게 한다
+    // 주소가 없을 때만 표로 복사한 뒤 시트를 열어 붙여넣게 한다
     if (!endpoint) {
       const header = ['파일명', '메시지 유형', '최종행사명'].join('\t');
       copyText([header, ...list.map((entry) => [entry.filename, entry.type, entry.campaign].join('\t'))].join('\n'), button);
@@ -1010,7 +1013,11 @@ if (filenameTool) {
       .catch((error) => {
         button.disabled = false;
         button.classList.remove('is-sending');
-        window.alert('시트 적재에 실패했습니다.\n' + error.message + '\n\n톱니바퀴 버튼에서 Apps Script URL을 확인해 주세요.');
+        window.alert('시트 적재에 실패했습니다.\n' + error.message + '\n\n'
+          + '가장 흔한 원인은 웹 앱 접근 권한입니다.\n'
+          + 'Apps Script → 배포 → 배포 관리 → 편집(연필) →\n'
+          + '[액세스 권한이 있는 사용자] 를 "모든 사용자" 로 바꾸고 새 버전으로 배포해 주세요.\n\n'
+          + '그 전에는 [표로 복사] 로 시트에 붙여넣어 주세요.');
       });
   };
 
@@ -1075,7 +1082,7 @@ if (filenameTool) {
       <div class="tool-footer">
         <button type="button" class="tool-reset"><i data-lucide="eraser"></i>전체 지우기</button>
         <button type="button" class="tool-submit"${pending().length ? '' : ' disabled'}><i data-lucide="upload"></i>최종완료${pending().length ? ` (${pending().length})` : ''}</button>
-        <button type="button" class="tool-endpoint" title="구글시트 연동 설정"><i data-lucide="settings"></i>${localStorage.getItem(ENDPOINT_KEY) ? '시트 연동됨' : '시트 연동'}</button>
+        <button type="button" class="tool-endpoint" title="구글시트 연동 설정"><i data-lucide="settings"></i>${localStorage.getItem(ENDPOINT_KEY) ? '시트 연동(직접 지정)' : '시트 연동됨'}</button>
         <small>행사일자 · 행사채널 · 상품명 · 행사명 · 메시지 유형을 비웁니다. 발번 목록은 그대로 둡니다.</small>
       </div>`;
     lucide.createIcons();
@@ -1128,10 +1135,9 @@ if (filenameTool) {
     if (event.target.closest('.tool-add')) return issueOne();
 
     if (event.target.closest('.tool-endpoint')) {
-      const current = localStorage.getItem(ENDPOINT_KEY) || '';
-      const next = window.prompt('구글시트에 적재할 Apps Script 웹 앱 URL을 넣어 주세요.\n(비우면 연동을 끕니다)', current);
+      const next = window.prompt('구글시트에 적재할 Apps Script 웹 앱 URL 입니다.\n(비우면 기본 주소로 되돌립니다)', endpointUrl());
       if (next === null) return;
-      if (next.trim()) localStorage.setItem(ENDPOINT_KEY, next.trim());
+      if (next.trim() && next.trim() !== DEFAULT_ENDPOINT) localStorage.setItem(ENDPOINT_KEY, next.trim());
       else localStorage.removeItem(ENDPOINT_KEY);
       render();
       return;
