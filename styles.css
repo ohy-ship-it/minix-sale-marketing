@@ -162,7 +162,7 @@ body:has(#creative-board:not([hidden])) .topbar{display:none}
 .week-table-wrap{overflow-x:auto}
 
 /* 보드의 SKU별 건수 */
-.sku-summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-bottom:20px;padding:9px 11px;border:1px solid #eeede8;border-radius:8px;background:#fcfcfa}
+.sku-summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-bottom:6px;padding:9px 11px;border:1px solid #eeede8;border-radius:8px;background:#fcfcfa}
 .sku-summary-label{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#8c8c85}
 .sku-summary-label svg{width:14px}
 .sku-tally{display:inline-flex;align-items:center;gap:5px}
@@ -257,3 +257,12 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .peek-date-text{font-size:11px;color:#8c8c85;white-space:nowrap}
 .media-due-text{font-size:10px;font-weight:700;color:#6b6b64;white-space:nowrap}
 .media-count input[type="date"]{width:auto;cursor:pointer}
+
+/* 건수 요약 묶음 */
+.board-summaries{margin-bottom:20px}
+.board-summaries .sku-summary:last-child{margin-bottom:0}
+
+/* 매체 칸 삭제 */
+.media-remove{display:inline-flex;align-items:center;border:0;background:none;color:#00000038;padding:2px;margin-left:2px;cursor:pointer;border-radius:4px}
+.media-remove:hover{color:#d44c47;background:#ffffffb3}
+.media-remove svg{width:13px}

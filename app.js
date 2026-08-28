@@ -184,27 +184,45 @@ if (creativeBoard) {
       || row[facet.key].some((value) => active[facet.key].includes(value))))
     : rows);
 
-  // 담당자 필터 위에 SKU별 건수를 보여준다 (카드의 SKU 수만큼, 미지정은 1건)
-  const renderSkuSummary = () => {
-    const shown = visibleRows();
-    const tally = new Map();
-    shown.forEach((row) => {
-      if (!row.sku.length) tally.set('미지정', (tally.get('미지정') || 0) + 1);
-      else row.sku.forEach((name) => tally.set(name, (tally.get(name) || 0) + 1));
-    });
-    const order = [...SKU_OPTIONS.map(([name]) => name), '미지정'];
-    const entries = order.filter((name) => tally.has(name));
-    const total = [...tally.values()].reduce((sum, count) => sum + count, 0);
-    if (!entries.length) return '<div class="sku-summary"><span class="sku-summary-label"><i data-lucide="layers"></i>SKU 건수</span><span class="sku-summary-empty">요청 없음</span></div>';
+  // 요청 건수는 카드의 SKU 수만큼 센다 (SKU 미지정 카드는 1건)
+  const weightOf = (row) => Math.max(row.sku.length, 1);
+
+  const renderTally = (label, icon, tally, colorFor) => {
+    const entries = [...tally.entries()];
+    if (!entries.length) return `<div class="sku-summary"><span class="sku-summary-label"><i data-lucide="${icon}"></i>${escapeHtml(label)}</span><span class="sku-summary-empty">요청 없음</span></div>`;
+    const total = entries.reduce((sum, [, count]) => sum + count, 0);
     return `<div class="sku-summary">
-      <span class="sku-summary-label"><i data-lucide="layers"></i>SKU 건수</span>
-      ${entries.map((name) => `<span class="sku-tally"><span class="chip chip-${name === '미지정' ? 'gray' : colorOf(propByKey.sku, name)}">${escapeHtml(name)}</span><b>${tally.get(name)}건</b></span>`).join('')}
+      <span class="sku-summary-label"><i data-lucide="${icon}"></i>${escapeHtml(label)}</span>
+      ${entries.map(([name, count]) => `<span class="sku-tally"><span class="chip chip-${colorFor(name)}">${escapeHtml(name)}</span><b>${count}건</b></span>`).join('')}
       <span class="sku-summary-total">합계 ${total}건</span>
     </div>`;
   };
 
+  const renderSkuSummary = () => {
+    const counts = new Map();
+    visibleRows().forEach((row) => {
+      const names = row.sku.length ? row.sku : ['미지정'];
+      names.forEach((name) => counts.set(name, (counts.get(name) || 0) + 1));
+    });
+    const ordered = new Map([...SKU_OPTIONS.map(([name]) => name), '미지정']
+      .filter((name) => counts.has(name))
+      .map((name) => [name, counts.get(name)]));
+    return renderTally('SKU 건수', 'layers', ordered, (name) => (name === '미지정' ? 'gray' : colorOf(propByKey.sku, name)));
+  };
+
+  // 행사별 건수 (행사명 기준, 같은 단위로 센다)
+  const renderEventSummary = () => {
+    const counts = new Map();
+    visibleRows().forEach((row) => {
+      const name = row.event.trim() || '미지정';
+      counts.set(name, (counts.get(name) || 0) + weightOf(row));
+    });
+    const ordered = new Map([...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko')));
+    return renderTally('행사별 건수', 'calendar-check', ordered, (name) => (name === '미지정' ? 'gray' : 'default'));
+  };
+
   const renderFilters = () => {
-    filters.innerHTML = renderSkuSummary() + FACETS.map((facet) => `<div class="filter-row${active[facet.key].length ? ' is-active' : ''}">
+    filters.innerHTML = `<div class="board-summaries">${renderSkuSummary()}${renderEventSummary()}</div>` + FACETS.map((facet) => `<div class="filter-row${active[facet.key].length ? ' is-active' : ''}">
         <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
         <span class="filter-options">${facet.options.map(([name, color]) => `<button type="button" class="filter-chip chip chip-${color}${active[facet.key].includes(name) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(name)}" aria-pressed="${active[facet.key].includes(name)}">${escapeHtml(name)}</button>`).join('')}</span>
       </div>`).join('')
@@ -291,6 +309,7 @@ if (creativeBoard) {
           <span class="media-note-name">
             <button type="button" class="media-drag" aria-label="순서 변경" title="끌어서 순서 변경"><i data-lucide="grip-vertical"></i></button>
             <span class="chip chip-${colorOf(propByKey.media, name)}">${escapeHtml(name)}</span>
+            <button type="button" class="media-remove" aria-label="칸 삭제" title="이 칸 삭제"><i data-lucide="x"></i></button>
           </span>
           <span class="media-note-fields">
             <label class="media-count">전달 희망일정<input type="date" data-due="${escapeHtml(name)}" value="${isIsoDay(row.mediaDue[name]) ? escapeHtml(row.mediaDue[name]) : ''}"></label>
@@ -396,6 +415,16 @@ if (creativeBoard) {
       closePeek();
       save();
       renderBoard();
+      return;
+    }
+    const removeMedia = event.target.closest('.media-remove');
+    if (removeMedia) {
+      const name = removeMedia.closest('.media-note').dataset.media;
+      row.media = row.media.filter((entry) => entry !== name);
+      delete row.mediaNotes[name];
+      delete row.mediaCounts[name];
+      delete row.mediaDue[name];
+      commit();
       return;
     }
     if (event.target.closest('.peek-done')) {
