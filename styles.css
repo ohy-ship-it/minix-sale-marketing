@@ -400,7 +400,9 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .tool-custom-remove svg{width:12px;display:block}
 
 /* 광고소재 검수 (외부 도구 임베드) */
+/* display 를 주면 hidden 속성이 무시되므로 함께 지정한다 */
 .checker-view{display:flex;flex-direction:column;background:#fbfbf8}
+.checker-view[hidden]{display:none}
 .checker-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px}
 .checker-head h2{margin:0 0 4px;font-size:16px}
 .checker-head p{margin:0;font-size:11px;color:#8c8c85}
