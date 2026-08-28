@@ -5,6 +5,12 @@ if (creativeBoard) {
   creativeBoard.innerHTML = `
     <div class="notion-toolbar"><button class="board-view-button" type="button"><i data-lucide="columns-3"></i>보드 보기</button><div class="board-tools"><i data-lucide="list-filter"></i><i data-lucide="arrow-down-up"></i><i data-lucide="zap"></i><i data-lucide="wand-sparkles"></i><i data-lucide="search"></i><i data-lucide="sliders-horizontal"></i><button class="new-page-button" type="button"><i data-lucide="plus"></i>새로 만들기 <i data-lucide="chevron-down"></i></button></div></div>
     <div class="notion-board"><div class="notion-column request-column"><div class="notion-column-title"><span>● 요청</span><b>1</b></div><article class="notion-card"><h3>[당일/사후] 카카오톡딜워크</h3><p>2026년 9월 10일 → 2026년 9월 13일</p><span class="setting">□ 세팅</span><div class="chips"><span>더클렌딘mini</span><span>오혜영</span><span>이정민</span></div><small>2026년 9월 8일</small></article><button class="new-page" type="button"><i data-lucide="plus"></i>새 페이지</button></div><div class="notion-column progress-column"><div class="notion-column-title"><span>● 진행 중</span><b>3</b></div><article class="notion-card"><h3>[상시/오픈-온라인] 하이마트 미니 런칭기념 행사</h3><p>2026년 9월 6일 → 2026년 9월 8일</p><span class="setting">□ 세팅</span><div class="chips"><span>더클렌딘mini</span><span>김서영</span><span>김진빈</span></div><small>2026년 9월 3일</small></article><article class="notion-card"><h3>[당일/상시] 빕타나는 생활 MLC</h3><p>2026년 9월 2일 → 2026년 9월 4일</p><span class="setting">□ 세팅</span><div class="chips"><span>더클렌딘mini</span><span>더클렌딘max</span><span>이정민</span><span>오혜영</span></div><small>2026년 8월 31일</small></article><article class="notion-card"><h3>[당일] 오늘의집 라이브</h3><p>2026년 9월 9일</p><span class="setting">□ 세팅</span><div class="chips"><span>더클렌딘mini</span><span>오혜영</span><span>김서영</span></div><small>2026년 9월 7일</small></article><button class="new-page" type="button"><i data-lucide="plus"></i>새 페이지</button></div><div class="notion-column delivered-column"><div class="notion-column-title"><span>● 전달 완료</span><b>1</b></div><article class="notion-card"><h3>[당일] 현대홈쇼핑 MLC</h3><p>2026년 8월 31일</p><span class="setting">□ 세팅</span><div class="chips"><span>네어드라이</span><span>김진빈</span><span>이정민</span></div><small>2026년 8월 27일</small></article><button class="new-page" type="button"><i data-lucide="plus"></i>새 페이지</button></div><div class="notion-column final-column"><div class="notion-column-title"><span>● 최종 완료(세팅)</span><b>0</b></div><button class="new-page" type="button"><i data-lucide="plus"></i>새 페이지</button></div><div class="notion-column hold-column"><div class="notion-column-title"><span>● 홀딩/리터치</span><b>0</b></div><button class="new-page" type="button"><i data-lucide="plus"></i>새 페이지</button></div></div>`;
+  creativeBoard.innerHTML = creativeBoard.innerHTML
+    .replaceAll('카카오톡딜워크', '카카오톡딜위크')
+    .replaceAll('더클렌딘mini', '더플렌더mini')
+    .replaceAll('더클렌딘max', '더플렌더max')
+    .replaceAll('빕타나는 생활 MLC', '브티나는 생활 MLC')
+    .replaceAll('네어드라이', '더 에어드라이');
   lucide.createIcons();
 }
 
@@ -23,6 +29,7 @@ document.querySelectorAll('[data-view]').forEach((item) => {
     document.querySelectorAll('[data-view]').forEach((entry) => entry.classList.remove('is-active'));
     item.classList.add('is-active');
     document.querySelector('#page-heading').textContent = item.dataset.view;
+    document.querySelector('.content-tabs').hidden = isCreativePlanning;
     document.querySelector('.target-section').hidden = isCreativePlanning;
     document.querySelector('.channel-section').hidden = isCreativePlanning;
     document.querySelector('.notes-section').hidden = isCreativePlanning;
