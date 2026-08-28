@@ -98,7 +98,7 @@ if (creativeBoard) {
     return date.end ? `${formatDay(date.start)} → ${formatDay(date.end)}` : formatDay(date.start);
   };
   const chip = (prop, value) => `<span class="chip chip-${colorOf(prop, value)}">${escapeHtml(value)}</span>`;
-  const ownerChip = (value) => `<span class="chip chip-${colorOf(propByKey.owners, value)} chip-owner" data-owner="${escapeHtml(value)}" role="button" tabindex="0" title="${escapeHtml(value)} 담당 카드만 보기">${escapeHtml(value)}</span>`;
+  const filterChip = (key, value) => `<span class="chip chip-${colorOf(propByKey[key], value)} chip-filter" data-facet="${key}" data-value="${escapeHtml(value)}" role="button" tabindex="0" title="${escapeHtml(value)} 카드만 보기">${escapeHtml(value)}</span>`;
 
   const board = document.createElement('div');
   board.className = 'notion-board';
@@ -107,31 +107,37 @@ if (creativeBoard) {
   creativeBoard.innerHTML = `
     <div class="notion-toolbar"><button class="new-page-button" type="button"><i data-lucide="plus"></i>요청하기</button></div>`;
   const filters = document.createElement('div');
-  filters.className = 'owner-filter';
+  filters.className = 'board-filters';
   creativeBoard.appendChild(filters);
   creativeBoard.appendChild(board);
   creativeBoard.appendChild(peek);
 
-  let ownerFilter = [];
+  const FACETS = [
+    { key: 'owners', label: '담당자', icon: 'users', options: OWNER_OPTIONS },
+    { key: 'sku', label: 'SKU', icon: 'tag', options: SKU_OPTIONS },
+  ];
+  const active = { owners: [], sku: [] };
   let openId = null;
 
-  const visibleRows = () => (ownerFilter.length
-    ? rows.filter((row) => row.owners.some((owner) => ownerFilter.includes(owner)))
+  const anyFilter = () => FACETS.some((facet) => active[facet.key].length > 0);
+  const visibleRows = () => (anyFilter()
+    ? rows.filter((row) => FACETS.every((facet) => !active[facet.key].length
+      || row[facet.key].some((value) => active[facet.key].includes(value))))
     : rows);
 
   const renderFilters = () => {
-    const shown = visibleRows().length;
-    filters.classList.toggle('is-active', ownerFilter.length > 0);
-    filters.innerHTML = `<span class="owner-filter-label"><i data-lucide="users"></i>담당자</span>`
-      + OWNER_OPTIONS.map(([name, color]) => `<button type="button" class="owner-chip chip chip-${color}${ownerFilter.includes(name) ? ' is-on' : ''}" data-filter="${escapeHtml(name)}" aria-pressed="${ownerFilter.includes(name)}">${escapeHtml(name)}</button>`).join('')
-      + (ownerFilter.length
-        ? `<button type="button" class="owner-clear">전체 보기</button><span class="owner-count">${shown}개 표시</span>`
+    filters.innerHTML = FACETS.map((facet) => `<div class="filter-row${active[facet.key].length ? ' is-active' : ''}">
+        <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
+        ${facet.options.map(([name, color]) => `<button type="button" class="filter-chip chip chip-${color}${active[facet.key].includes(name) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(name)}" aria-pressed="${active[facet.key].includes(name)}">${escapeHtml(name)}</button>`).join('')}
+      </div>`).join('')
+      + (anyFilter()
+        ? `<div class="filter-summary"><button type="button" class="filter-clear">전체 보기</button><span class="filter-count">${visibleRows().length}개 표시</span></div>`
         : '');
     lucide.createIcons();
   };
 
-  const toggleOwner = (name) => {
-    ownerFilter = ownerFilter.includes(name) ? ownerFilter.filter((entry) => entry !== name) : [...ownerFilter, name];
+  const toggleFilter = (key, value) => {
+    active[key] = active[key].includes(value) ? active[key].filter((entry) => entry !== value) : [...active[key], value];
     renderBoard();
   };
 
@@ -141,7 +147,7 @@ if (creativeBoard) {
     const value = row[key];
     if (prop.type === 'multi_select') {
       if (!value.length) return '';
-      const marks = key === 'owners' ? value.map(ownerChip) : value.map((item) => chip(prop, item));
+      const marks = value.map((item) => (FACETS.some((facet) => facet.key === key) ? filterChip(key, item) : chip(prop, item)));
       return `<div class="chips">${marks.join('')}</div>`;
     }
     if (prop.type === 'status' || prop.type === 'select') {
@@ -152,6 +158,8 @@ if (creativeBoard) {
     }
     return value ? `<p>${escapeHtml(value)}</p>` : '';
   };
+
+  const filterDefaults = () => Object.fromEntries(FACETS.map((facet) => [facet.key, [...active[facet.key]]]));
 
   const renderBoard = () => {
     const shown = visibleRows();
@@ -246,24 +254,24 @@ if (creativeBoard) {
     const addButton = event.target.closest('.new-page');
     if (addButton) {
       const status = addButton.closest('.notion-column').dataset.status;
-      const row = normalize({ status, owners: [...ownerFilter] });
+      const row = normalize({ status, ...filterDefaults() });
       rows.push(row);
       save();
       renderBoard();
       openPeek(row.id);
       return;
     }
-    const ownerTag = event.target.closest('[data-owner]');
-    if (ownerTag) return toggleOwner(ownerTag.dataset.owner);
+    const tag = event.target.closest('.chip-filter');
+    if (tag) return toggleFilter(tag.dataset.facet, tag.dataset.value);
     const card = event.target.closest('.notion-card');
     if (card) openPeek(card.dataset.id);
   });
 
   filters.addEventListener('click', (event) => {
-    const chipButton = event.target.closest('.owner-chip');
-    if (chipButton) return toggleOwner(chipButton.dataset.filter);
-    if (event.target.closest('.owner-clear')) {
-      ownerFilter = [];
+    const chipButton = event.target.closest('.filter-chip');
+    if (chipButton) return toggleFilter(chipButton.dataset.facet, chipButton.dataset.value);
+    if (event.target.closest('.filter-clear')) {
+      FACETS.forEach((facet) => { active[facet.key] = []; });
       renderBoard();
     }
   });
@@ -385,7 +393,7 @@ if (creativeBoard) {
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && openId) closePeek(); });
 
   creativeBoard.querySelector('.new-page-button').addEventListener('click', () => {
-    const row = normalize({ status: '요청', owners: [...ownerFilter] });
+    const row = normalize({ status: '요청', ...filterDefaults() });
     rows.push(row);
     save();
     renderBoard();
