@@ -882,7 +882,7 @@ if (filenameTool) {
   const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E/edit';
   const ENDPOINT_KEY = 'minix-filename-endpoint';
   // 배포한 Apps Script 웹 앱 (톱니바퀴에서 다른 주소로 덮어쓸 수 있다)
-  const DEFAULT_ENDPOINT = 'https://script.google.com/a/macros/athomecorp.com/s/AKfycbwjk8yxc-69CkjC7Y8Fmq4E5i2FYRZwuV1gobAvbw8l2RviwG6vSMD7bqmHuDWiR-i-/exec';
+  const DEFAULT_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxubxtNp5D0X0lGVdNuu2SHQq6kGYO7_RllCicbSqOK0IzfKtrEV_4Cbw-ZznZxYB6P/exec';
   const endpointUrl = () => localStorage.getItem(ENDPOINT_KEY) || DEFAULT_ENDPOINT;
 
   const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', type: MESSAGE_TYPES[0][0], vertical: false };
