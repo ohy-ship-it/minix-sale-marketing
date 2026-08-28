@@ -94,6 +94,8 @@ if (creativeBoard) {
   };
 
   const weekName = (week) => `${week.month} ${week.week}`;
+  // 요청 건수는 SKU 단위로 센다 (카드 하나에 SKU 2개면 2건, SKU 미지정 카드는 1건)
+  const skuCount = (week) => week.rows.reduce((sum, row) => sum + Math.max(row.sku.length, 1), 0);
   const shareLink = (week) => `${window.location.origin}${window.location.pathname}#creative-planning/${week.id}`;
 
   const firstWeek = () => {
@@ -458,8 +460,8 @@ if (creativeBoard) {
   const renderWeekList = () => {
     weekList.innerHTML = `
       <div class="week-head">
-        <h2>주간 리포트</h2>
-        <button type="button" class="week-add"><i data-lucide="plus"></i>주간 리포트 추가</button>
+        <h2>주간 소재요청</h2>
+        <button type="button" class="week-add"><i data-lucide="plus"></i>주간 소재요청 추가</button>
       </div>
       <div class="week-filters">
         ${WEEK_FACETS.map((facet) => `<div class="week-filter-row${weekFilter[facet.key].length ? ' is-active' : ''}">
@@ -469,20 +471,22 @@ if (creativeBoard) {
         ${anyWeekFilter() ? `<div class="filter-summary"><button type="button" class="week-filter-clear">전체 보기</button><span class="filter-count">${filteredWeeks().length}건 표시</span></div>` : ''}
       </div>
       <table class="week-table">
-        <thead><tr><th>월</th><th>주차</th><th>공유링크</th><th></th></tr></thead>
+        <thead><tr><th>월</th><th>주차</th><th>건수</th><th>수정</th><th>공유</th><th>삭제</th></tr></thead>
         <tbody>${filteredWeeks().map((week) => (week.id === editingWeekId ? `
           <tr class="week-row is-editing" data-week="${week.id}">
             <td><input class="week-input" data-field="month" value="${escapeHtml(week.month)}" placeholder="8월"></td>
             <td><input class="week-input" data-field="week" value="${escapeHtml(week.week)}" placeholder="4주차"></td>
-            <td class="week-share-cell"><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
-            <td class="week-actions"><button type="button" class="week-save">저장</button><button type="button" class="week-cancel">취소</button></td>
+            <td class="week-count">${skuCount(week)}건</td>
+            <td class="week-edit-actions" colspan="3"><button type="button" class="week-save">저장</button><button type="button" class="week-cancel">취소</button></td>
           </tr>` : `
           <tr class="week-row" data-week="${week.id}">
             <td class="week-month">${escapeHtml(week.month)}</td>
-            <td><span class="chip chip-orange">${escapeHtml(week.week)}</span><small>${week.rows.length}건</small></td>
-            <td class="week-share-cell"><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
-            <td class="week-actions"><button type="button" class="week-edit" aria-label="수정"><i data-lucide="pencil"></i></button><button type="button" class="week-delete">삭제</button></td>
-          </tr>`)).join('') || '<tr class="week-empty"><td colspan="4">해당하는 주차가 없습니다.</td></tr>'}</tbody>
+            <td><span class="chip chip-orange">${escapeHtml(week.week)}</span></td>
+            <td class="week-count">${skuCount(week)}건</td>
+            <td><button type="button" class="week-edit" aria-label="수정"><i data-lucide="pencil"></i></button></td>
+            <td><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
+            <td><button type="button" class="week-delete">삭제</button></td>
+          </tr>`)).join('') || '<tr class="week-empty"><td colspan="6">해당하는 주차가 없습니다.</td></tr>'}</tbody>
       </table>`;
     lucide.createIcons();
   };
@@ -515,6 +519,8 @@ if (creativeBoard) {
       const week = normalizeWeek({ month: monthFor(new Date()), week: weekNoFor(new Date()) });
       weeks.unshift(week);
       editingWeekId = week.id;
+      // 필터가 켜져 있으면 새 행이 걸러져 보이지 않으므로 해제한다
+      WEEK_FACETS.forEach((facet) => { weekFilter[facet.key] = []; });
       save();
       renderWeekList();
       weekList.querySelector('.week-input')?.focus();
