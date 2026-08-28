@@ -891,6 +891,26 @@ if (filenameTool) {
     return Math.max(base, ...mine, 0) + 1;
   };
 
+  const scrollToList = () => {
+    const head = filenameTool.querySelector('.tool-list-head');
+    if (!head || typeof head.scrollIntoView !== 'function') return;
+    try { head.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch { /* 스크롤을 지원하지 않는 환경 */ }
+  };
+
+  const issuePair = () => {
+    const code = codeOf(state.type);
+    const seq = nextSequence(code);
+    const base = { code, seq, type: state.type, campaign: state.campaign.trim() };
+    issued = [
+      { ...base, id: newId(), filename: `${code}-${seq}` },
+      { ...base, id: newId(), filename: `${code}-${seq}${VERTICAL_SUFFIX}`, vertical: true },
+      ...issued,
+    ];
+    save();
+    render();
+    scrollToList();
+  };
+
   const render = () => {
     const code = codeOf(state.type);
     const seq = nextSequence(code);
@@ -898,17 +918,17 @@ if (filenameTool) {
     filenameTool.innerHTML = `
       <div class="tool-head">
         <h2>광고소재 파일명</h2>
-        <p>메시지 유형과 행사명을 넣으면 파일명이 발번됩니다. 가로용과 <b>${escapeHtml(VERTICAL_SUFFIX)}</b> 두 개가 한 쌍으로 만들어집니다.</p>
+        <p>행사명을 적고 메시지 유형을 고르면 바로 발번되어 아래 목록에 쌓입니다. 가로용과 <b>${escapeHtml(VERTICAL_SUFFIX)}</b> 두 개가 한 쌍입니다.</p>
       </div>
 
       <section class="tool-card">
         <div class="tool-grid">
-          <label>메시지 유형<select data-field="type">${MESSAGE_TYPES.map(([name]) => `<option${name === state.type ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
           <label class="tool-wide">행사명<input type="text" data-field="campaign" value="${escapeHtml(state.campaign)}" placeholder="예: 260827_더플렌더mini_네이버_음쓰해방위크(당일)"></label>
+          <label>메시지 유형<select data-field="type">${MESSAGE_TYPES.map(([name]) => `<option${name === state.type ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
         </div>
         <div class="tool-issue">
           <span>다음 파일명 <code class="tool-next">${escapeHtml(preview)}</code> <code class="tool-next">${escapeHtml(preview + VERTICAL_SUFFIX)}</code></span>
-          <button type="button" class="tool-add"><i data-lucide="plus"></i>발번하기</button>
+          <button type="button" class="tool-add"><i data-lucide="plus"></i>같은 유형 하나 더</button>
         </div>
       </section>
 
@@ -960,26 +980,14 @@ if (filenameTool) {
     if (!field || field.tagName !== 'SELECT') return;
     state[field.dataset.field] = field.value;
     save();
-    render();
+    issuePair();
   });
 
   filenameTool.addEventListener('click', (event) => {
     const copy = event.target.closest('.tool-copy');
     if (copy) return copyText(copy.dataset.copy, copy);
 
-    if (event.target.closest('.tool-add')) {
-      const code = codeOf(state.type);
-      const seq = nextSequence(code);
-      const base = { code, seq, type: state.type, campaign: state.campaign.trim() };
-      issued = [
-        { ...base, id: newId(), filename: `${code}-${seq}` },
-        { ...base, id: newId(), filename: `${code}-${seq}${VERTICAL_SUFFIX}`, vertical: true },
-        ...issued,
-      ];
-      save();
-      render();
-      return;
-    }
+    if (event.target.closest('.tool-add')) return issuePair();
 
     if (event.target.closest('.tool-copy-all')) {
       const header = ['파일명', '메시지 유형', '행사명'].join('\t');
