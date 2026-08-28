@@ -60,7 +60,7 @@ if (creativeBoard) {
     { name: '[당일] 현대홈쇼핑 MLC', event: '현대홈쇼핑 MLC', status: '전달 완료', media: ['메타', '브랜드검색'], channel: '현대홈쇼핑', owners: ['김진빈', '이정민'], eventDate: { start: '2026-08-31' }, dueDate: { start: '2026-08-27' }, sku: ['더 에어드라이'] },
   ];
 
-  const NOTE_TEMPLATE = '전달 희망일정 : \n소재 소구 : ';
+  const NOTE_TEMPLATE = '소재 소구 : ';
   const STORAGE_KEY = 'minix-creative-weeks-v1';
   const LEGACY_KEY = 'minix-creative-requests-v2';
   const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -79,6 +79,7 @@ if (creativeBoard) {
     note: typeof row.note === 'string' ? row.note : '',
     mediaNotes: row.mediaNotes && typeof row.mediaNotes === 'object' ? { ...row.mediaNotes } : {},
     mediaCounts: row.mediaCounts && typeof row.mediaCounts === 'object' ? { ...row.mediaCounts } : {},
+    mediaDue: row.mediaDue && typeof row.mediaDue === 'object' ? { ...row.mediaDue } : {},
   });
 
   const MONTH_CHOICES = Array.from({ length: 12 }, (unused, index) => `${index + 1}월`);
@@ -276,10 +277,16 @@ if (creativeBoard) {
   const renderMediaNotes = (row) => {
     if (!row.media.length) return '';
     return `<div class="media-notes">
-      ${row.media.map((name) => `<section class="media-note note-${colorOf(propByKey.media, name)}">
+      ${row.media.map((name) => `<section class="media-note note-${colorOf(propByKey.media, name)}" data-media="${escapeHtml(name)}">
         <div class="media-note-head">
-          <span class="chip chip-${colorOf(propByKey.media, name)}">${escapeHtml(name)}</span>
-          <label class="media-count">소재 갯수<input type="text" data-count="${escapeHtml(name)}" value="${escapeHtml(row.mediaCounts[name] ?? '')}" placeholder="예: 3종"></label>
+          <span class="media-note-name">
+            <button type="button" class="media-drag" aria-label="순서 변경" title="끌어서 순서 변경"><i data-lucide="grip-vertical"></i></button>
+            <span class="chip chip-${colorOf(propByKey.media, name)}">${escapeHtml(name)}</span>
+          </span>
+          <span class="media-note-fields">
+            <label class="media-count">전달 희망일정<input type="text" data-due="${escapeHtml(name)}" value="${escapeHtml(row.mediaDue[name] ?? '')}" placeholder="예: 9월 10일"></label>
+            <label class="media-count">소재 갯수<input type="text" data-count="${escapeHtml(name)}" value="${escapeHtml(row.mediaCounts[name] ?? '')}" placeholder="예: 3종"></label>
+          </span>
         </div>
         <textarea class="media-note-input" data-note="${escapeHtml(name)}" rows="6" spellcheck="false" placeholder="요청 내용을 자유롭게 적어 주세요.">${escapeHtml(row.mediaNotes[name] ?? NOTE_TEMPLATE)}</textarea>
       </section>`).join('')}
@@ -424,6 +431,15 @@ if (creativeBoard) {
   });
 
   peek.addEventListener('input', (event) => {
+    const due = event.target.closest('[data-due]');
+    if (due) {
+      const row = rows.find((entry) => entry.id === openId);
+      if (!row) return;
+      if (due.value === '') delete row.mediaDue[due.dataset.due];
+      else row.mediaDue[due.dataset.due] = due.value;
+      save();
+      return;
+    }
     const count = event.target.closest('[data-count]');
     if (count) {
       const row = rows.find((entry) => entry.id === openId);
@@ -462,6 +478,50 @@ if (creativeBoard) {
     } else return;
     commit();
   });
+
+  let draggingMedia = null;
+  const clearMediaDrag = () => {
+    peek.querySelectorAll('.media-note').forEach((section) => {
+      section.draggable = false;
+      section.classList.remove('is-dragging', 'is-drop-target');
+    });
+  };
+  peek.addEventListener('mousedown', (event) => {
+    const handle = event.target.closest('.media-drag');
+    if (handle) handle.closest('.media-note').draggable = true;
+  });
+  document.addEventListener('mouseup', () => { if (!draggingMedia) clearMediaDrag(); });
+  peek.addEventListener('dragstart', (event) => {
+    const section = event.target.closest('.media-note');
+    if (!section || !section.draggable) return;
+    draggingMedia = section.dataset.media;
+    section.classList.add('is-dragging');
+    event.dataTransfer?.setData('text/plain', draggingMedia);
+  });
+  peek.addEventListener('dragover', (event) => {
+    if (!draggingMedia) return;
+    const section = event.target.closest('.media-note');
+    if (!section) return;
+    event.preventDefault();
+    peek.querySelectorAll('.media-note').forEach((entry) => entry.classList.toggle('is-drop-target', entry === section && entry.dataset.media !== draggingMedia));
+  });
+  peek.addEventListener('drop', (event) => {
+    const section = event.target.closest('.media-note');
+    if (!section || !draggingMedia) return;
+    event.preventDefault();
+    const row = rows.find((entry) => entry.id === openId);
+    const moved = draggingMedia;
+    draggingMedia = null;
+    clearMediaDrag();
+    if (!row) return;
+    const from = row.media.indexOf(moved);
+    const to = row.media.indexOf(section.dataset.media);
+    if (from < 0 || to < 0 || from === to) return;
+    row.media.splice(from, 1);
+    row.media.splice(to, 0, moved);
+    commit();
+  });
+  peek.addEventListener('dragend', () => { draggingMedia = null; clearMediaDrag(); });
 
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && openId) closePeek(); });
 

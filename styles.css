@@ -239,3 +239,16 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .peek-body:focus{outline:2px solid #20211e1f;outline-offset:-2px}
 .peek-body::placeholder{color:#b6b5b0}
 .media-notes{margin-top:14px}
+
+/* 매체 칸 머리말 + 순서 변경 */
+.media-note-name{display:inline-flex;align-items:center;gap:4px}
+/* 패널 폭이 480px 고정이라 두 칸은 항상 아래 줄에 나란히 둔다 */
+.media-note-fields{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;width:100%;margin-top:2px}
+.media-note-head{display:block}
+.media-note-name{display:flex;align-items:center;gap:4px}
+.media-drag{display:inline-flex;align-items:center;border:0;background:none;color:#00000038;padding:2px;cursor:grab;border-radius:4px}
+.media-drag:hover{color:#0000006b;background:#ffffff8c}
+.media-drag:active{cursor:grabbing}
+.media-drag svg{width:13px}
+.media-note.is-dragging{opacity:.45}
+.media-note.is-drop-target{outline:2px dashed #20211e59;outline-offset:2px}
