@@ -497,7 +497,7 @@ if (creativeBoard) {
         ${anyWeekFilter() ? `<div class="filter-summary"><button type="button" class="week-filter-clear">전체 보기</button><span class="filter-count">${filteredWeeks().length}건 표시</span></div>` : ''}
       </div>
       <div class="week-table-wrap"><table class="week-table">
-        <thead><tr><th>년도</th><th>월</th><th>주차</th><th>건수</th><th class="week-spacer"></th><th>공유</th><th>삭제</th><th>수정</th></tr></thead>
+        <thead><tr><th>년도</th><th>월</th><th>주차</th><th>건수</th><th class="week-spacer"></th><th>수정</th><th>공유</th><th>삭제</th></tr></thead>
         <tbody>${filteredWeeks().map((week) => (week.id === editingWeekId ? `
           <tr class="week-row is-editing" data-week="${week.id}">
             <td><input class="week-input" data-field="year" value="${escapeHtml(week.year)}" placeholder="2026년"></td>
@@ -513,9 +513,9 @@ if (creativeBoard) {
             <td><span class="chip chip-orange">${escapeHtml(week.week)}</span></td>
             <td class="week-count">${skuCount(week)}건</td>
             <td class="week-spacer"></td>
+            <td><button type="button" class="week-edit" aria-label="수정"><i data-lucide="pencil"></i></button></td>
             <td><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
             <td><button type="button" class="week-delete">삭제</button></td>
-            <td><button type="button" class="week-edit" aria-label="수정"><i data-lucide="pencil"></i></button></td>
           </tr>`)).join('') || '<tr class="week-empty"><td colspan="8">해당하는 주차가 없습니다.</td></tr>'}</tbody>
       </table></div>`;
     lucide.createIcons();
