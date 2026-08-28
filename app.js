@@ -1083,7 +1083,7 @@ if (filenameTool) {
         <button type="button" class="tool-reset"><i data-lucide="eraser"></i>전체 지우기</button>
         <button type="button" class="tool-submit"${pending().length ? '' : ' disabled'}><i data-lucide="upload"></i>최종완료${pending().length ? ` (${pending().length})` : ''}</button>
         <button type="button" class="tool-endpoint" title="구글시트 연동 설정"><i data-lucide="settings"></i>${localStorage.getItem(ENDPOINT_KEY) ? '시트 연동(직접 지정)' : '시트 연동됨'}</button>
-        <small>행사일자 · 행사채널 · 상품명 · 행사명 · 메시지 유형을 비웁니다. 발번 목록은 그대로 둡니다.</small>
+        <small>입력값과 발번 목록을 모두 비웁니다. 이미 나간 번호는 다시 쓰지 않습니다.</small>
       </div>`;
     lucide.createIcons();
   };
@@ -1147,7 +1147,9 @@ if (filenameTool) {
     if (submit) return sendToSheet(submit);
 
     if (event.target.closest('.tool-reset')) {
-      state = { date: '', channel: '', product: '', event: '', type: '' };
+      if (issued.length && !window.confirm(`입력값과 발번 목록 ${issuedCount()}건을 모두 지울까요?`)) return;
+      state = { date: '', channel: '', product: '', event: '', type: '', vertical: false };
+      issued = [];
       save();
       render();
       return;
