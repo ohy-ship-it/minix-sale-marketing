@@ -61,6 +61,45 @@ if (creativeBoard) {
   const openForm = () => { form.classList.add('is-visible'); form.querySelector('input').focus(); };
   const closeForm = () => { form.classList.remove('is-visible'); form.reset(); };
   creativeBoard.querySelectorAll('.new-page, #new-request, .new-page-button').forEach((button) => button.addEventListener('click', openForm));
+  const boardTools = creativeBoard.querySelector('.board-tools');
+  const toolButtons = [
+    ['list-filter', '필터'],
+    ['arrow-down-up', '정렬'],
+    ['zap', '자동화'],
+    ['wand-sparkles', '보기 설정'],
+    ['search', '검색'],
+    ['sliders-horizontal', '속성'],
+  ];
+  toolButtons.forEach(([icon, label]) => {
+    const iconElement = boardTools.querySelector(`[data-lucide="${icon}"]`);
+    const button = iconElement?.closest('button') || iconElement;
+    if (!button) return;
+    button.classList.add('board-tool-button');
+    button.setAttribute('title', label);
+    button.setAttribute('aria-label', label);
+    button.addEventListener('click', () => {
+      if (label === '검색') {
+        const keyword = window.prompt('카드 제목 검색');
+        if (keyword === null) return;
+        creativeBoard.querySelectorAll('.notion-card').forEach((card) => {
+          card.hidden = Boolean(keyword.trim()) && !card.textContent.toLowerCase().includes(keyword.trim().toLowerCase());
+        });
+        return;
+      }
+      if (label === '정렬') {
+        creativeBoard.querySelectorAll('.notion-column').forEach((column) => {
+          const cards = [...column.querySelectorAll('.notion-card')].sort((a, b) => a.querySelector('h3').textContent.localeCompare(b.querySelector('h3').textContent, 'ko'));
+          cards.forEach((card) => column.insertBefore(card, column.querySelector('.new-page')));
+        });
+        saveRequests();
+        return;
+      }
+      window.alert(`${label} 기능은 보드 데이터 연결 후 사용할 수 있습니다.`);
+    });
+  });
+  creativeBoard.querySelector('.board-view-button').addEventListener('click', () => {
+    creativeBoard.classList.toggle('compact-board');
+  });
   form.querySelector('.modal-close').addEventListener('click', closeForm);
   form.querySelector('.modal-backdrop').addEventListener('click', closeForm);
   form.addEventListener('submit', (event) => {
