@@ -886,10 +886,16 @@ if (filenameTool) {
   };
 
   const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E/edit';
-  const ENDPOINT_KEY = 'minix-filename-endpoint';
-  // 배포한 Apps Script 웹 앱 (톱니바퀴에서 다른 주소로 덮어쓸 수 있다)
-  const DEFAULT_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxubxtNp5D0X0lGVdNuu2SHQq6kGYO7_RllCicbSqOK0IzfKtrEV_4Cbw-ZznZxYB6P/exec';
-  const endpointUrl = () => localStorage.getItem(ENDPOINT_KEY) || DEFAULT_ENDPOINT;
+  // 배포한 Apps Script 웹 앱
+  const ENDPOINT = 'https://script.google.com/macros/s/AKfycbxubxtNp5D0X0lGVdNuu2SHQq6kGYO7_RllCicbSqOK0IzfKtrEV_4Cbw-ZznZxYB6P/exec';
+  // 발번 목록에 보이는 정보 그대로 시트에 적재한다
+  const SHEET_COLUMNS = [
+    { key: 'filename', label: '파일명' },
+    { key: 'media', label: '매체' },
+    { key: 'type', label: '메시지 유형' },
+    { key: 'campaign', label: '최종행사명' },
+    { key: 'createdAt', label: '발번시각' },
+  ];
 
   const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', media: '', type: MESSAGE_TYPES[0][0], vertical: false, customTypes: [] };
   let state = { ...defaults };
@@ -982,13 +988,9 @@ if (filenameTool) {
   const issuedCount = () => baseEntries().length;
   const pending = () => baseEntries().filter((entry) => !entry.sent);
 
-  const rowsForSheet = (list) => list.map((entry) => ({
-    filename: entry.filename,
-    media: entry.media || '',
-    type: entry.type,
-    campaign: entry.campaign,
-    createdAt: entry.createdAt || '',
-  }));
+  const rowsForSheet = (list) => list.map((entry) => Object.fromEntries(
+    SHEET_COLUMNS.map((column) => [column.key, entry[column.key] || '']),
+  ));
 
   const markSent = (list) => {
     const ids = new Set(list.map((entry) => entry.id));
@@ -1000,28 +1002,12 @@ if (filenameTool) {
   const sendToSheet = (button) => {
     const list = pending();
     if (!list.length) return;
-    const endpoint = endpointUrl();
-
-    // 주소가 없을 때만 표로 복사한 뒤 시트를 열어 붙여넣게 한다
-    if (!endpoint) {
-      const header = ['파일명', '매체', '메시지 유형', '최종행사명'].join('\t');
-      copyText([header, ...list.map((entry) => [entry.filename, entry.media || '', entry.type, entry.campaign].join('\t'))].join('\n'), button);
-      window.alert(list.length + '건을 클립보드에 복사했습니다. 열리는 시트에 붙여넣어 주세요.\n\n'
-        + '자동 적재를 쓰려면 한 번만 설정하면 됩니다.\n'
-        + '1) 시트 → 확장 프로그램 → Apps Script\n'
-        + '2) 저장소의 google-apps-script.md 코드를 붙여넣고 웹 앱으로 배포\n'
-        + '3) 나오는 URL 을 [시트 연동] 버튼에 붙여넣기');
-      window.open(SHEET_URL, '_blank', 'noopener');
-      markSent(list);
-      return;
-    }
-
     button.disabled = true;
     button.classList.add('is-sending');
-    window.fetch(endpoint, {
+    window.fetch(ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ rows: rowsForSheet(list) }),
+      body: JSON.stringify({ columns: SHEET_COLUMNS, rows: rowsForSheet(list) }),
     })
       .then((response) => (response.ok ? response.json().catch(() => ({ ok: true })) : Promise.reject(new Error('HTTP ' + response.status))))
       .then(() => { markSent(list); })
@@ -1029,10 +1015,7 @@ if (filenameTool) {
         button.disabled = false;
         button.classList.remove('is-sending');
         window.alert('시트 적재에 실패했습니다.\n' + error.message + '\n\n'
-          + '가장 흔한 원인은 웹 앱 접근 권한입니다.\n'
-          + 'Apps Script → 배포 → 배포 관리 → 편집(연필) →\n'
-          + '[액세스 권한이 있는 사용자] 를 "모든 사용자" 로 바꾸고 새 버전으로 배포해 주세요.\n\n'
-          + '그 전에는 [표로 복사] 로 시트에 붙여넣어 주세요.');
+          + '잠시 뒤 다시 시도하고, 계속 실패하면 [표로 복사] 로 시트에 붙여넣어 주세요.');
       });
   };
 
@@ -1178,7 +1161,7 @@ if (filenameTool) {
       <div class="tool-footer">
         <button type="button" class="tool-reset"><i data-lucide="eraser"></i>전체 지우기</button>
         <button type="button" class="tool-submit"${pending().length ? '' : ' disabled'}><i data-lucide="upload"></i>최종완료${pending().length ? ` (${pending().length})` : ''}</button>
-        <button type="button" class="tool-endpoint" title="구글시트 연동 설정"><i data-lucide="settings"></i>${localStorage.getItem(ENDPOINT_KEY) ? '시트 연동(직접 지정)' : '시트 연동됨'}</button>
+        <button type="button" class="tool-open-sheet" title="구글시트 새 탭으로 열기"><i data-lucide="external-link"></i>적재확인</button>
         <small>입력값과 발번 목록을 모두 비웁니다. 이미 나간 번호는 다시 쓰지 않습니다.</small>
       </div>`;
     lucide.createIcons();
@@ -1263,12 +1246,8 @@ if (filenameTool) {
 
     if (event.target.closest('.tool-add')) return issueOne();
 
-    if (event.target.closest('.tool-endpoint')) {
-      const next = window.prompt('구글시트에 적재할 Apps Script 웹 앱 URL 입니다.\n(비우면 기본 주소로 되돌립니다)', endpointUrl());
-      if (next === null) return;
-      if (next.trim() && next.trim() !== DEFAULT_ENDPOINT) localStorage.setItem(ENDPOINT_KEY, next.trim());
-      else localStorage.removeItem(ENDPOINT_KEY);
-      render();
+    if (event.target.closest('.tool-open-sheet')) {
+      window.open(SHEET_URL, '_blank', 'noopener');
       return;
     }
 
