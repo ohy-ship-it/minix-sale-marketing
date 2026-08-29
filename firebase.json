@@ -4,9 +4,19 @@
     "ignore": [
       "firebase.json",
       "**/.*",
+      "**/.*/**",
       "**/node_modules/**",
+      "**/__pycache__/**",
+      "da_set/**",
       "**/*.py",
+      "**/*.pyc",
       "**/*.txt",
+      "**/*.md",
+      "**/*.gs",
+      "**/*.hta",
+      "**/*.yaml",
+      "**/*.yml",
+      "**/*.json",
       "**/client_secret_*.json"
     ],
     "rewrites": [
