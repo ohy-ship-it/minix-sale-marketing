@@ -2466,7 +2466,7 @@ if (utmBuilder) {
   ];
 
   // 메타 광고 세팅과 같은 4가지. 고른 것이 목록 · 복사에 쓰인다.
-  const URL_TYPES = [['url', 'URL'], ['linkGA', 'LINK(GA)'], ['nt', 'NT'], ['fm', '쇼핑라이브']];
+  const URL_TYPES = [['url', 'URL'], ['linkGA', 'LINK(자사몰)'], ['nt', 'NT(네이버)'], ['fm', 'FM(라이브)']];
 
   // 시트가 이 라벨을 보고 자기 열에 넣는다. 열 차례는 시트가 알아서 맞춘다.
   const SHEET_COLUMNS = [
@@ -2569,9 +2569,9 @@ if (utmBuilder) {
   // ── 화면 ──────────────────────────────────────────────────────
   // 미리보기에는 실제로 쓰는 링크 3종만 둔다. (utm_* 낱개 값은 엑셀에는 그대로 들어간다)
   const PREVIEW_ROWS = [
-    ['LINK(GA)', 'linkGA', '랜딩링크를 채우면 만들어집니다'],
-    ['NT', 'nt', '네이버스토어'],
-    ['FM(쇼핑라이브)', 'fm', '쇼핑라이브'],
+    ['LINK(자사몰)', 'linkGA', '랜딩링크를 채우면 만들어집니다'],
+    ['NT(네이버)', 'nt', '네이버스토어 링크 뒤에 붙입니다'],
+    ['FM(라이브)', 'fm', '쇼핑라이브 링크 뒤에 붙입니다'],
   ];
 
   const options = (list, picked) => list
@@ -2628,7 +2628,7 @@ if (utmBuilder) {
 
       <section class="tool-card">
         <div class="tool-list-head">
-          <h3>만든 UTM <small>${entries.length}건</small></h3>
+          <h3>UTM 일괄다운로드 <small>${entries.length}건</small></h3>
           <div class="tool-list-actions">
             <button type="button" class="utm-excel"${entries.length ? '' : ' disabled'}><i data-lucide="download"></i>엑셀 다운로드</button>
             <button type="button" class="tool-copy-all"${entries.length ? '' : ' disabled'}><i data-lucide="clipboard-list"></i>표로 복사</button>
@@ -2718,23 +2718,18 @@ if (utmBuilder) {
     return made.length;
   };
 
-  const EXCEL_COLUMNS = [
+  // 내려받는 것은 미리보기에 뜬 것 = 고른 URL 유형 하나. 유형을 바꾸면 내용도 바뀐다.
+  const excelColumns = () => [
     ['파트', (entry) => entry.part || PARTS[0]],
     ['파일명', (entry) => entry.filename],
     ['매체', (entry) => entry.media],
     ['목적', (entry) => entry.purpose],
     ['행사일자', (entry) => entry.date],
     ['상품명', (entry) => entry.product],
-    ['최종행사명', (entry) => entry.campaign || ''],
+    ['행사채널', (entry) => entry.channel || ''],
+    ['행사명', (entry) => entry.event || ''],
     ['랜딩링크', (entry) => entry.url],
-    ['utm_source', (entry, row) => row.source],
-    ['utm_medium', (entry, row) => row.medium],
-    ['utm_campaign', (entry, row) => row.campaign],
-    ['utm_content', (entry, row) => row.content],
-    ['utm_term', (entry, row) => row.term],
-    ['LINK(GA)', (entry, row) => row.linkGA],
-    ['NT', (entry, row) => row.nt],
-    ['FM(쇼핑라이브)', (entry, row) => row.fm],
+    [urlTypeLabel(), (entry, row) => urlOf(entry, row)],
     ['만든시각', (entry) => (entry.createdAt ? new Date(entry.createdAt).toLocaleString('ko-KR') : '')],
   ];
 
@@ -2742,10 +2737,11 @@ if (utmBuilder) {
   const downloadExcel = () => {
     if (!entries.length) return;
     const cell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const lines = [EXCEL_COLUMNS.map(([label]) => cell(label)).join(',')];
+    const columns = excelColumns();
+    const lines = [columns.map(([label]) => cell(label)).join(',')];
     entries.forEach((entry) => {
       const row = build(entry);
-      lines.push(EXCEL_COLUMNS.map(([, pick]) => cell(pick(entry, row))).join(','));
+      lines.push(columns.map(([, pick]) => cell(pick(entry, row))).join(','));
     });
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -2873,10 +2869,10 @@ if (utmBuilder) {
     }
 
     if (event.target.closest('.tool-copy-all')) {
-      const header = EXCEL_COLUMNS.map(([label]) => label).join('\t');
+      const header = excelColumns().map(([label]) => label).join('\t');
       const body = entries.map((entry) => {
         const row = build(entry);
-        return EXCEL_COLUMNS.map(([, pick]) => pick(entry, row)).join('\t');
+        return excelColumns().map(([, pick]) => pick(entry, row)).join('\t');
       });
       return copyText([header, ...body].join('\n'), event.target.closest('.tool-copy-all'));
     }
