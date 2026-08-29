@@ -148,7 +148,8 @@ FM          https://minix.life/?fm=gfa&sn=feed&ea=20260829_flender-mini_benefit-
 | 매체 → utm_source · utm_medium | 목적 → 목적(영문) | 상품명 → 제품코드 · **제품 정식명** | 행사채널 → 매출채널 |
 | 메타 → facebook · display | 구매 → purchase | 더플렌더mini → flender-mini · 미닉스 더 플렌더(mini) | 자사몰 → officialWebsite |
 | GFA-피드 → gfa · feed | 트래픽 → traffic | 더슬림 → theslim · 미닉스 더 슬림_더 슬림 | CJ → cj |
-| 인플루언서 → influencer · affiliate | … | … | … |
+| 인플루언서-인스타 → influencer-ig · affiliate | … | … | … |
+| 인플루언서-유튜브 → influencer-youtube · affiliate | … | … | … |
 
 > **매체 · 목적 · 상품이 늘면 빠진 줄만 자동으로 덧붙습니다.** 고쳐 둔 값은 건드리지 않습니다.
 > `utm_medium` 에 지면을 적어 두면(`feed` · `shopping` · `smart` · `bizboard` …)

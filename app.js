@@ -1014,7 +1014,7 @@ if (filenameTool) {
     '식기세척기', '건조기', '건조기필터', '건조기시트', '하드필터', '하드락필터', '푸드컨테이너', '식기세제', '악세사리'];
 
   const MEDIA_OPTIONS = ['메타', 'GFA-피드', 'GFA-쇼핑소식', 'GFA-스마트채널',
-    '카카오-비즈보드', '카카오-디스플레이', '구글-디멘드젠', '인플루언서'];
+    '카카오-비즈보드', '카카오-디스플레이', '구글-디멘드젠', '인플루언서-인스타', '인플루언서-유튜브'];
 
   const CUSTOM_OPTION = '__custom__';
   const CODE_RULE = /^[A-Za-z0-9]+$/;
@@ -2440,6 +2440,8 @@ if (utmBuilder) {
     ['카카오-비즈보드', 'kakao', 'bizboard'],
     ['카카오-디스플레이', 'kakao', 'display'],
     ['구글-디멘드젠', 'google', 'demandgen'],
+    ['인플루언서-인스타', 'influencer-ig', 'affiliate'],
+    ['인플루언서-유튜브', 'influencer-youtube', 'affiliate'],
     ['인플루언서', 'influencer', 'affiliate'],
     ['마케팅팀', '', ''],
   ];

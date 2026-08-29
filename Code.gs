@@ -44,6 +44,8 @@ var DEFAULT_MEDIA = [
   ['카카오-비즈보드', 'kakao', 'bizboard'],
   ['카카오-디스플레이', 'kakao', 'display'],
   ['구글-디멘드젠', 'google', 'demandgen'],
+  ['인플루언서-인스타', 'influencer-ig', 'affiliate'],
+  ['인플루언서-유튜브', 'influencer-youtube', 'affiliate'],
   ['인플루언서', 'influencer', 'affiliate'],
   ['마케팅팀', '', '']
 ];
