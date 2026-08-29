@@ -17,9 +17,7 @@ var FALLBACK_COLUMNS = [
 //   url → LINK(GA) · NT · FM → 캠페인명 · 광고그룹명 · 광고명 → utm_*
 // 랜딩링크 · 목적 · 연령 · 타겟팅은 사람이 채우는 칸이라 비워 둔다.
 var INPUT_HEADERS = ['랜딩링크', '목적', '연령', '타겟팅', '소재유형', '담당자'];
-var FORMULA_HEADERS = ['LINK(GA)', 'NT', 'FM(쇼핑라이브)',
-  '캠페인명', '광고그룹명', '광고명',
-  'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+var FORMULA_HEADERS = ['LINK(GA)', 'NT', 'FM(쇼핑라이브)', '캠페인명', '광고그룹명', '광고명'];
 var UTM_HEADERS = INPUT_HEADERS.concat(FORMULA_HEADERS);
 
 // 파트별 탭. 앱이 sheet 이름을 함께 보내면 그 탭에 적재한다.
@@ -28,8 +26,11 @@ var PART_SHEETS = ['세일즈마케팅', '더플렌더_파트', '생활가전_�
 // 맨 앞에 두는 열. 앱이 값을 보내도 시트에서 고쳐 쓰는 칸이다.
 var FRONT_HEADERS = ['행사명'];
 
-// 더 쓰지 않는 열. 값이 비어 있으면 지운다. (값이 남아 있으면 손대지 않는다)
+// 더 쓰지 않는 열. 값이 비어 있으면 지운다. (사람이 적은 값이 남아 있으면 손대지 않는다)
 var OBSOLETE_HEADERS = ['쇼핑라이브링크', '메시지 유형', '최종행사명'];
+
+// 수식으로 만들던 열. 링크 · 광고명 안에 이미 들어 있어 값이 있어도 지운다.
+var DROP_HEADERS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
 
 // 세로 소재는 가로와 같은 소재라 UTM 을 따로 만들지 않는다. (앱도 적재에서 뺀다)
 var VERTICAL_MARK = '(세로)';
@@ -249,8 +250,13 @@ function ensureColumns_(sheet, columns) {
   return map;
 }
 
-// 안 쓰게 된 열은 비어 있을 때만 지운다. (값이 남아 있으면 손대지 않는다)
+// 수식으로 만들던 열은 값이 있어도 지운다. (다시 만들 수 있는 값이다)
 function dropObsolete_(sheet) {
+  DROP_HEADERS.forEach(function (label) {
+    var column = headerMap_(sheet)[label];
+    if (column) sheet.deleteColumn(column);
+  });
+
   OBSOLETE_HEADERS.forEach(function (label) {
     var column = headerMap_(sheet)[label];
     if (!column) return;
@@ -343,12 +349,9 @@ function colLetter_(index) {
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
 //   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
 //   광고그룹명    = [행사명]연령_타겟팅_매출채널          ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
-//   광고명        = utm_content
-//   utm_source   = 매체 대응표
-//   utm_medium   = 매체 대응표 (지면을 적어 두면 그 값)
-//   utm_campaign = 목적(영문)                           ← 목적을 채우면 그때 만들어진다
-//   utm_content  = 행사일자 _ 제품코드 _ 파일명 _ 소재유형 _ 담당자
-//   utm_term     = 검색매체(sa) 면 {keyword}
+//   광고명        = 행사일자 _ 제품코드 _ 파일명 _ 소재유형 _ 담당자 (= utm_content)
+// utm_source · utm_medium · utm_campaign · utm_term 은 열로 두지 않는다.
+// 링크 안에 이미 들어 있어 그 자리에서 계산한다.
 function utmFormulas_(map, row) {
   var cell = function (label) { return '$' + colLetter_(map[label]) + row; };
   var file = cell('파일명');
@@ -359,13 +362,13 @@ function utmFormulas_(map, row) {
   var targeting = cell('타겟팅');
   var creative = map['소재유형'] ? cell('소재유형') : '""';
   var owner = map['담당자'] ? cell('담당자') : '""';
-  var source = cell('utm_source');
-  var medium = cell('utm_medium');
-  var campaign = cell('utm_campaign');
-  var content = cell('utm_content');
-  var term = cell('utm_term');
-
   var cfg = "'" + CONFIG_SHEET_NAME + "'!";
+  // utm 낱개 열은 두지 않는다. 링크 안에 들어가는 값이라 그 자리에서 계산한다.
+  var source = 'IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,2,FALSE),""))';
+  var medium = 'IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,3,FALSE),""))';
+  var campaign = 'IF(' + purpose + '="","",IFERROR(VLOOKUP(' + purpose + ',' + cfg + '$E:$F,2,FALSE),' + purpose + '))';
+  var term = 'IF(REGEXMATCH(' + medium + '&"","sa"),"{keyword}","")';
+  var content = cell('광고명');
   // 행사일자는 날짜 · 글자 어느 쪽으로 들어와도 YYYYMMDD 로 만든다
   var dateCell = map['행사일자'] ? cell('행사일자') : '';
   var stamp = dateCell
@@ -397,12 +400,7 @@ function utmFormulas_(map, row) {
     '=IF(' + source + '="","",TEXTJOIN("_",TRUE,' + source + ',' + productFull + ',' + campaign + '))',
     '=IF(TEXTJOIN("",TRUE,' + promo + ',' + age + ',' + targeting + ',' + sales + ')="","",'
       + '"["&' + promo + '&"]"&' + age + '&"_"&' + targeting + '&"_"&' + sales + ')',
-    '=' + content,
-    '=IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,2,FALSE),""))',
-    '=IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,3,FALSE),""))',
-    '=IF(' + purpose + '="","",IFERROR(VLOOKUP(' + purpose + ',' + cfg + '$E:$F,2,FALSE),' + purpose + '))',
-    '=IF(' + file + '="","",TEXTJOIN("_",TRUE,' + stamp + ',' + product + ',' + code + ',' + creative + ',' + owner + '))',
-    '=IF(REGEXMATCH(' + medium + '&"","sa"),"{keyword}","")'
+    '=IF(' + file + '="","",TEXTJOIN("_",TRUE,' + stamp + ',' + product + ',' + code + ',' + creative + ',' + owner + '))'
   ];
 }
 

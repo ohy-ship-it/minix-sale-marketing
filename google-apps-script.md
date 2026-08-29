@@ -90,9 +90,9 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 | **소재유형 · 담당자** | **사람** | 광고명 뒤에 붙습니다 (`image` · `ljm`) |
 | LINK(GA) · NT · FM | 수식 | 랜딩링크 + 각 파라미터 |
 | 캠페인명 · 광고그룹명 · 광고명 | 수식 | 광고자동세팅용 이름 |
-| utm 5종 | 수식 | 매체 · 목적 · 파일명에서 |
 
-`url → LINK(GA) · NT · FM → 캠페인명 · 광고그룹명 · 광고명 → utm_*` 차례는 utm-builder 시트와 같습니다.
+**`utm_source` 같은 낱개 열은 두지 않습니다.** 링크 안에 이미 들어 있어 그 자리에서 계산합니다.
+(`utm_content` 는 `광고명` 과 같은 값이라 광고명 한 열만 둡니다)
 
 ### 빌더에는 있는데 여기엔 없는 것
 
@@ -105,17 +105,15 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 
 | 항목 | 규칙 |
 |---|---|
-| `utm_source` | 매체 → 설정 시트 대응표 |
-| `utm_medium` | 매체 → 설정 시트 대응표 (지면을 적어 두면 그 값) |
-| `utm_campaign` | 목적(영문) — **목적을 채워야 나옵니다** |
-| `utm_content` | `행사일자_제품코드_파일명_소재유형_담당자` |
-| `utm_term` | 검색매체(`sa`) 면 `{keyword}`, 아니면 공란 |
 | `LINK(GA)` | 랜딩링크 + UTM 파라미터 — **랜딩링크를 채워야 나옵니다** |
 | `NT` | 랜딩링크 + `?nt_source`(=utm_source_utm_medium) · `nt_medium`(=utm_content) |
 | `FM(쇼핑라이브)` | 랜딩링크 + `?fm`(=utm_source) · `sn`(=utm_medium) · `ea`(=utm_content) |
 | `캠페인명` | `utm_source_제품 정식명_목적(영문)` — 예: `facebook_미닉스 더 플렌더(mini)_purchase` |
 | `광고그룹명` | `[행사명]연령_타겟팅_매출채널` — 빈 칸도 자리를 지킵니다 (`[naver-260829]_none_naver`) |
-| `광고명` | `utm_content` 와 같은 값 (`20260829_flender-mini_celebrity-77_image_ljm`) |
+| `광고명` | `행사일자_제품코드_파일명_소재유형_담당자` (= utm_content) |
+
+링크 안에 들어가는 값은 이렇게 만들어집니다 — `utm_source` · `utm_medium` 은 매체 대응표,
+`utm_campaign` 은 목적(영문), `utm_content` 는 광고명, `utm_term` 은 검색매체(`sa`)면 `{keyword}`.
 
 **광고자동세팅용 이름**은 각 칸을 그대로 씁니다.
 
