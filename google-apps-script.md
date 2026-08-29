@@ -85,8 +85,7 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 | 매체 | 앱 | 매체 선택 |
 | 행사일자 · 상품명 · 행사채널 | 앱 | 각각 한 칸 |
 | **랜딩링크 · 목적** | **사람** | 파일명만으로는 알 수 없음 |
-| **연령 · 타겟팅** | **사람** | 광고그룹명에만 쓰입니다 |
-| **소재유형 · 담당자** | **사람** | 광고명 뒤에 붙습니다 (`image` · `ljm`) |
+| **타겟팅** | **사람** | 광고그룹명에만 쓰입니다 |
 | LINK(GA) · NT · FM | 수식 | 랜딩링크 + 각 파라미터 |
 | 캠페인명 · 광고그룹명 · 광고명 | 수식 | 광고자동세팅용 이름 |
 
@@ -108,8 +107,8 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 | `NT` | 랜딩링크 + `?nt_source`(=utm_source_utm_medium) · `nt_medium`(=utm_content) |
 | `FM(쇼핑라이브)` | 랜딩링크 + `?fm`(=utm_source) · `sn`(=utm_medium) · `ea`(=utm_content) |
 | `캠페인명` | `utm_source_제품 정식명_목적(영문)` — 예: `facebook_미닉스 더 플렌더(mini)_purchase` |
-| `광고그룹명` | `[행사명]연령_타겟팅_매출채널` — 빈 칸도 자리를 지킵니다 (`[naver-260829]_none_naver`) |
-| `광고명` | `행사일자_제품코드_파일명_소재유형_담당자` (= utm_content) |
+| `광고그룹명` | `[행사명]_타겟팅_매출채널` — 빈 칸도 자리를 지킵니다 (`[naver-260829]_none_naver`) |
+| `광고명` | `행사일자_제품코드_파일명` (= utm_content) |
 
 링크 안에 들어가는 값은 이렇게 만들어집니다 — `utm_source` · `utm_medium` 은 매체 대응표,
 `utm_campaign` 은 목적(영문), `utm_content` 는 광고명, `utm_term` 은 검색매체(`sa`)면 `{keyword}`.
@@ -118,16 +117,17 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 
 ```
 행사명 naver-260829-mini  행사일자 2026-08-29  상품명 더플렌더mini  행사채널 네이버
-연령 25-54  타겟팅 none  소재유형 image  담당자 ljm  파일명 celebrity-77
+타겟팅 none  파일명 celebrity-77
         ↓
 캠페인명    facebook_미닉스 더 플렌더(mini)_purchase
-광고그룹명   [naver-260829-mini]25-54_none_naver
-광고명      20260829_flender-mini_celebrity-77_image_ljm
+광고그룹명   [naver-260829-mini]_none_naver
+광고명      20260829_flender-mini_celebrity-77
 ```
 
-빌더 시트의 최근 행과 같은 모양입니다. (빌더는 광고명 앞에 행 번호 `6581_` 이 하나 더 붙습니다)
+빌더 시트와 같은 모양입니다. 빌더는 광고명 앞에 행 번호(`6581_`), 뒤에 소재유형 · 담당자(`_image_ljm`)가
+더 붙고 광고그룹명에 연령(`25-54`)이 들어가는데, 그 칸들은 두지 않기로 했습니다.
 
-`utm_content` 는 **행사일자 · 상품명** 뒤에 **파일명을 통째로**, 그 뒤에 소재유형 · 담당자를 붙입니다.
+`utm_content` 는 **행사일자 · 상품명** 뒤에 **파일명을 통째로** 붙입니다.
 메시지코드는 번호까지가 한 덩어리(`benefit-537`)라 자르지 않습니다.
 
 ```

@@ -14,8 +14,8 @@ var FALLBACK_COLUMNS = [
 
 // 파일명 뒤에 붙는 열. utm-builder 시트와 같은 차례로 둔다.
 //   url → LINK(GA) · NT · FM → 캠페인명 · 광고그룹명 · 광고명 → utm_*
-// 랜딩링크 · 목적 · 연령 · 타겟팅은 사람이 채우는 칸이라 비워 둔다.
-var INPUT_HEADERS = ['랜딩링크', '목적', '연령', '타겟팅', '소재유형', '담당자'];
+// 랜딩링크 · 목적 · 타겟팅은 사람이 채우는 칸이라 비워 둔다.
+var INPUT_HEADERS = ['랜딩링크', '목적', '타겟팅'];
 var FORMULA_HEADERS = ['LINK(GA)', 'NT', 'FM(쇼핑라이브)', '캠페인명', '광고그룹명', '광고명'];
 var UTM_HEADERS = INPUT_HEADERS.concat(FORMULA_HEADERS);
 
@@ -26,7 +26,7 @@ var PART_SHEETS = ['세일즈마케팅', '더플렌더_파트', '생활가전_�
 var FRONT_HEADERS = ['행사명'];
 
 // 더 쓰지 않는 열. 값이 비어 있으면 지운다. (사람이 적은 값이 남아 있으면 손대지 않는다)
-var OBSOLETE_HEADERS = ['쇼핑라이브링크', '메시지 유형', '최종행사명'];
+var OBSOLETE_HEADERS = ['쇼핑라이브링크', '메시지 유형', '최종행사명', '연령', '소재유형', '담당자'];
 
 // 수식으로 만들던 열. 링크 · 광고명 안에 이미 들어 있어 값이 있어도 지운다.
 var DROP_HEADERS = ['발번시각', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
@@ -219,7 +219,7 @@ function hasSources_(map) {
 }
 
 // 없는 열은 만들고, 정해진 차례대로 놓는다.
-//   행사명(수기) → 앱이 보내는 열 → 랜딩링크 · 목적 · 연령 · 타겟팅 → 링크 · 이름 · utm
+//   행사명(수기) → 앱이 보내는 열 → 랜딩링크 · 목적 · 타겟팅 → 링크 · 이름
 // 목록에 없는 옛 열은 오른쪽 끝으로 밀린다.
 function ensureColumns_(sheet, columns) {
   dropObsolete_(sheet);
@@ -347,8 +347,8 @@ function colLetter_(index) {
 //   NT           = 랜딩링크 ?nt_source(소스_미디엄) · nt_medium(콘텐츠)
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
 //   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
-//   광고그룹명    = [행사명]연령_타겟팅_매출채널          ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
-//   광고명        = 행사일자 _ 제품코드 _ 파일명 _ 소재유형 _ 담당자 (= utm_content)
+//   광고그룹명    = [행사명]_타겟팅_매출채널              ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
+//   광고명        = 행사일자 _ 제품코드 _ 파일명 (= utm_content)
 // utm_source · utm_medium · utm_campaign · utm_term 은 열로 두지 않는다.
 // 링크 안에 이미 들어 있어 그 자리에서 계산한다.
 function utmFormulas_(map, row) {
@@ -357,8 +357,8 @@ function utmFormulas_(map, row) {
   var media = cell('매체');
   var url = cell('랜딩링크');
   var purpose = cell('목적');
-  var age = cell('연령');
-  var targeting = cell('타겟팅');
+  var age = map['연령'] ? cell('연령') : '""';
+  var targeting = map['타겟팅'] ? cell('타겟팅') : '""';
   var creative = map['소재유형'] ? cell('소재유형') : '""';
   var owner = map['담당자'] ? cell('담당자') : '""';
   var cfg = "'" + CONFIG_SHEET_NAME + "'!";
