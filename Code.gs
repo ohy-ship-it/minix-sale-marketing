@@ -16,7 +16,7 @@ var FALLBACK_COLUMNS = [
 // 파일명 뒤에 붙는 열. utm-builder 시트와 같은 차례로 둔다.
 //   url → LINK(GA) · NT · FM → 캠페인명 · 광고그룹명 · 광고명 → utm_*
 // 랜딩링크 · 목적 · 연령 · 타겟팅은 사람이 채우는 칸이라 비워 둔다.
-var INPUT_HEADERS = ['랜딩링크', '목적', '연령', '타겟팅'];
+var INPUT_HEADERS = ['랜딩링크', '목적', '연령', '타겟팅', '소재유형', '담당자'];
 var FORMULA_HEADERS = ['LINK(GA)', 'NT', 'FM(쇼핑라이브)',
   '캠페인명', '광고그룹명', '광고명',
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
@@ -63,13 +63,24 @@ var DEFAULT_SALES = [
   ['오프라인', 'offline'], ['이벤트', 'event'], ['KOL 라이브', 'kolLive']
 ];
 
+// 상품명 → 제품코드(광고명용) · 제품 정식명(캠페인명용). 정식명은 index 탭 J열 그대로다.
 var DEFAULT_PRODUCT = [
-  ['더플렌더', 'flender'], ['더플렌더mini', 'flender-mini'], ['더플렌더PLUS', 'flender-plus'],
-  ['더플렌더MAX', 'flender-max'], ['더슬림', 'theslim'], ['더시프트', 'theshift'],
-  ['더에어드라이', 'theairdry'], ['식기세척기', 'dishwasher'], ['건조기', 'dryer'],
-  ['건조기필터', 'dryerfilter'], ['건조기시트', 'dryersheets'], ['하드필터', 'hardfilter'],
-  ['하드락필터', 'hardfilter-rock'], ['푸드컨테이너', 'foodcontainer'], ['식기세제', 'dishdetergent'],
-  ['악세사리', 'accessories']
+  ['더플렌더', 'flender', '미닉스 더 플렌더'],
+  ['더플렌더mini', 'flender-mini', '미닉스 더 플렌더(mini)'],
+  ['더플렌더PLUS', 'flender-plus', '미닉스 더 플렌더_더 플렌더(PLUS)'],
+  ['더플렌더MAX', 'flender-max', '미닉스 더 플렌더_더 플렌더(MAX)'],
+  ['더슬림', 'theslim', '미닉스 더 슬림_더 슬림'],
+  ['더시프트', 'theshift', '미닉스 더 시프트_더 시프트'],
+  ['더에어드라이', 'theairdry', '미닉스 미니건조기_더 에어드라이'],
+  ['식기세척기', 'dishwasher', '미닉스 미니 식기세척기'],
+  ['건조기', 'dryer', '미닉스 미니건조기'],
+  ['건조기필터', 'dryerfilter', '미닉스 리필상품'],
+  ['건조기시트', 'dryersheets', '미닉스 리필상품'],
+  ['하드필터', 'hardfilter', '미닉스 리필상품'],
+  ['하드락필터', 'hardfilter-rock', '미닉스 리필상품'],
+  ['푸드컨테이너', 'foodcontainer', '미닉스 리필상품'],
+  ['식기세제', 'dishdetergent', '미닉스 리필상품'],
+  ['악세사리', 'accessories', '미닉스 리필상품']
 ];
 
 // ── 앱 → 시트 적재 ──────────────────────────────────────────────
@@ -307,13 +318,13 @@ function colLetter_(index) {
 //   LINK(GA)     = 랜딩링크 ? utm 파라미터              ← 랜딩링크를 채우면 그때 만들어진다
 //   NT           = 랜딩링크 ?nt_source(소스_미디엄) · nt_medium(콘텐츠)
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
-//   캠페인명      = [제품]소스_목적                     ← utm-builder 캠페인 열과 같은 규칙
-//   광고그룹명    = [행사명]연령_타겟팅_매출채널          ← 행사채널은 설정 표를 거쳐 매출채널로
+//   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
+//   광고그룹명    = [행사명]연령_타겟팅_매출채널          ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
 //   광고명        = utm_content
 //   utm_source   = 매체 대응표
 //   utm_medium   = 매체 대응표 (지면을 적어 두면 그 값)
 //   utm_campaign = 목적(영문)                           ← 목적을 채우면 그때 만들어진다
-//   utm_content  = 행사일자(YYYYMMDD) _ 제품 _ 파일명(메시지코드-순번)
+//   utm_content  = 행사일자 _ 제품코드 _ 파일명 _ 소재유형 _ 담당자
 //   utm_term     = 검색매체(sa) 면 {keyword}
 function utmFormulas_(map, row) {
   var cell = function (label) { return '$' + colLetter_(map[label]) + row; };
@@ -323,6 +334,8 @@ function utmFormulas_(map, row) {
   var purpose = cell('목적');
   var age = cell('연령');
   var targeting = cell('타겟팅');
+  var creative = map['소재유형'] ? cell('소재유형') : '""';
+  var owner = map['담당자'] ? cell('담당자') : '""';
   var source = cell('utm_source');
   var medium = cell('utm_medium');
   var campaign = cell('utm_campaign');
@@ -336,7 +349,9 @@ function utmFormulas_(map, row) {
     ? 'IF(' + dateCell + '="","",IF(ISNUMBER(' + dateCell + '),TEXT(' + dateCell + ',"yyyymmdd"),SUBSTITUTE(' + dateCell + '&"","-","")))'
     : '""';
   var productKo = map['상품명'] ? cell('상품명') : '""';
-  var product = 'IFERROR(VLOOKUP(' + productKo + ',' + cfg + '$H:$I,2,FALSE),' + productKo + ')';
+  var product = 'IFERROR(VLOOKUP(' + productKo + ',' + cfg + '$H:$J,2,FALSE),' + productKo + ')';
+  // 캠페인명에는 index 탭의 제품 정식명을 쓴다 (미닉스 더 플렌더(mini) …)
+  var productFull = 'IFERROR(VLOOKUP(' + productKo + ',' + cfg + '$H:$J,3,FALSE),' + productKo + ')';
   // 메시지코드는 번호까지가 한 덩어리다. (파일명 = 메시지코드-순번)
   var code = 'IFERROR(REGEXEXTRACT(' + file + ',"^[A-Za-z0-9]+-\\d+"),' + file + ')';
   var param = function (name, value) { return 'IF(' + value + '="","","' + name + '="&' + value + ')'; };
@@ -356,15 +371,14 @@ function utmFormulas_(map, row) {
       + param('nt_source', sourceMedium) + ',' + param('nt_medium', content) + '))',
     '=IF(' + source + '="","",' + head + '&TEXTJOIN("&",TRUE,'
       + param('fm', source) + ',' + param('sn', medium) + ',' + param('ea', content) + '))',
-    '=IF(' + source + '="","",IF(' + productKo + '="","","["&' + productKo + '&"]")&' + source
-      + '&IF(' + campaign + '="","","_"&' + campaign + '))',
+    '=IF(' + source + '="","",TEXTJOIN("_",TRUE,' + source + ',' + productFull + ',' + campaign + '))',
     '=IF(TEXTJOIN("",TRUE,' + promo + ',' + age + ',' + targeting + ',' + sales + ')="","",'
-      + 'IF(' + promo + '="","","["&' + promo + '&"]")&TEXTJOIN("_",TRUE,' + age + ',' + targeting + ',' + sales + '))',
+      + '"["&' + promo + '&"]"&' + age + '&"_"&' + targeting + '&"_"&' + sales + ')',
     '=' + content,
     '=IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,2,FALSE),""))',
     '=IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,3,FALSE),""))',
     '=IF(' + purpose + '="","",IFERROR(VLOOKUP(' + purpose + ',' + cfg + '$E:$F,2,FALSE),' + purpose + '))',
-    '=IF(' + file + '="","",TEXTJOIN("_",TRUE,' + stamp + ',' + product + ',' + code + '))',
+    '=IF(' + file + '="","",TEXTJOIN("_",TRUE,' + stamp + ',' + product + ',' + code + ',' + creative + ',' + owner + '))',
     '=IF(REGEXMATCH(' + medium + '&"","sa"),"{keyword}","")'
   ];
 }
@@ -376,7 +390,7 @@ function ensureConfigSheet_(book) {
   if (!config) {
     config = book.insertSheet(CONFIG_SHEET_NAME, book.getNumSheets());
     config.getRange('A1:L1').setValues([[
-      '매체', 'utm_source', 'utm_medium', '', '목적', '목적(영문)', '', '상품명', '제품코드', '', '행사채널', '매출채널'
+      '매체', 'utm_source', 'utm_medium', '', '목적', '목적(영문)', '', '상품명', '제품코드', '제품 정식명', '행사채널', '매출채널'
     ]]).setFontWeight('bold');
     config.setFrozenRows(1);
   }
@@ -388,6 +402,9 @@ function ensureConfigSheet_(book) {
   addMissingRows_(config, 11, DEFAULT_SALES);
   if (!String(config.getRange('K1').getValue()).trim()) {
     config.getRange('K1:L1').setValues([['행사채널', '매출채널']]).setFontWeight('bold');
+  }
+  if (!String(config.getRange('J1').getValue()).trim()) {
+    config.getRange('J1').setValue('제품 정식명').setFontWeight('bold');
   }
   config.autoResizeColumns(1, 12);
   return config;
@@ -405,6 +422,22 @@ function addMissingRows_(config, column, rows) {
       end = i + 2;
     });
   }
+  // 이미 있는 줄에 새로 생긴 칸(예: 제품 정식명)이 비어 있으면 기본값으로 채운다
+  if (last > 1) {
+    var width = rows[0].length;
+    var block = config.getRange(2, column, last - 1, width).getValues();
+    var touched = false;
+    block.forEach(function (line) {
+      var known = null;
+      rows.forEach(function (row) { if (row[0] === String(line[0]).trim()) known = row; });
+      if (!known) return;
+      for (var i = 1; i < width; i += 1) {
+        if (String(line[i]).trim() === '' && known[i]) { line[i] = known[i]; touched = true; }
+      }
+    });
+    if (touched) config.getRange(2, column, last - 1, width).setValues(block);
+  }
+
   var missing = rows.filter(function (row) { return !have[row[0]]; });
   if (!missing.length) return;
   config.getRange(end + 1, column, missing.length, rows[0].length).setValues(missing);

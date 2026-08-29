@@ -104,9 +104,9 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 | `LINK(GA)` | 랜딩링크 + UTM 파라미터 — **랜딩링크를 채워야 나옵니다** |
 | `NT` | 랜딩링크 + `?nt_source`(=utm_source_utm_medium) · `nt_medium`(=utm_content) |
 | `FM(쇼핑라이브)` | 랜딩링크 + `?fm`(=utm_source) · `sn`(=utm_medium) · `ea`(=utm_content) |
-| `캠페인명` | `[제품]utm_source_목적` — utm-builder 캠페인 열과 같은 규칙 |
-| `광고그룹명` | `[행사명]연령_타겟팅_매출채널` — 행사채널은 설정 표로 매출채널로 바뀝니다 |
-| `광고명` | `utm_content` 와 같은 값 |
+| `캠페인명` | `utm_source_제품 정식명_목적(영문)` — 예: `facebook_미닉스 더 플렌더(mini)_purchase` |
+| `광고그룹명` | `[행사명]연령_타겟팅_매출채널` — 빈 칸도 자리를 지킵니다 (`[naver-260829]_none_naver`) |
+| `광고명` | `utm_content` 와 같은 값 (`20260829_flender-mini_celebrity-77_image_ljm`) |
 
 **광고자동세팅용 이름**은 각 칸을 그대로 씁니다.
 
@@ -149,7 +149,7 @@ FM          https://minix.life/?fm=gfa&sn=feed&ea=20260829_flender-mini_benefit-
 
 | A · B · C | E · F | H · I | K · L |
 |---|---|---|---|
-| 매체 → utm_source · utm_medium | 목적 → 목적(영문) | 상품명 → 제품코드 | 행사채널 → 매출채널 |
+| 매체 → utm_source · utm_medium | 목적 → 목적(영문) | 상품명 → 제품코드 · **제품 정식명** | 행사채널 → 매출채널 |
 | 메타 → facebook · display | 구매 → purchase | 더플렌더mini → flender-mini |
 | GFA-피드 → gfa · feed | 트래픽 → traffic | 더슬림 → theslim |
 | 인플루언서 → influencer · affiliate | … | … | CJ → cj |
