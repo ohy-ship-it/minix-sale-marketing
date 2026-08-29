@@ -14,8 +14,8 @@ var FALLBACK_COLUMNS = [
 
 // 파일명 뒤에 붙는 열. utm-builder 시트와 같은 차례로 둔다.
 //   url → LINK(GA) · NT · FM → 캠페인명 · 광고그룹명 · 광고명 → utm_*
-// 랜딩링크 · 목적 · 타겟팅은 사람이 채우는 칸이라 비워 둔다.
-var INPUT_HEADERS = ['랜딩링크', '목적', '타겟팅'];
+// 랜딩링크 · 목적 · 타겟팅 · 담당자는 사람이 채우는 칸이다. (담당자는 앱에서도 보낸다)
+var INPUT_HEADERS = ['랜딩링크', '목적', '타겟팅', '담당자'];
 var FORMULA_HEADERS = ['LINK(GA)', 'NT', 'FM(쇼핑라이브)', '캠페인명', '광고그룹명', '광고명'];
 var UTM_HEADERS = INPUT_HEADERS.concat(FORMULA_HEADERS);
 
@@ -26,7 +26,7 @@ var PART_SHEETS = ['세일즈마케팅', '더플렌더_파트', '생활가전_�
 var FRONT_HEADERS = ['행사명'];
 
 // 더 쓰지 않는 열. 값이 비어 있으면 지운다. (사람이 적은 값이 남아 있으면 손대지 않는다)
-var OBSOLETE_HEADERS = ['쇼핑라이브링크', '메시지 유형', '최종행사명', '연령', '소재유형', '담당자'];
+var OBSOLETE_HEADERS = ['쇼핑라이브링크', '메시지 유형', '최종행사명', '연령', '소재유형'];
 
 // 수식으로 만들던 열. 링크 · 광고명 안에 이미 들어 있어 값이 있어도 지운다.
 var DROP_HEADERS = ['발번시각', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
@@ -348,7 +348,7 @@ function colLetter_(index) {
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
 //   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
 //   광고그룹명    = [행사명]_타겟팅_매출채널              ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
-//   광고명        = 행사일자 _ 제품코드 _ 파일명 (= utm_content)
+//   광고명        = 행사일자 _ 제품코드 _ 파일명 _ 담당자 (= utm_content)
 // utm_source · utm_medium · utm_campaign · utm_term 은 열로 두지 않는다.
 // 링크 안에 이미 들어 있어 그 자리에서 계산한다.
 function utmFormulas_(map, row) {

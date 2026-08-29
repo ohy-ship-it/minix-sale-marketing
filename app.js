@@ -2430,6 +2430,9 @@ if (utmBuilder) {
   const STORAGE_KEY = 'minix-utm-builder-v1';
   const FILENAME_KEY = 'minix-filename-tool-v3';
 
+  // 담당자 이니셜. 목록에 없으면 직접 적어도 된다.
+  const OWNERS = ['ohy', 'ljm', 'lhj', 'khb', 'cyj'];
+
   // 적재시트의 파트 탭. 고른 파트의 탭으로 들어간다.
   const PARTS = ['세일즈마케팅', '더플렌더_파트', '생활가전_파트'];
 
@@ -2475,6 +2478,7 @@ if (utmBuilder) {
     { key: 'product', label: '상품명' },
     { key: 'channel', label: '행사채널' },
     { key: 'event', label: '행사명' },
+    { key: 'owner', label: '담당자' },
     { key: 'url', label: '랜딩링크' },
     { key: 'purposeCode', label: '목적' },
   ];
@@ -2483,7 +2487,7 @@ if (utmBuilder) {
   const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `u-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const tr = (value) => String(value ?? '').trim();
 
-  const defaults = { part: PARTS[0], date: '', product: '', channel: '', event: '', media: '', purpose: '', filenames: '', url: '', urlType: 'linkGA' };
+  const defaults = { part: PARTS[0], date: '', product: '', channel: '', event: '', owner: '', media: '', purpose: '', filenames: '', url: '', urlType: 'linkGA' };
   let state = { ...defaults };
   let entries = [];
   try {
@@ -2529,7 +2533,8 @@ if (utmBuilder) {
   const build = (input) => {
     const [, source, medium] = mediaRow(input.media);
     const url = tr(input.url);
-    const content = [stampOf(input.date), productCode(input.product), codeOf(input.filename)].filter(Boolean).join('_');
+    const content = [stampOf(input.date), productCode(input.product), codeOf(input.filename), tr(input.owner)]
+      .filter(Boolean).join('_');
     const campaign = purposeCode(input.purpose);
     const term = /sa/.test(medium) ? '{keyword}' : '';
     return {
@@ -2598,6 +2603,8 @@ if (utmBuilder) {
           <label>상품명<select data-field="product"><option value=""${state.product ? '' : ' selected'}>선택 안 함</option>${options(PRODUCTS, state.product)}</select></label>
           <label>행사채널<select data-field="channel"><option value=""${state.channel ? '' : ' selected'}>선택 안 함</option>${CHANNELS.map((value) => `<option${value === state.channel ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
           <label>행사명<input type="text" data-field="event" value="${escapeHtml(state.event)}" placeholder="예: 음쓰해방위크"></label>
+          <label>담당자 <small class="utm-hint">*이니셜 등록</small><input type="text" data-field="owner" list="utm-owner-list" value="${escapeHtml(state.owner)}" placeholder="예: ohy" autocomplete="off">
+            <datalist id="utm-owner-list">${OWNERS.map((value) => `<option value="${escapeHtml(value)}"></option>`).join('')}</datalist></label>
           <label class="tool-wide">랜딩링크<input type="text" data-field="url" value="${escapeHtml(state.url)}" placeholder="https://minix.life/… (비우면 ? 로 시작하는 파라미터만 나옵니다)"></label>
           <div class="setup-field tool-wide"><span>URL 유형<small class="setup-hint">목록과 복사에 쓸 값</small></span>${pills('urltype', URL_TYPES, state.urlType)}</div>
           <label class="tool-wide">파일명 <small class="utm-hint">한 줄에 하나씩 · ${names.length}건</small><textarea data-field="filenames" rows="3" placeholder="benefit-537&#10;urgency-449">${escapeHtml(state.filenames)}</textarea></label>
@@ -2702,6 +2709,7 @@ if (utmBuilder) {
         product: state.product,
         channel: state.channel,
         event: state.event,
+        owner: state.owner,
         url: state.url,
         campaign: finalNameOf(filename),
         type: found?.type || '',
@@ -2726,6 +2734,7 @@ if (utmBuilder) {
     ['상품명', (entry) => entry.product],
     ['행사채널', (entry) => entry.channel || ''],
     ['행사명', (entry) => entry.event || ''],
+    ['담당자', (entry) => entry.owner || ''],
     ['랜딩링크', (entry) => entry.url],
     [urlTypeLabel(), (entry, row) => urlOf(entry, row)],
     ['만든시각', (entry) => (entry.createdAt ? new Date(entry.createdAt).toLocaleString('ko-KR') : '')],
@@ -2762,6 +2771,7 @@ if (utmBuilder) {
     product: entry.product || '',
     channel: entry.channel || '',
     event: entry.event || '',
+    owner: entry.owner || '',
     url: entry.url || '',
     purposeCode: purposeCode(entry.purpose),
   });
