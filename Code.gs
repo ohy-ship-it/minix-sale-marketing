@@ -22,6 +22,9 @@ var FORMULA_HEADERS = ['LINK(GA)', 'NT', 'FM(쇼핑라이브)',
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
 var UTM_HEADERS = INPUT_HEADERS.concat(FORMULA_HEADERS);
 
+// 파트별 탭. 앱이 sheet 이름을 함께 보내면 그 탭에 적재한다.
+var PART_SHEETS = ['세일즈마케팅', '더플렌더_파트', '생활가전_파트'];
+
 // 맨 앞에 두는 열. 앱이 값을 보내도 시트에서 고쳐 쓰는 칸이다.
 var FRONT_HEADERS = ['행사명'];
 
@@ -93,7 +96,7 @@ function doPost(e) {
     var rows = payload.rows || [];
 
     var book = SpreadsheetApp.openById(SHEET_ID);
-    var sheet = book.getSheets()[0];
+    var sheet = targetSheet_(book, payload.sheet);
     ensureConfigSheet_(book);
     var map = ensureColumns_(sheet, columns);
 
@@ -132,12 +135,28 @@ function json(payload) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// 파트 이름으로 탭을 고른다. 없으면 만들고, 이름이 없으면 첫 파트 탭.
+function targetSheet_(book, name) {
+  var wanted = String(name || '').trim();
+  if (wanted && PART_SHEETS.indexOf(wanted) >= 0) {
+    return book.getSheetByName(wanted) || book.insertSheet(wanted, 0);
+  }
+  return book.getSheetByName(PART_SHEETS[0]) || book.getSheets()[0];
+}
+
+// UTM 을 붙이는 탭인가 (설정 탭은 건드리지 않는다)
+function isPartSheet_(sheet) {
+  var name = sheet.getName();
+  if (name === CONFIG_SHEET_NAME) return false;
+  return PART_SHEETS.indexOf(name) >= 0 || sheet.getIndex() === 1;
+}
+
 // ── 시트에서 직접 입력했을 때 ───────────────────────────────────
 // 파일명을 손으로 적거나 붙여넣어도 같은 UTM 이 붙는다.
 function onEdit(e) {
   if (!e || !e.range) return;
   var sheet = e.range.getSheet();
-  if (sheet.getIndex() !== 1) return;
+  if (!isPartSheet_(sheet)) return;
 
   var map = headerMap_(sheet);
   if (!hasSources_(map)) {
@@ -166,14 +185,16 @@ function onOpen() {
     .addToUi();
 }
 
-// 이미 쌓여 있던 행까지 한 번에 채운다.
+// 파트 탭을 모두 돌며 이미 쌓여 있던 행까지 채운다.
 function fillAllUtm() {
   var book = SpreadsheetApp.openById(SHEET_ID);
-  var sheet = book.getSheets()[0];
   ensureConfigSheet_(book);
-  var map = ensureColumns_(sheet, FALLBACK_COLUMNS);
-  if (sheet.getLastRow() < 2) return;
-  writeUtm_(sheet, map, 2, sheet.getLastRow() - 1);
+  book.getSheets().forEach(function (sheet) {
+    if (!isPartSheet_(sheet)) return;
+    var map = ensureColumns_(sheet, FALLBACK_COLUMNS);
+    if (sheet.getLastRow() < 2) return;
+    writeUtm_(sheet, map, 2, sheet.getLastRow() - 1);
+  });
 }
 
 function openConfigSheet() {

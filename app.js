@@ -2431,6 +2431,9 @@ if (utmBuilder) {
   const STORAGE_KEY = 'minix-utm-builder-v1';
   const FILENAME_KEY = 'minix-filename-tool-v3';
 
+  // 적재시트의 파트 탭. 고른 파트의 탭으로 들어간다.
+  const PARTS = ['세일즈마케팅', '더플렌더_파트', '생활가전_파트'];
+
   // 매체 → utm_source · utm_medium (utm_medium 에는 지면을 적는다)
   const MEDIA = [
     ['메타', 'facebook', 'display'],
@@ -2482,7 +2485,7 @@ if (utmBuilder) {
   const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `u-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const tr = (value) => String(value ?? '').trim();
 
-  const defaults = { date: '', product: '', channel: '', event: '', media: '', purpose: '', filenames: '', url: '', urlType: 'linkGA' };
+  const defaults = { part: PARTS[0], date: '', product: '', channel: '', event: '', media: '', purpose: '', filenames: '', url: '', urlType: 'linkGA' };
   let state = { ...defaults };
   let entries = [];
   try {
@@ -2594,6 +2597,7 @@ if (utmBuilder) {
 
       <section class="tool-card">
         <div class="tool-grid">
+          <label>파트<select data-field="part">${PARTS.map((value) => `<option${value === state.part ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
           <label>매체<select data-field="media"><option value=""${state.media ? '' : ' selected'}>선택 안 함</option>${options(MEDIA, state.media)}</select></label>
           <label>목적<select data-field="purpose"><option value=""${state.purpose ? '' : ' selected'}>선택 안 함</option>${options(PURPOSES, state.purpose)}</select></label>
           <label>행사일자<input type="date" data-field="date" value="${escapeHtml(state.date)}"></label>
@@ -2636,11 +2640,12 @@ if (utmBuilder) {
           </div>
         </div>
         ${entries.length ? `<div class="tool-table-wrap"><table class="tool-table">
-          <thead><tr><th>파일명</th><th>매체</th><th>목적</th><th>${escapeHtml(urlTypeLabel())}</th><th></th></tr></thead>
+          <thead><tr><th>파트</th><th>파일명</th><th>매체</th><th>목적</th><th>${escapeHtml(urlTypeLabel())}</th><th></th></tr></thead>
           <tbody>${entries.map((entry) => {
             const row = build(entry);
             const link = urlOf(entry, row);
             return `<tr data-id="${entry.id}">
+              <td>${escapeHtml(entry.part || PARTS[0])}</td>
               <td><code>${escapeHtml(entry.filename)}</code></td>
               <td>${escapeHtml(entry.media) || '<span class="tool-blank">-</span>'}</td>
               <td>${escapeHtml(entry.purpose) || '<span class="tool-blank">-</span>'}</td>
@@ -2696,6 +2701,7 @@ if (utmBuilder) {
       return {
         id: newId(),
         filename,
+        part: state.part || PARTS[0],
         media: state.media,
         purpose: state.purpose,
         date: state.date,
@@ -2717,6 +2723,7 @@ if (utmBuilder) {
   };
 
   const EXCEL_COLUMNS = [
+    ['파트', (entry) => entry.part || PARTS[0]],
     ['파일명', (entry) => entry.filename],
     ['매체', (entry) => entry.media],
     ['목적', (entry) => entry.purpose],
@@ -2758,27 +2765,38 @@ if (utmBuilder) {
   };
 
   // 시트로 보낸다. UTM 값은 보내지 않는다 — 시트가 같은 규칙으로 다시 만든다.
+  const rowFor = (entry) => ({
+    filename: entry.filename,
+    media: entry.media,
+    eventDate: entry.date || '',
+    product: entry.product || '',
+    channel: entry.channel || '',
+    event: entry.event || '',
+    createdAt: entry.createdAt,
+    url: entry.url || '',
+    purposeCode: purposeCode(entry.purpose),
+  });
+
+  // 파트마다 탭이 달라 파트별로 나눠 보낸다. UTM 값은 시트가 다시 만든다.
   const sendToSheet = (button) => {
     const list = pending();
     if (!list.length) return;
     button.disabled = true;
-    const rows = list.map((entry) => ({
-      filename: entry.filename,
-      media: entry.media,
-      eventDate: entry.date || '',
-      product: entry.product || '',
-      channel: entry.channel || '',
-      event: entry.event || '',
-      createdAt: entry.createdAt,
-      url: entry.url || '',
-      purposeCode: purposeCode(entry.purpose),
-    }));
-    window.fetch(SHEET_ENDPOINT, {
+    const groups = new Map();
+    list.forEach((entry) => {
+      const part = entry.part || PARTS[0];
+      if (!groups.has(part)) groups.set(part, []);
+      groups.get(part).push(entry);
+    });
+    const post = ([part, group]) => window.fetch(SHEET_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ columns: SHEET_COLUMNS, rows }),
-    })
-      .then((response) => (response.ok ? response.json().catch(() => ({ ok: true })) : Promise.reject(new Error('HTTP ' + response.status))))
+      body: JSON.stringify({ sheet: part, columns: SHEET_COLUMNS, rows: group.map(rowFor) }),
+    }).then((response) => (response.ok
+      ? response.json().catch(() => ({ ok: true }))
+      : Promise.reject(new Error('HTTP ' + response.status))));
+
+    Promise.all([...groups.entries()].map(post))
       .then(() => {
         const ids = new Set(list.map((entry) => entry.id));
         entries = entries.map((entry) => (ids.has(entry.id) ? { ...entry, sent: true } : entry));
@@ -2787,8 +2805,8 @@ if (utmBuilder) {
       })
       .catch((error) => {
         button.disabled = false;
-        window.alert('시트 적재에 실패했습니다.\n' + error.message + '\n\n'
-          + '잠시 뒤 다시 시도하고, 계속 실패하면 [엑셀 다운로드] 로 받아 붙여넣어 주세요.');
+        window.alert(['시트 적재에 실패했습니다.', error.message, '',
+          '잠시 뒤 다시 시도하고, 계속 실패하면 [엑셀 다운로드] 로 받아 붙여넣어 주세요.'].join('\n'));
       });
   };
 
