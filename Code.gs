@@ -190,8 +190,10 @@ function hasSources_(map) {
 function ensureColumns_(sheet, columns) {
   dropObsolete_(sheet);
 
+  // 어떤 화면이 보내든 차례는 늘 같다. 이번에 안 보낸 열도 제자리를 지킨다.
   var wanted = [];
   FRONT_HEADERS
+    .concat(FALLBACK_COLUMNS.map(function (column) { return column.label; }))
     .concat(columns.map(function (column) { return column.label; }))
     .concat(UTM_HEADERS)
     .forEach(function (label) {

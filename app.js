@@ -2448,6 +2448,9 @@ if (utmBuilder) {
     ['브랜딩', 'branding'], ['도달', 'reach'], ['가입', 'sign-up'], ['메시지', 'message'],
     ['친구추가', 'friend'], ['재생', 'view'],
   ];
+  // 광고그룹명을 만들려면 행사채널이 필요하다. (파일명 화면과 같은 목록)
+  const CHANNELS = ['네이버', '오늘의집', '카카오', 'CJ', 'G마켓', '29CM', '컬리', '이마트', '11번가',
+    '하이마트', '전자랜드', '현대홈쇼핑', '롯데홈쇼핑', '롯데', '쿠팡', '자사몰', '공구', '오프라인', '이벤트', 'KOL 라이브'];
   const PRODUCTS = [
     ['더플렌더', 'flender'], ['더플렌더mini', 'flender-mini'], ['더플렌더PLUS', 'flender-plus'],
     ['더플렌더MAX', 'flender-max'], ['더슬림', 'theslim'], ['더시프트', 'theshift'],
@@ -2466,6 +2469,8 @@ if (utmBuilder) {
     { key: 'media', label: '매체' },
     { key: 'eventDate', label: '행사일자' },
     { key: 'product', label: '상품명' },
+    { key: 'channel', label: '행사채널' },
+    { key: 'event', label: '행사명' },
     { key: 'createdAt', label: '발번시각' },
     { key: 'url', label: '랜딩링크' },
     { key: 'purposeCode', label: '목적' },
@@ -2475,7 +2480,7 @@ if (utmBuilder) {
   const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `u-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const tr = (value) => String(value ?? '').trim();
 
-  const defaults = { date: '', product: '', media: '', purpose: '', filenames: '', url: '', urlType: 'linkGA' };
+  const defaults = { date: '', product: '', channel: '', event: '', media: '', purpose: '', filenames: '', url: '', urlType: 'linkGA' };
   let state = { ...defaults };
   let entries = [];
   try {
@@ -2591,6 +2596,8 @@ if (utmBuilder) {
           <label>목적<select data-field="purpose"><option value=""${state.purpose ? '' : ' selected'}>선택 안 함</option>${options(PURPOSES, state.purpose)}</select></label>
           <label>행사일자<input type="date" data-field="date" value="${escapeHtml(state.date)}"></label>
           <label>상품명<select data-field="product"><option value=""${state.product ? '' : ' selected'}>선택 안 함</option>${options(PRODUCTS, state.product)}</select></label>
+          <label>행사채널<select data-field="channel"><option value=""${state.channel ? '' : ' selected'}>선택 안 함</option>${CHANNELS.map((value) => `<option${value === state.channel ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
+          <label>행사명<input type="text" data-field="event" value="${escapeHtml(state.event)}" placeholder="예: 음쓰해방위크"></label>
           <label class="tool-wide">랜딩링크<input type="text" data-field="url" value="${escapeHtml(state.url)}" placeholder="https://minix.life/… (비우면 ? 로 시작하는 파라미터만 나옵니다)"></label>
           <div class="setup-field tool-wide"><span>URL 유형<small class="setup-hint">목록과 복사에 쓸 값</small></span>${pills('urltype', URL_TYPES, state.urlType)}</div>
           <label class="tool-wide">파일명 <small class="utm-hint">한 줄에 하나씩 · ${names.length}건</small><textarea data-field="filenames" rows="3" placeholder="benefit-537&#10;urgency-449">${escapeHtml(state.filenames)}</textarea></label>
@@ -2675,6 +2682,8 @@ if (utmBuilder) {
     if (stamp) state.date = `20${stamp.slice(0, 2)}-${stamp.slice(2, 4)}-${stamp.slice(4, 6)}`;
     if (parts[1] && PRODUCTS.some(([label]) => label === parts[1])) state.product = parts[1];
     if (found.media && MEDIA.some(([label]) => label === found.media)) state.media = found.media;
+    if (found.channel) state.channel = found.channel;
+    if (found.event) state.event = found.event;
     return true;
   };
 
@@ -2689,6 +2698,8 @@ if (utmBuilder) {
         purpose: state.purpose,
         date: state.date,
         product: state.product,
+        channel: state.channel,
+        event: state.event,
         url: state.url,
         campaign: finalNameOf(filename),
         type: found?.type || '',
@@ -2754,6 +2765,8 @@ if (utmBuilder) {
       media: entry.media,
       eventDate: entry.date || '',
       product: entry.product || '',
+      channel: entry.channel || '',
+      event: entry.event || '',
       createdAt: entry.createdAt,
       url: entry.url || '',
       purposeCode: purposeCode(entry.purpose),
