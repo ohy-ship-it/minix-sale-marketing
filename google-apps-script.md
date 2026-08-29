@@ -46,7 +46,7 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 
 앱이 **어떤 열을 어떤 이름으로 쓸지 함께 보내므로**, 앞으로 열이 늘어도 스크립트를 다시 배포할 필요가 없습니다.
 값은 보낸 차례가 아니라 **시트 헤더의 이름을 찾아 그 자리에** 들어갑니다. (UTM 빌더는 랜딩링크 · 목적까지 함께 보냅니다)
-현재 항목: **파일명 · 매체 · 메시지 유형 · 최종행사명 · 발번시각**
+현재 항목: **행사명 · 파일명 · 매체 · 행사일자 · 상품명 · 행사채널 · 발번시각**
 (그 뒤의 UTM 열은 스크립트가 알아서 붙입니다. 아래 참고)
 
 > 단, 이 방식으로 바꾼 [Code.gs](Code.gs) 를 **한 번은 배포**해야 합니다.
@@ -65,32 +65,26 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 
 | 열 | 채우는 주체 | 어디서 오나 |
 |---|---|---|
+| 행사명 | 앱 | 파일명 화면의 행사명 (시트에서 고쳐 씁니다) |
 | 파일명 | 앱 | 메시지 유형 → `메시지코드-순번` |
 | 매체 | 앱 | 매체 선택 |
-| 메시지 유형 | 앱 | 메시지 유형 선택 |
-| 최종행사명 | 앱 | `행사일자_상품명_행사채널_행사명` |
+| 행사일자 · 상품명 · 행사채널 | 앱 | 각각 한 칸 |
 | 발번시각 | 앱 | 발번한 시각 |
-| **랜딩링크** | **사람** | 파일명만으로는 알 수 없음 |
-| **목적** | **사람** | 드롭다운(구매 · 트래픽 …) |
-| LINK(GA) | 수식 | 랜딩링크 + utm 파라미터 |
-| NT | 수식 | 네이버스토어 링크 뒤에 붙이는 파라미터 |
-| FM(쇼핑라이브) | 수식 | 쇼핑라이브 링크 뒤에 붙이는 파라미터 |
-| utm_source · utm_medium | 수식 | 매체 → 설정 시트 |
-| utm_campaign | 수식 | 목적 |
-| utm_content | 수식 | 최종행사명 + 파일명 |
-| utm_term | 수식 | 검색매체면 `{keyword}` |
+| **랜딩링크 · 목적** | **사람** | 파일명만으로는 알 수 없음 |
+| **연령 · 타겟팅** | **사람** | 광고그룹명에만 쓰입니다 |
+| **소재유형 · 담당자** | **사람** | 광고명 뒤에 붙습니다 (`image` · `ljm`) |
+| LINK(GA) · NT · FM | 수식 | 랜딩링크 + 각 파라미터 |
+| 캠페인명 · 광고그룹명 · 광고명 | 수식 | 광고자동세팅용 이름 |
+| utm 5종 | 수식 | 매체 · 목적 · 파일명에서 |
 
-`url → LINK(GA) · NT · FM → utm_*` 차례는 utm-builder 시트와 같습니다.
+`url → LINK(GA) · NT · FM → 캠페인명 · 광고그룹명 · 광고명 → utm_*` 차례는 utm-builder 시트와 같습니다.
 
-### utm-builder 에는 있는데 여기엔 없는 것
-
-앱의 `광고소재 파일명` 화면이 주지 않는 값들입니다. 넣으려면 그 화면에 칸을 늘려 함께 적재해야 합니다.
+### 빌더에는 있는데 여기엔 없는 것
 
 | utm-builder 열 | 왜 없나 |
 |---|---|
-| 소재유형 · 담당자 | 파일명 화면에 칸이 없음 → `utm_content` 뒤 두 토막이 빠짐 |
-| 연령 · 타겟팅 · 프로모션 | 없음 → utm-builder 의 **그룹** 열을 만들 수 없음 |
-| 상품(always 등) | 없음 → `utm_campaign` 뒤에 붙는 토막이 빠짐 |
+| 광고명 앞 일련번호(`6581_`) | 그 시트의 행 번호라 옮길 수 없음. 우리는 파일명이 그 역할 |
+| 상품(always 등) | 칸이 없음 → 캠페인명 뒤에 붙는 토막이 빠짐 |
 
 ### 만들어지는 값
 
@@ -99,7 +93,7 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 | `utm_source` | 매체 → 설정 시트 대응표 |
 | `utm_medium` | 매체 → 설정 시트 대응표 (지면을 적어 두면 그 값) |
 | `utm_campaign` | 목적(영문) — **목적을 채워야 나옵니다** |
-| `utm_content` | `YYYYMMDD_제품_파일명` |
+| `utm_content` | `행사일자_제품코드_파일명_소재유형_담당자` |
 | `utm_term` | 검색매체(`sa`) 면 `{keyword}`, 아니면 공란 |
 | `LINK(GA)` | 랜딩링크 + UTM 파라미터 — **랜딩링크를 채워야 나옵니다** |
 | `NT` | 랜딩링크 + `?nt_source`(=utm_source_utm_medium) · `nt_medium`(=utm_content) |
@@ -111,20 +105,22 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 **광고자동세팅용 이름**은 각 칸을 그대로 씁니다.
 
 ```
-행사명 음쓰해방위크  행사일자 2026-08-29  상품명 더플렌더mini  행사채널 CJ
-연령 25-54  타겟팅 interestTarget
+행사명 naver-260829-mini  행사일자 2026-08-29  상품명 더플렌더mini  행사채널 네이버
+연령 25-54  타겟팅 none  소재유형 image  담당자 ljm  파일명 celebrity-77
         ↓
-캠페인명    [더플렌더mini]gfa_purchase
-광고그룹명   [음쓰해방위크]25-54_interestTarget_cj
-광고명      20260829_flender-mini_benefit-537
+캠페인명    facebook_미닉스 더 플렌더(mini)_purchase
+광고그룹명   [naver-260829-mini]25-54_none_naver
+광고명      20260829_flender-mini_celebrity-77_image_ljm
 ```
 
-`utm_content` 는 **행사일자 · 상품명** 뒤에 **파일명을 통째로** 붙입니다.
+빌더 시트의 최근 행과 같은 모양입니다. (빌더는 광고명 앞에 행 번호 `6581_` 이 하나 더 붙습니다)
+
+`utm_content` 는 **행사일자 · 상품명** 뒤에 **파일명을 통째로**, 그 뒤에 소재유형 · 담당자를 붙입니다.
 메시지코드는 번호까지가 한 덩어리(`benefit-537`)라 자르지 않습니다.
 
 ```
-파일명      benefit-537        매체 GFA-피드        랜딩링크 https://minix.life/   목적 purchase
-최종행사명   260829_더플렌더mini_CJ
+파일명 benefit-537   매체 GFA-피드   행사일자 2026-08-29   상품명 더플렌더mini
+랜딩링크 https://minix.life/   목적 purchase
         ↓
 utm_content 20260829_flender-mini_benefit-537
 LINK(GA)    https://minix.life/?utm_source=gfa&utm_medium=feed&utm_campaign=purchase&utm_content=20260829_flender-mini_benefit-537
@@ -150,9 +146,9 @@ FM          https://minix.life/?fm=gfa&sn=feed&ea=20260829_flender-mini_benefit-
 | A · B · C | E · F | H · I | K · L |
 |---|---|---|---|
 | 매체 → utm_source · utm_medium | 목적 → 목적(영문) | 상품명 → 제품코드 · **제품 정식명** | 행사채널 → 매출채널 |
-| 메타 → facebook · display | 구매 → purchase | 더플렌더mini → flender-mini |
-| GFA-피드 → gfa · feed | 트래픽 → traffic | 더슬림 → theslim |
-| 인플루언서 → influencer · affiliate | … | … | CJ → cj |
+| 메타 → facebook · display | 구매 → purchase | 더플렌더mini → flender-mini · 미닉스 더 플렌더(mini) | 자사몰 → officialWebsite |
+| GFA-피드 → gfa · feed | 트래픽 → traffic | 더슬림 → theslim · 미닉스 더 슬림_더 슬림 | CJ → cj |
+| 인플루언서 → influencer · affiliate | … | … | … |
 
 > **매체 · 목적 · 상품이 늘면 빠진 줄만 자동으로 덧붙습니다.** 고쳐 둔 값은 건드리지 않습니다.
 > `utm_medium` 에 지면을 적어 두면(`feed` · `shopping` · `smart` · `bizboard` …)
