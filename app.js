@@ -965,7 +965,7 @@ teamNote.addEventListener('input', () => {
 
 // 파일명 적재 시트와 그 시트에 배포한 Apps Script 웹 앱. 파일명 · UTM 빌더 두 화면이 함께 쓴다.
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E/edit';
-const SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwv6mPVDHeJqAIyiTIi_QjDHtLZ-IJMOfkvIXQPAYEW2HNnw137K4oqWWb7wwTnfxlA/exec';
+const SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyofczGX39x47gJlpdUcJFnWwkFq4i8VFqgXxyJviIemkxvwrSuMerAH8OMMfEuCnUh/exec';
 
 const filenameTool = document.querySelector('#filename-tool');
 if (filenameTool) {
