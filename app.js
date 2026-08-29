@@ -776,15 +776,137 @@ document.querySelectorAll('[data-view]').forEach((item) => {
   });
 });
 
-// 검수 화면은 처음 열릴 때만 iframe 을 불러온다 (서버가 잠들어 있어 첫 로딩이 느리다)
+// ── 광고소재 검수 연동 ──────────────────────────────────────────────
+// 검수 사이트(ad-creative-checker)와 postMessage 로 주고받는다.
+// 규격은 INTEGRATION.md 참고. 검수 쪽 수신 코드가 없어도 화면은 정상 동작한다.
 const creativeChecker = document.querySelector('#creative-checker');
 if (creativeChecker) {
+  const CHECKER_ORIGIN = 'https://ad-creative-checker.onrender.com';
+  const FILENAME_KEY = 'minix-filename-tool-v3';
+
   const frame = creativeChecker.querySelector('iframe');
-  const loadFrame = () => { if (!frame.getAttribute('src')) frame.src = frame.dataset.src; };
-  new MutationObserver(() => { if (!creativeChecker.hidden) loadFrame(); })
-    .observe(creativeChecker, { attributes: true, attributeFilter: ['hidden'] });
-  if (!creativeChecker.hidden) loadFrame();
-  creativeChecker.querySelector('.checker-reload').addEventListener('click', () => { frame.src = frame.dataset.src; });
+  const bridge = creativeChecker.querySelector('.checker-bridge');
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+  let linked = false;
+  let result = null;
+
+  // 파일명 생성기에서 만든 행사 정보를 그대로 물려받는다
+  const campaignInfo = () => {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(FILENAME_KEY) || 'null'); } catch { saved = null; }
+    const state = saved?.state || {};
+    const [year, month, day] = (state.date || '').split('-');
+    const stamp = year && month && day ? `${year.slice(2)}${month}${day}` : '';
+    return {
+      campaign: [stamp, state.product, state.channel, (state.event || '').trim()].filter(Boolean).join('_'),
+      date: state.date || '',
+      product: state.product || '',
+      channel: state.channel || '',
+      media: state.media || '',
+      filename: (saved?.issued || []).find((entry) => !entry.vertical)?.filename || '',
+    };
+  };
+
+  const send = (message) => {
+    if (!frame.contentWindow) return;
+    frame.contentWindow.postMessage({ source: 'minix-workspace', ...message }, CHECKER_ORIGIN);
+  };
+
+  const renderBridge = () => {
+    const info = campaignInfo();
+    bridge.innerHTML = `
+      <div class="bridge-line">
+        <span class="bridge-badge${linked ? ' is-linked' : ''}">${linked ? '연동됨' : '연동 대기 중'}</span>
+        ${info.campaign
+          ? `<span class="bridge-info"><b>${escapeHtml(info.campaign)}</b>${info.media ? `<small>${escapeHtml(info.media)}</small>` : ''}</span>`
+          : '<span class="bridge-empty">광고소재 파일명 화면에서 행사 정보를 먼저 만들면 여기로 넘길 수 있습니다.</span>'}
+        <button type="button" class="bridge-send"${info.campaign ? '' : ' disabled'}><i data-lucide="send"></i>검수로 보내기</button>
+      </div>
+      ${result ? `<div class="bridge-result">
+        <div class="bridge-result-head">
+          <span><b>${escapeHtml(result.channel)}</b> 검수 결과를 받았습니다<small>${escapeHtml(result.materialName)}</small></span>
+          <span class="bridge-result-actions">
+            <button type="button" class="bridge-copy"><i data-lucide="copy"></i>표 복사</button>
+            <button type="button" class="bridge-dismiss" aria-label="닫기"><i data-lucide="x"></i></button>
+          </span>
+        </div>
+        <pre class="bridge-table">${escapeHtml(result.tableText)}</pre>
+      </div>` : ''}`;
+    lucide.createIcons();
+  };
+
+  const loadFrame = () => {
+    if (frame.getAttribute('src')) return;
+    frame.src = frame.dataset.src;
+    // 프레임이 뜨면 연결을 확인한다 (수신 코드가 없으면 응답이 없다)
+    frame.addEventListener('load', () => {
+      let tries = 0;
+      const timer = window.setInterval(() => {
+        tries += 1;
+        if (linked || tries > 5) return window.clearInterval(timer);
+        send({ type: 'ping' });
+      }, 800);
+    }, { once: true });
+  };
+
+  window.addEventListener('message', (event) => {
+    if (event.origin !== CHECKER_ORIGIN) return;
+    const data = event.data;
+    if (!data || data.source !== 'ad-creative-checker') return;
+    if (data.type === 'ready') {
+      linked = true;
+      renderBridge();
+      return;
+    }
+    if (data.type === 'result' && data.payload) {
+      result = {
+        channel: data.payload.channel || '',
+        materialName: data.payload.materialName || '',
+        bgColor: data.payload.bgColor || '',
+        tableText: data.payload.tableText || '',
+      };
+      renderBridge();
+    }
+  });
+
+  bridge.addEventListener('click', (event) => {
+    if (event.target.closest('.bridge-send')) {
+      const info = campaignInfo();
+      send({ type: 'prefill', payload: info });
+      // 연동 전에도 쓸 수 있게 소재명을 클립보드에 함께 넣는다
+      if (window.navigator.clipboard?.writeText) window.navigator.clipboard.writeText(info.campaign).catch(() => {});
+      const button = event.target.closest('.bridge-send');
+      button.classList.add('is-sent');
+      window.setTimeout(() => button.classList.remove('is-sent'), 1200);
+      return;
+    }
+    if (event.target.closest('.bridge-copy')) {
+      if (window.navigator.clipboard?.writeText) window.navigator.clipboard.writeText(result.tableText).catch(() => {});
+      else window.prompt('복사하세요', result.tableText);
+      return;
+    }
+    if (event.target.closest('.bridge-dismiss')) {
+      result = null;
+      renderBridge();
+    }
+  });
+
+  new MutationObserver(() => {
+    if (creativeChecker.hidden) return;
+    loadFrame();
+    renderBridge();
+  }).observe(creativeChecker, { attributes: true, attributeFilter: ['hidden'] });
+
+  if (!creativeChecker.hidden) { loadFrame(); }
+  renderBridge();
+
+  creativeChecker.querySelector('.checker-reload').addEventListener('click', () => {
+    linked = false;
+    frame.removeAttribute('src');
+    loadFrame();
+    renderBridge();
+  });
   creativeChecker.querySelector('.checker-open').addEventListener('click', () => window.open(frame.dataset.src, '_blank', 'noopener'));
 }
 

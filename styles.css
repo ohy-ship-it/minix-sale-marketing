@@ -413,3 +413,27 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .checker-frame{flex:1;min-height:min(720px,calc(100vh - 170px));border:1px solid #eeede8;border-radius:10px;overflow:hidden;background:#fff}
 .checker-frame iframe{display:block;width:100%;height:100%;min-height:inherit;border:0}
 @media(max-width:680px){.checker-frame{min-height:calc(100vh - 210px)}}
+
+/* 검수 연동 패널 */
+.checker-bridge{margin-bottom:10px}
+.bridge-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border:1px solid #eeede8;border-radius:8px;background:#fff;padding:9px 11px}
+.bridge-badge{flex:none;border-radius:11px;background:#f1f1ed;color:#8c8c85;font-size:10px;font-weight:700;padding:4px 9px}
+.bridge-badge.is-linked{background:#e9f4ea;color:#448361}
+.bridge-info{display:flex;flex-wrap:wrap;align-items:baseline;gap:7px;min-width:0}
+.bridge-info b{font:700 12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#20211e;overflow-wrap:anywhere}
+.bridge-info small{border-radius:4px;background:#f4f4f1;color:#8c8c85;font-size:10px;padding:2px 6px}
+.bridge-empty{font-size:11px;color:#a5a49f}
+.bridge-send{display:inline-flex;align-items:center;gap:5px;margin-left:auto;flex:none;border:0;border-radius:6px;background:#2f86d9;color:#fff;font:700 11px inherit;padding:8px 12px;cursor:pointer}
+.bridge-send:hover{background:#2a78c4}
+.bridge-send:disabled{opacity:.45;cursor:default}
+.bridge-send.is-sent{background:#448361}
+.bridge-send svg{width:13px}
+.bridge-result{margin-top:8px;border:1px solid #c7e1c9;border-radius:8px;background:#f4faf5;padding:10px 11px}
+.bridge-result-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:#448361}
+.bridge-result-head b{color:#20211e}
+.bridge-result-head small{margin-left:7px;color:#8c8c85;font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace}
+.bridge-result-actions{display:flex;gap:6px}
+.bridge-result-actions button{display:inline-flex;align-items:center;gap:4px;border:1px solid #c7e1c9;border-radius:6px;background:#fff;color:#448361;font:600 11px inherit;padding:5px 9px;cursor:pointer}
+.bridge-result-actions button:hover{background:#e9f4ea}
+.bridge-result-actions svg{width:12px}
+.bridge-table{max-height:150px;overflow:auto;margin:8px 0 0;padding:9px 10px;border-radius:6px;background:#fff;font:400 11px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:#20211e;white-space:pre}
