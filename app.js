@@ -1037,7 +1037,6 @@ if (filenameTool) {
     { key: 'eventDate', label: '행사일자' },
     { key: 'product', label: '상품명' },
     { key: 'channel', label: '행사채널' },
-    { key: 'createdAt', label: '발번시각' },
   ];
 
   const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', media: '', type: MESSAGE_TYPES[0][0], vertical: false, customTypes: [] };
@@ -2476,7 +2475,6 @@ if (utmBuilder) {
     { key: 'product', label: '상품명' },
     { key: 'channel', label: '행사채널' },
     { key: 'event', label: '행사명' },
-    { key: 'createdAt', label: '발번시각' },
     { key: 'url', label: '랜딩링크' },
     { key: 'purposeCode', label: '목적' },
   ];
@@ -2764,7 +2762,6 @@ if (utmBuilder) {
     product: entry.product || '',
     channel: entry.channel || '',
     event: entry.event || '',
-    createdAt: entry.createdAt,
     url: entry.url || '',
     purposeCode: purposeCode(entry.purpose),
   });

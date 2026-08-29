@@ -9,8 +9,7 @@ var FALLBACK_COLUMNS = [
   { key: 'media', label: '매체' },
   { key: 'eventDate', label: '행사일자' },
   { key: 'product', label: '상품명' },
-  { key: 'channel', label: '행사채널' },
-  { key: 'createdAt', label: '발번시각' }
+  { key: 'channel', label: '행사채널' }
 ];
 
 // 파일명 뒤에 붙는 열. utm-builder 시트와 같은 차례로 둔다.
@@ -30,7 +29,7 @@ var FRONT_HEADERS = ['행사명'];
 var OBSOLETE_HEADERS = ['쇼핑라이브링크', '메시지 유형', '최종행사명'];
 
 // 수식으로 만들던 열. 링크 · 광고명 안에 이미 들어 있어 값이 있어도 지운다.
-var DROP_HEADERS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+var DROP_HEADERS = ['발번시각', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
 
 // 세로 소재는 가로와 같은 소재라 UTM 을 따로 만들지 않는다. (앱도 적재에서 뺀다)
 var VERTICAL_MARK = '(세로)';
