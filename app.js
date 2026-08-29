@@ -2567,15 +2567,11 @@ if (utmBuilder) {
   };
 
   // ── 화면 ──────────────────────────────────────────────────────
+  // 미리보기에는 실제로 쓰는 링크 3종만 둔다. (utm_* 낱개 값은 엑셀에는 그대로 들어간다)
   const PREVIEW_ROWS = [
     ['LINK(GA)', 'linkGA', '랜딩링크를 채우면 만들어집니다'],
     ['NT', 'nt', '네이버스토어'],
     ['FM(쇼핑라이브)', 'fm', '쇼핑라이브'],
-    ['utm_source', 'source', ''],
-    ['utm_medium', 'medium', ''],
-    ['utm_campaign', 'campaign', '목적을 고르면 만들어집니다'],
-    ['utm_content', 'content', ''],
-    ['utm_term', 'term', '검색매체에만 붙습니다'],
   ];
 
   const options = (list, picked) => list
