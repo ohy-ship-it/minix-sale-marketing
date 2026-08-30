@@ -763,6 +763,7 @@ const VIEWS = {
   '퍼포먼스일정': { section: '#brand-schedule', hash: '#performance-schedule' },
   'UTM 빌더': { section: '#utm-builder', hash: '#utm' },
   '매체별 성과': { section: '#media-performance', hash: '#media-report' },
+  '소재별 결과': { section: '#creative-performance', hash: '#creative-result' },
 };
 const DASHBOARD_PARTS = ['.content-tabs', '.target-section', '.channel-section', '.notes-section'];
 
@@ -976,6 +977,94 @@ const AD_ACCOUNTS = [
   ['네이버', 'act_1010891704382690'], ['쿠팡', 'act_1182774429560123'],
   ['무신사', 'act_996624009865646'], ['29cm', 'act_1019016880920556'],
 ];
+
+// ── 성과 화면들이 함께 쓰는 것 ────────────────────────────────────────
+// 매체별 성과 · 소재별 결과 두 화면이 같은 대응표 · 같은 계산을 쓰도록 여기 모아 둔다.
+const GOOGLE_ACCOUNTS = [['앳홈_미닉스', '4112908407']];
+
+const PERF_SOURCES = {
+  meta: {
+    name: 'Meta Ads',
+    // CPA 에서 빼는 목적. CPA 계산은 화면에서만 한다 (Apps Script 는 목적 이름을 그대로 넘겨준다)
+    skip: ['OUTCOME_TRAFFIC', 'LINK_CLICKS'],
+    skipLabel: '트래픽',
+    clicks: '링크 클릭',
+    note: 'CPC · CTR 은 링크 클릭 기준, 결과는 구매 + 장바구니 + 리드, CPA 는 트래픽 목적을 뺀 값입니다.',
+    fallback: AD_ACCOUNTS,
+  },
+  google: {
+    name: 'Google Ads',
+    // 구글에는 캠페인 목적이 없다. 전환을 노리지 않는 동영상(브랜딩)을 CPA 에서 뺀다.
+    skip: ['VIDEO'],
+    skipLabel: '동영상',
+    clicks: '클릭',
+    note: '결과는 전환 카테고리(구매 + 장바구니 + 리드), CPA 는 동영상(브랜딩) 캠페인을 뺀 값입니다.',
+    fallback: GOOGLE_ACCOUNTS,
+  },
+};
+
+const PERF_OBJECTIVES = {
+  // 메타 — 캠페인 목적
+  OUTCOME_SALES: '판매', OUTCOME_TRAFFIC: '트래픽', OUTCOME_ENGAGEMENT: '참여',
+  OUTCOME_LEADS: '잠재고객', OUTCOME_AWARENESS: '인지도', OUTCOME_APP_PROMOTION: '앱 홍보',
+  LINK_CLICKS: '트래픽', CONVERSIONS: '전환', PRODUCT_CATALOG_SALES: '카탈로그 판매',
+  POST_ENGAGEMENT: '게시물 참여', REACH: '도달', BRAND_AWARENESS: '브랜드 인지도',
+  VIDEO_VIEWS: '동영상 조회', LEAD_GENERATION: '잠재고객', MESSAGES: '메시지',
+  // 구글 — 캠페인 유형
+  SEARCH: '검색', DISPLAY: '디스플레이', VIDEO: '동영상', DEMAND_GEN: '디맨드젠',
+  PERFORMANCE_MAX: 'P맥스', SHOPPING: '쇼핑', MULTI_CHANNEL: '앱', LOCAL: '지역',
+  SMART: '스마트', DISCOVERY: '디스커버리', LOCAL_SERVICES: '지역 서비스', TRAVEL: '여행',
+};
+
+// 메타 관리자와 같은 기준 — '최근 N일' 은 오늘을 넣지 않는다 (오늘 수치는 계속 움직이므로)
+const PERF_PRESETS = [
+  ['today', '오늘'], ['yesterday', '어제'], ['7d', '최근 7일'], ['14d', '최근 14일'],
+  ['30d', '최근 30일'], ['month', '이번 달'], ['lastMonth', '지난 달'], ['custom', '직접 지정'],
+];
+
+const perfEscape = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+// toISOString 은 UTC 라 한국 시간 기준 날짜가 하루 밀린다. 로컬 값으로 만든다.
+const perfYmd = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const perfDaysAgo = (days) => { const date = new Date(); date.setDate(date.getDate() - days); return date; };
+
+const perfRange = (preset) => {
+  const today = new Date();
+  if (preset === 'today') return { since: perfYmd(today), until: perfYmd(today) };
+  if (preset === 'yesterday') return { since: perfYmd(perfDaysAgo(1)), until: perfYmd(perfDaysAgo(1)) };
+  if (preset === '7d') return { since: perfYmd(perfDaysAgo(7)), until: perfYmd(perfDaysAgo(1)) };
+  if (preset === '14d') return { since: perfYmd(perfDaysAgo(14)), until: perfYmd(perfDaysAgo(1)) };
+  if (preset === '30d') return { since: perfYmd(perfDaysAgo(30)), until: perfYmd(perfDaysAgo(1)) };
+  if (preset === 'month') return { since: perfYmd(new Date(today.getFullYear(), today.getMonth(), 1)), until: perfYmd(today) };
+  if (preset === 'lastMonth') {
+    return {
+      since: perfYmd(new Date(today.getFullYear(), today.getMonth() - 1, 1)),
+      until: perfYmd(new Date(today.getFullYear(), today.getMonth(), 0)),
+    };
+  }
+  return null;
+};
+
+// 시트에 붙은 Apps Script 에 물어본다. 토큰은 그쪽에만 있다.
+const askSheet = (payload) => window.fetch(SHEET_ENDPOINT, {
+  method: 'POST',
+  headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+  body: JSON.stringify(payload),
+})
+  .then((response) => (response.ok ? response.json() : Promise.reject(new Error('HTTP ' + response.status))))
+  .then((body) => {
+    if (!body || !body.ok) throw new Error((body && body.error) || '알 수 없는 오류');
+    return body;
+  });
+
+const perfMoney = (currency) => (value) => new Intl.NumberFormat('ko-KR', {
+  style: 'currency', currency: currency || 'KRW',
+  maximumFractionDigits: (currency || 'KRW') === 'KRW' ? 0 : 2,
+}).format(Number(value) || 0);
+const perfCount = (value) => new Intl.NumberFormat('ko-KR').format(Math.round(Number(value) || 0));
+const perfPercent = (value) => `${((Number(value) || 0) * 100).toFixed(2)}%`;
+const perfRatio = (top, bottom) => (bottom > 0 ? top / bottom : null);
+
 
 const filenameTool = document.querySelector('#filename-tool');
 if (filenameTool) {
@@ -3451,69 +3540,15 @@ const mediaPerformance = document.querySelector('#media-performance');
 if (mediaPerformance) {
   const STORAGE_KEY = 'minix-media-performance-v1';
 
-  // 매체마다 다른 것만 여기 모아 둔다. 요약 · 표 · 계산은 두 매체가 같은 코드를 쓴다.
-  const SOURCES = {
-    meta: {
-      name: 'Meta Ads',
-      // CPA 에서 빼는 목적. CPA 계산은 화면에서만 한다 (Apps Script 는 목적 이름을 그대로 넘겨준다)
-      skip: ['OUTCOME_TRAFFIC', 'LINK_CLICKS'],
-      skipLabel: '트래픽',
-      clicks: '링크 클릭',
-      note: 'CPC · CTR 은 링크 클릭 기준, 결과는 구매 + 장바구니 + 리드, CPA 는 트래픽 목적을 뺀 값입니다.',
-      fallback: AD_ACCOUNTS,
-    },
-    google: {
-      name: 'Google Ads',
-      // 구글에는 캠페인 목적이 없다. 전환을 노리지 않는 동영상(브랜딩)을 CPA 에서 뺀다.
-      skip: ['VIDEO'],
-      skipLabel: '동영상',
-      clicks: '클릭',
-      note: '결과는 전환 카테고리(구매 + 장바구니 + 리드), CPA 는 동영상(브랜딩) 캠페인을 뺀 값입니다.',
-      fallback: [['앳홈_미닉스', '4112908407']],
-    },
-  };
+  // 매체마다 다른 것 · 기간 목록은 소재별 결과 화면과 함께 쓴다 (위쪽 PERF_* 참고)
+  const SOURCES = PERF_SOURCES;
+  const OBJECTIVES = PERF_OBJECTIVES;
+  const PRESETS = PERF_PRESETS;
 
-  const OBJECTIVES = {
-    // 메타 — 캠페인 목적
-    OUTCOME_SALES: '판매', OUTCOME_TRAFFIC: '트래픽', OUTCOME_ENGAGEMENT: '참여',
-    OUTCOME_LEADS: '잠재고객', OUTCOME_AWARENESS: '인지도', OUTCOME_APP_PROMOTION: '앱 홍보',
-    LINK_CLICKS: '트래픽', CONVERSIONS: '전환', PRODUCT_CATALOG_SALES: '카탈로그 판매',
-    POST_ENGAGEMENT: '게시물 참여', REACH: '도달', BRAND_AWARENESS: '브랜드 인지도',
-    VIDEO_VIEWS: '동영상 조회', LEAD_GENERATION: '잠재고객', MESSAGES: '메시지',
-    // 구글 — 캠페인 유형
-    SEARCH: '검색', DISPLAY: '디스플레이', VIDEO: '동영상', DEMAND_GEN: '디맨드젠',
-    PERFORMANCE_MAX: 'P맥스', SHOPPING: '쇼핑', MULTI_CHANNEL: '앱', LOCAL: '지역',
-    SMART: '스마트', DISCOVERY: '디스커버리', LOCAL_SERVICES: '지역 서비스', TRAVEL: '여행',
-  };
-
-  // 메타 관리자와 같은 기준 — '최근 N일' 은 오늘을 넣지 않는다 (오늘 수치는 계속 움직이므로)
-  const PRESETS = [
-    ['today', '오늘'], ['yesterday', '어제'], ['7d', '최근 7일'], ['14d', '최근 14일'],
-    ['30d', '최근 30일'], ['month', '이번 달'], ['lastMonth', '지난 달'], ['custom', '직접 지정'],
-  ];
-
-  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-
-  // toISOString 은 UTC 라 한국 시간 기준 날짜가 하루 밀린다. 로컬 값으로 만든다.
-  const ymd = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  const daysAgo = (days) => { const date = new Date(); date.setDate(date.getDate() - days); return date; };
-
-  const rangeOf = (preset) => {
-    const today = new Date();
-    if (preset === 'today') return { since: ymd(today), until: ymd(today) };
-    if (preset === 'yesterday') return { since: ymd(daysAgo(1)), until: ymd(daysAgo(1)) };
-    if (preset === '7d') return { since: ymd(daysAgo(7)), until: ymd(daysAgo(1)) };
-    if (preset === '14d') return { since: ymd(daysAgo(14)), until: ymd(daysAgo(1)) };
-    if (preset === '30d') return { since: ymd(daysAgo(30)), until: ymd(daysAgo(1)) };
-    if (preset === 'month') return { since: ymd(new Date(today.getFullYear(), today.getMonth(), 1)), until: ymd(today) };
-    if (preset === 'lastMonth') {
-      return {
-        since: ymd(new Date(today.getFullYear(), today.getMonth() - 1, 1)),
-        until: ymd(new Date(today.getFullYear(), today.getMonth(), 0)),
-      };
-    }
-    return null;
-  };
+  const escapeHtml = perfEscape;
+  const ymd = perfYmd;
+  const daysAgo = perfDaysAgo;
+  const rangeOf = perfRange;
 
   // 고른 계정은 매체마다 따로 기억한다. 탭을 오가도 각자 보던 계정으로 돌아온다.
   const defaults = { source: 'meta', accounts: {}, preset: '7d', since: '', until: '' };
@@ -3550,26 +3585,14 @@ if (mediaPerformance) {
     until: state.until || ymd(daysAgo(1)),
   };
 
-  const ask = (payload) => window.fetch(SHEET_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload),
-  })
-    .then((response) => (response.ok ? response.json() : Promise.reject(new Error('HTTP ' + response.status))))
-    .then((body) => {
-      if (!body || !body.ok) throw new Error((body && body.error) || '알 수 없는 오류');
-      return body;
-    });
+  const ask = askSheet;
 
   // ── 숫자 ────────────────────────────────────────────────────────
   const currency = () => (report?.account?.currency) || 'KRW';
-  const money = (value) => new Intl.NumberFormat('ko-KR', {
-    style: 'currency', currency: currency(),
-    maximumFractionDigits: currency() === 'KRW' ? 0 : 2,
-  }).format(Number(value) || 0);
-  const count = (value) => new Intl.NumberFormat('ko-KR').format(Math.round(Number(value) || 0));
-  const percent = (value) => `${((Number(value) || 0) * 100).toFixed(2)}%`;
-  const ratio = (top, bottom) => (bottom > 0 ? top / bottom : null);
+  const money = (value) => perfMoney(currency())(value);
+  const count = perfCount;
+  const percent = perfPercent;
+  const ratio = perfRatio;
   const blank = (value, format) => (value === null ? '<span class="tool-blank">—</span>' : format(value));
 
   // CPA 에서 뺄 캠페인인가 (메타 = 트래픽 목적, 구글 = 동영상)
@@ -3652,6 +3675,7 @@ if (mediaPerformance) {
     <td class="perf-num">${count(row.linkClicks)}</td>
     <td class="perf-num">${blank(ratio(row.linkClicks, row.impressions), percent)}</td>
     <td class="perf-num">${blank(ratio(row.spend, row.linkClicks), money)}</td>
+    <td class="perf-num">${blank(ratio(row.spend * 1000, row.impressions), money)}</td>
     <td class="perf-num">${count(row.results)}</td>
     <td class="perf-num">${isTraffic(row) ? `<span class="tool-blank">${source().skipLabel}</span>` : blank(ratio(row.spend, row.results), money)}</td>`;
 
@@ -3728,8 +3752,8 @@ if (mediaPerformance) {
       </div>
       ${filters(listed, live.length, listed.length)}
       ${live.length ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
-        <thead><tr><th>캠페인 · 광고그룹</th><th>예산</th><th>광고비</th><th>노출</th><th>링크 클릭</th>
-          <th>CTR</th><th>CPC</th><th>결과</th><th>CPA</th></tr></thead>
+        <thead><tr><th>캠페인 · 광고그룹</th><th>예산</th><th>광고비</th><th>노출</th><th>${source().clicks}</th>
+          <th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th><th>CPA</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>` : `<p class="tool-empty">${query || picked.length ? '찾는 캠페인이 없습니다.' : '지금 켜져 있는 캠페인이 없습니다.'}</p>`}
       ${resting.length ? `<p class="perf-resting">이 기간에 돌았지만 지금 꺼져 있는 캠페인 ${count(resting.length)}개
@@ -3896,7 +3920,7 @@ if (mediaPerformance) {
 
   // 엑셀 · 시트에 그대로 붙일 수 있게 탭으로 나눈다
   const copyText = () => {
-    const head = ['캠페인', '광고그룹', '목적', '예산', '광고비', '노출', '링크 클릭', 'CTR', 'CPC', '결과', 'CPA'];
+    const head = ['캠페인', '광고그룹', '목적', '예산', '광고비', '노출', source().clicks, 'CTR', 'CPC', 'CPM', '결과', 'CPA'];
     const line = (campaign, adset) => {
       const row = adset || campaign;
       const cpa = isTraffic(row) ? '' : ratio(row.spend, row.results);
@@ -3905,6 +3929,7 @@ if (mediaPerformance) {
         row.budget || '', Math.round(row.spend), row.impressions, row.linkClicks,
         ratio(row.linkClicks, row.impressions) === null ? '' : percent(ratio(row.linkClicks, row.impressions)),
         ratio(row.spend, row.linkClicks) === null ? '' : Math.round(ratio(row.spend, row.linkClicks)),
+        ratio(row.spend * 1000, row.impressions) === null ? '' : Math.round(ratio(row.spend * 1000, row.impressions)),
         row.results, cpa === null || cpa === '' ? '' : Math.round(cpa),
       ].join('\t');
     };
@@ -3924,6 +3949,358 @@ if (mediaPerformance) {
     loadAccounts();
   };
   new MutationObserver(openOnce).observe(mediaPerformance, { attributes: true, attributeFilter: ['hidden'] });
+  render();
+  openOnce();
+}
+
+// ── 소재별 결과 ────────────────────────────────────────────────────
+// 캠페인 · 광고그룹을 고르면 그 안의 소재를 미리보기와 함께 광고비 순으로 보여 준다.
+const creativePerformance = document.querySelector('#creative-performance');
+if (creativePerformance) {
+  const STORAGE_KEY = 'minix-creative-performance-v1';
+
+  const defaults = { source: 'meta', accounts: {}, campaign: '', adset: '', preset: '7d', since: '', until: '' };
+  let state = { ...defaults };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (saved && typeof saved === 'object') state = { ...defaults, ...saved, accounts: { ...(saved.accounts || {}) } };
+  } catch { /* 저장값이 깨졌으면 기본값으로 시작한다 */ }
+  if (!PERF_SOURCES[state.source]) state.source = 'meta';
+  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+  const source = () => PERF_SOURCES[state.source];
+  const account = () => state.accounts[state.source] || '';
+  const setAccount = (id) => { state.accounts[state.source] = id; };
+
+  let accounts = [];
+  let report = null;      // 캠페인 · 광고그룹 고르개를 채우는 데 쓴다
+  let creatives = [];
+  let currency = 'KRW';
+  let status = 'idle';    // idle · loading · ready · error
+  let error = '';
+  let query = '';
+  let caret = null;
+  let fetchedAt = '';
+  let cached = false;
+  let loadedOnce = false;
+
+  const money = (value) => perfMoney(currency)(value);
+  const blank = (value, format) => (value === null ? '<span class="tool-blank">—</span>' : format(value));
+  const currentRange = () => perfRange(state.preset) || {
+    since: state.since || perfYmd(perfDaysAgo(7)),
+    until: state.until || perfYmd(perfDaysAgo(1)),
+  };
+
+  const campaignsOf = () => (report ? report.campaigns.filter((row) => row.spend > 0 || row.active) : []);
+  const adsetsOf = () => {
+    if (!report) return [];
+    return report.adsets.filter((row) => (!state.campaign || row.campaignId === state.campaign)
+      && (row.spend > 0 || row.active));
+  };
+
+  const shown = () => creatives.filter((row) => !query
+    || String(row.name).toLowerCase().indexOf(query.toLowerCase()) >= 0);
+
+  // ── 화면 ────────────────────────────────────────────────────────
+  const options = (rows, chosen, allLabel) => `<option value="">${allLabel}</option>`
+    + rows.map((row) => `<option value="${perfEscape(row.id)}"${row.id === chosen ? ' selected' : ''}>`
+      + `${perfEscape(row.name)}${row.spend ? ` (${money(row.spend)})` : ''}</option>`).join('');
+
+  const controls = () => {
+    const range = currentRange();
+    const custom = state.preset === 'custom';
+    return `<div class="perf-tabs">
+      ${Object.keys(PERF_SOURCES).map((key) => `<button type="button" class="perf-tab${state.source === key ? ' is-on' : ''}"
+        data-creative="source" data-source="${key}">${PERF_SOURCES[key].name}</button>`).join('')}
+    </div>
+    <div class="tool-card perf-controls">
+      <div class="perf-fields">
+        <label class="perf-account">광고 계정
+          <select data-creative="account"${accounts.length ? '' : ' disabled'}>
+            ${accounts.length
+    ? accounts.map((item) => `<option value="${perfEscape(item.id)}"${item.id === account() ? ' selected' : ''}>`
+      + `${perfEscape(item.name)} (${perfEscape(item.accountId)})</option>`).join('')
+    : '<option>계정을 불러오는 중…</option>'}
+          </select>
+        </label>
+        <label>기간
+          <select data-creative="preset">${PERF_PRESETS.map(([key, name]) => `<option value="${key}"${state.preset === key ? ' selected' : ''}>${name}</option>`).join('')}</select>
+        </label>
+        ${custom ? `<label>시작<input type="date" data-creative="since" value="${perfEscape(range.since)}"></label>
+        <label>종료<input type="date" data-creative="until" value="${perfEscape(range.until)}"></label>` : ''}
+        <button type="button" class="tool-add" data-creative="reload"${status === 'loading' ? ' disabled' : ''}>
+          <i data-lucide="refresh-cw"></i>${status === 'loading' ? '불러오는 중…' : '새로 받기'}</button>
+      </div>
+      <div class="perf-fields perf-scope">
+        <label class="perf-account">캠페인
+          <select data-creative="campaign"${report ? '' : ' disabled'}>${options(campaignsOf(), state.campaign, '전체 캠페인')}</select>
+        </label>
+        <label class="perf-account">광고그룹
+          <select data-creative="adset"${report ? '' : ' disabled'}>${options(adsetsOf(), state.adset, '전체 광고그룹')}</select>
+        </label>
+      </div>
+      <p class="perf-note">
+        <b>${perfEscape(range.since)} ~ ${perfEscape(range.until)}</b>
+        ${fetchedAt ? ` · 갱신 ${new Date(fetchedAt).toLocaleString('ko-KR')}${cached ? ' (담아 둔 값)' : ''}` : ''}
+      </p>
+    </div>`;
+  };
+
+  const metricRow = (label, value) => `<div><small>${label}</small><b>${value}</b></div>`;
+
+  const card = (row) => {
+    const ctr = perfRatio(row.linkClicks, row.impressions);
+    const cpc = perfRatio(row.spend, row.linkClicks);
+    const cpm = perfRatio(row.spend * 1000, row.impressions);
+    const cpa = perfRatio(row.spend, row.results);
+    return `<article class="creative-card">
+      <div class="creative-shot">
+        ${row.thumbnail
+    ? `<img src="${perfEscape(row.thumbnail)}" alt="${perfEscape(row.name)}" loading="lazy" referrerpolicy="no-referrer">`
+    : '<span class="creative-none"><i data-lucide="image-off"></i>미리보기 없음</span>'}
+        ${row.active ? '<span class="creative-live">게재중</span>' : ''}
+      </div>
+      <div class="creative-body">
+        <h4>${perfEscape(row.name)}</h4>
+        <p>${perfEscape(row.campaignName || '')}${row.adsetName ? ` · ${perfEscape(row.adsetName)}` : ''}</p>
+        <div class="creative-metrics">
+          ${metricRow('광고비', money(row.spend))}
+          ${metricRow('결과', perfCount(row.results))}
+          ${metricRow('노출', perfCount(row.impressions))}
+          ${metricRow(source().clicks, perfCount(row.linkClicks))}
+          ${metricRow('CTR', blank(ctr, perfPercent))}
+          ${metricRow('CPC', blank(cpc, money))}
+          ${metricRow('CPM', blank(cpm, money))}
+          ${metricRow('CPA', blank(cpa, money))}
+        </div>
+      </div>
+    </article>`;
+  };
+
+  const list = () => {
+    const rows = shown();
+    return `<div class="tool-card">
+      <div class="tool-list-head">
+        <h3>소재 <small>광고비가 큰 차례 · ${perfCount(creatives.length)}개</small></h3>
+        <div class="tool-list-actions">
+          <button type="button" class="tool-copy-all" data-creative="copy"${rows.length ? '' : ' disabled'}>
+            <i data-lucide="copy"></i>표 복사</button>
+        </div>
+      </div>
+      <div class="perf-filter">
+        <div class="perf-search">
+          <i data-lucide="search"></i>
+          <input type="search" data-creative="search" value="${perfEscape(query)}" placeholder="소재 이름으로 검색" autocomplete="off">
+          ${query ? '<button type="button" class="perf-clear" data-creative="clear" aria-label="지우기">×</button>' : ''}
+        </div>
+        ${rows.length !== creatives.length ? `<span class="perf-count">${perfCount(rows.length)} / ${perfCount(creatives.length)}</span>` : ''}
+      </div>
+      ${rows.length
+    ? `<div class="creative-grid">${rows.map(card).join('')}</div>`
+    : `<p class="tool-empty">${query ? '찾는 소재가 없습니다.' : '이 기간에 집행된 소재가 없습니다.'}</p>`}
+    </div>`;
+  };
+
+  const render = () => {
+    const body = () => {
+      if (status === 'error') return `<div class="tool-card perf-error"><b>불러오지 못했습니다.</b><p>${perfEscape(error)}</p></div>`;
+      if (status === 'loading' && !creatives.length) return '<div class="tool-card perf-loading">불러오는 중…</div>';
+      if (!report) return '<div class="tool-card perf-loading">광고 계정을 고르면 소재를 불러옵니다.</div>';
+      return list();
+    };
+    creativePerformance.innerHTML = `<div class="tool-head">
+        <h2>소재별 결과 <small>${source().name}</small></h2>
+        <p>캠페인 · 광고그룹을 고르면 그 안의 소재를 미리보기와 함께 광고비가 큰 차례로 보여 줍니다.</p>
+      </div>${controls()}${body()}`;
+    lucide.createIcons();
+    if (caret !== null) {
+      const search = creativePerformance.querySelector('[data-creative="search"]');
+      if (search) {
+        search.focus();
+        search.setSelectionRange(caret, caret);
+      }
+      caret = null;
+    }
+  };
+
+  // ── 불러오기 ────────────────────────────────────────────────────
+  const loadCreatives = (refresh) => {
+    if (!account()) return;
+    const range = currentRange();
+    status = 'loading';
+    render();
+    askSheet({
+      action: `${state.source}Creatives`,
+      account: account(),
+      campaign: state.campaign,
+      adset: state.adset,
+      since: range.since,
+      until: range.until,
+      refresh: Boolean(refresh),
+    })
+      .then((body) => {
+        creatives = body.creatives || [];
+        fetchedAt = body.fetchedAt || '';
+        cached = Boolean(body.cached);
+        status = 'ready';
+        error = '';
+        render();
+      })
+      .catch((reason) => {
+        status = 'error';
+        error = reason.message;
+        render();
+      });
+  };
+
+  // 캠페인 · 광고그룹 고르개를 채우려고 성과를 먼저 받는다 (매체별 성과와 같은 요청이라 캐시를 함께 쓴다)
+  const loadReport = (refresh) => {
+    if (!account()) return;
+    const range = currentRange();
+    status = 'loading';
+    render();
+    askSheet({
+      action: `${state.source}Report`,
+      account: account(),
+      since: range.since,
+      until: range.until,
+      refresh: Boolean(refresh),
+    })
+      .then((body) => {
+        report = body;
+        currency = (body.account && body.account.currency) || 'KRW';
+        if (state.campaign && !report.campaigns.some((row) => row.id === state.campaign)) state.campaign = '';
+        if (state.adset && !report.adsets.some((row) => row.id === state.adset)) state.adset = '';
+        save();
+        loadCreatives(refresh);
+      })
+      .catch((reason) => {
+        status = 'error';
+        error = reason.message;
+        render();
+      });
+  };
+
+  const loadAccounts = () => {
+    status = 'loading';
+    render();
+    askSheet({ action: `${state.source}Accounts` })
+      .then((body) => {
+        accounts = body.accounts || [];
+        if (!accounts.length) throw new Error('볼 수 있는 광고 계정이 없습니다.');
+      })
+      .catch(() => {
+        // 목록을 못 받아도 아는 계정으로 이어 간다 (매체별 성과와 같은 방식)
+        accounts = source().fallback.map(([name, id]) => ({ id, accountId: id.replace('act_', ''), name }));
+      })
+      .then(() => {
+        if (!accounts.some((item) => item.id === account())) setAccount(accounts[0].id);
+        save();
+        loadReport(false);
+      });
+  };
+
+  creativePerformance.addEventListener('input', (event) => {
+    if (event.target.dataset.creative !== 'search') return;
+    query = event.target.value;
+    caret = event.target.selectionStart;
+    render();
+  });
+
+  creativePerformance.addEventListener('change', (event) => {
+    const field = event.target.dataset.creative;
+    if (!field) return;
+    if (field === 'account') {
+      setAccount(event.target.value);
+      state.campaign = '';
+      state.adset = '';
+      save();
+      loadReport(false);
+      return;
+    }
+    if (field === 'campaign') {
+      state.campaign = event.target.value;
+      state.adset = '';   // 캠페인이 바뀌면 광고그룹은 다시 고른다
+      save();
+      loadCreatives(false);
+      return;
+    }
+    if (field === 'adset') {
+      state.adset = event.target.value;
+      save();
+      loadCreatives(false);
+      return;
+    }
+    if (field === 'preset') {
+      state.preset = event.target.value;
+      save();
+      if (state.preset === 'custom') { render(); return; }
+      loadReport(false);
+      return;
+    }
+    if (field === 'since' || field === 'until') {
+      state[field] = event.target.value;
+      save();
+      if (state.since && state.until) loadReport(false);
+    }
+  });
+
+  creativePerformance.addEventListener('click', (event) => {
+    const tab = event.target.closest('[data-creative="source"]');
+    if (tab) {
+      if (tab.dataset.source === state.source) return;
+      state.source = tab.dataset.source;
+      state.campaign = '';
+      state.adset = '';
+      query = '';
+      accounts = [];
+      report = null;
+      creatives = [];
+      save();
+      loadAccounts();
+      return;
+    }
+    if (event.target.closest('[data-creative="clear"]')) { query = ''; caret = 0; render(); return; }
+    if (event.target.closest('[data-creative="reload"]')) { loadReport(true); return; }
+    const copy = event.target.closest('[data-creative="copy"]');
+    if (copy) {
+      const text = copyText();
+      if (window.navigator.clipboard?.writeText) window.navigator.clipboard.writeText(text).catch(() => {});
+      else window.prompt('복사하세요', text);
+      copy.classList.add('is-copied');
+      window.setTimeout(() => copy.classList.remove('is-copied'), 1200);
+    }
+  });
+
+  // 엑셀 · 시트에 그대로 붙일 수 있게 탭으로 나눈다
+  const copyText = () => {
+    const head = ['소재', '캠페인', '광고그룹', '광고비', '노출', source().clicks, 'CTR', 'CPC', 'CPM', '결과', 'CPA'];
+    const lines = [head.join('\t')];
+    shown().forEach((row) => {
+      const ctr = perfRatio(row.linkClicks, row.impressions);
+      const cpc = perfRatio(row.spend, row.linkClicks);
+      const cpm = perfRatio(row.spend * 1000, row.impressions);
+      const cpa = perfRatio(row.spend, row.results);
+      lines.push([
+        row.name, row.campaignName || '', row.adsetName || '',
+        Math.round(row.spend), row.impressions, row.linkClicks,
+        ctr === null ? '' : perfPercent(ctr),
+        cpc === null ? '' : Math.round(cpc),
+        cpm === null ? '' : Math.round(cpm),
+        row.results,
+        cpa === null ? '' : Math.round(cpa),
+      ].join('\t'));
+    });
+    return lines.join('\n');
+  };
+
+  // 메뉴에 들어올 때 한 번만 부른다
+  const openOnce = () => {
+    if (loadedOnce || creativePerformance.hidden) return;
+    loadedOnce = true;
+    loadAccounts();
+  };
+  new MutationObserver(openOnce).observe(creativePerformance, { attributes: true, attributeFilter: ['hidden'] });
   render();
   openOnce();
 }

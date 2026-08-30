@@ -492,6 +492,8 @@ function handleAction_(payload) {
     if (payload.action === 'metaReport') return metaReport_(payload);
     if (payload.action === 'googleAccounts') return { ok: true, accounts: adsAccounts_() };
     if (payload.action === 'googleReport') return adsReport_(payload);
+    if (payload.action === 'metaCreatives') return metaCreatives_(payload);
+    if (payload.action === 'googleCreatives') return adsCreatives_(payload);
     return { ok: false, error: '모르는 요청입니다: ' + payload.action };
   } catch (error) {
     return { ok: false, error: String(error && error.message ? error.message : error) };
@@ -1120,4 +1122,191 @@ function checkGoogleAds() {
   Logger.log(message);
   try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
   return message;
+}
+
+// ── 소재별 결과 ────────────────────────────────────────────────────
+// 캠페인 · 광고그룹을 고르면 그 안의 광고(소재)를 성과와 함께 돌려준다.
+// 두 매체가 같은 모양으로 답한다: { id, name, thumbnail, spend, impressions, clicks, linkClicks, results … }
+
+// 소재를 몇 개까지 돌려줄지. 광고비 순으로 자른다.
+var CREATIVE_LIMIT = 120;
+
+function metaCreatives_(payload) {
+  var account = String(payload.account || '').trim();
+  if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
+  if (account.indexOf('act_') !== 0) account = 'act_' + account;
+
+  var since = String(payload.since || '');
+  var until = String(payload.until || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    throw new Error('조회 기간이 올바르지 않습니다.');
+  }
+
+  // 고른 자리로 좁혀 묻는다. 광고그룹 > 캠페인 > 계정 차례.
+  var scope = String(payload.adset || payload.campaign || account).trim();
+  var cache = CacheService.getScriptCache();
+  var key = ['metaAds', scope, since, until].join('|');
+  if (!payload.refresh) {
+    var hit = cache.get(key);
+    if (hit) {
+      var cached = JSON.parse(hit);
+      cached.cached = true;
+      return cached;
+    }
+  }
+
+  var range = JSON.stringify({ since: since, until: until });
+  var rows = graphAll_('/' + scope + '/insights', {
+    level: 'ad',
+    fields: 'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions',
+    time_range: range,
+    limit: 200
+  }, 8);
+
+  var creatives = rows.map(function (row) {
+    return metrics_(row, {
+      id: String(row.ad_id),
+      name: row.ad_name || String(row.ad_id),
+      campaignId: row.campaign_id || '',
+      campaignName: row.campaign_name || '',
+      adsetId: row.adset_id || '',
+      adsetName: row.adset_name || '',
+      objective: '', active: false, status: '', thumbnail: '', video: ''
+    });
+  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
+
+  // 돈을 쓴 광고의 썸네일만 가져온다 (한 번에 50개씩 id 로 물어본다)
+  var ids = creatives.map(function (row) { return row.id; });
+  for (var at = 0; at < ids.length; at += 50) {
+    var chunk = ids.slice(at, at + 50);
+    var body = graph_('/', {
+      ids: chunk.join(','),
+      fields: 'name,effective_status,creative{thumbnail_url,image_url,object_type,video_id}'
+    });
+    creatives.forEach(function (row) {
+      var found = body[row.id];
+      if (!found) return;
+      var creative = found.creative || {};
+      row.thumbnail = creative.thumbnail_url || creative.image_url || '';
+      row.video = creative.video_id || '';
+      row.status = found.effective_status || '';
+      row.active = found.effective_status === 'ACTIVE';
+      if (found.name) row.name = found.name;
+    });
+  }
+
+  var result = {
+    ok: true,
+    source: 'meta',
+    scope: scope,
+    range: { since: since, until: until },
+    creatives: creatives,
+    fetchedAt: new Date().toISOString()
+  };
+  var text = JSON.stringify(result);
+  if (text.length < 90000) cache.put(key, text, META_CACHE_SECONDS);
+  return result;
+}
+
+function adsCreatives_(payload) {
+  var customer = String(payload.account || '').replace(/[^0-9]/g, '');
+  if (!customer) throw new Error('광고 계정을 고르지 않았습니다.');
+
+  var since = String(payload.since || '');
+  var until = String(payload.until || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    throw new Error('조회 기간이 올바르지 않습니다.');
+  }
+
+  var campaign = String(payload.campaign || '').replace(/[^0-9]/g, '');
+  var adGroup = String(payload.adset || '').replace(/[^0-9]/g, '');
+  var cache = CacheService.getScriptCache();
+  var key = ['adsAds', customer, campaign, adGroup, since, until].join('|');
+  if (!payload.refresh) {
+    var hit = cache.get(key);
+    if (hit) {
+      var cached = JSON.parse(hit);
+      cached.cached = true;
+      return cached;
+    }
+  }
+
+  var where = ' WHERE segments.date BETWEEN "' + since + '" AND "' + until + '"'
+    + (campaign ? ' AND campaign.id = ' + campaign : '')
+    + (adGroup ? ' AND ad_group.id = ' + adGroup : '');
+
+  var rows = adsQuery_(customer,
+    'SELECT ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type, ad_group_ad.status, '
+    + 'ad_group.id, ad_group.name, campaign.id, campaign.name, '
+    + 'metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions FROM ad_group_ad' + where, 8);
+
+  var categoryRows = adsQuery_(customer,
+    'SELECT ad_group_ad.ad.id, segments.conversion_action_category, metrics.conversions FROM ad_group_ad'
+    + where + ' AND metrics.conversions > 0', 8);
+
+  var assetRows = adsQuery_(customer,
+    'SELECT ad_group_ad.ad.id, asset.type, asset.image_asset.full_size.url, '
+    + 'asset.youtube_video_asset.youtube_video_id FROM ad_group_ad_asset_view'
+    + where + ' AND asset.type IN ("IMAGE","YOUTUBE_VIDEO")', 8);
+
+  var byCategory = {};
+  categoryRows.forEach(function (row) {
+    var id = String((((row.adGroupAd || {}).ad) || {}).id);
+    var slot = ADS_RESULT_CATEGORIES[(row.segments || {}).conversionActionCategory];
+    if (!slot) return;
+    if (!byCategory[id]) byCategory[id] = { purchase: 0, addToCart: 0, lead: 0 };
+    byCategory[id][slot] += Number((row.metrics || {}).conversions || 0);
+  });
+
+  // 광고마다 먼저 잡히는 이미지 하나(없으면 유튜브 영상)를 미리보기로 쓴다
+  var thumbs = {};
+  assetRows.forEach(function (row) {
+    var id = String((((row.adGroupAd || {}).ad) || {}).id);
+    var asset = row.asset || {};
+    if (!thumbs[id]) thumbs[id] = { thumbnail: '', video: '' };
+    if (asset.type === 'IMAGE' && !thumbs[id].thumbnail) {
+      thumbs[id].thumbnail = ((asset.imageAsset || {}).fullSize || {}).url || '';
+    }
+    if (asset.type === 'YOUTUBE_VIDEO' && !thumbs[id].video) {
+      thumbs[id].video = (asset.youtubeVideoAsset || {}).youtubeVideoId || '';
+    }
+  });
+
+  var creatives = rows.map(function (row) {
+    var ad = ((row.adGroupAd || {}).ad) || {};
+    var id = String(ad.id);
+    var thumb = thumbs[id] || { thumbnail: '', video: '' };
+    // 반응형 광고는 이름이 비어 있는 경우가 많다. 그때는 유형으로 적는다.
+    var name = ad.name || (ad.type ? ad.type + ' ' + id : id);
+    var entry = adsMetrics_(row, byCategory[id], {
+      id: id,
+      name: name,
+      campaignId: String((row.campaign || {}).id || ''),
+      campaignName: (row.campaign || {}).name || '',
+      adsetId: String((row.adGroup || {}).id || ''),
+      adsetName: (row.adGroup || {}).name || '',
+      objective: ad.type || '',
+      active: (row.adGroupAd || {}).status === 'ENABLED',
+      status: (row.adGroupAd || {}).status || '',
+      thumbnail: thumb.thumbnail,
+      video: thumb.video
+    });
+    // 유튜브 영상뿐이면 유튜브 썸네일을 쓴다
+    if (!entry.thumbnail && entry.video) {
+      entry.thumbnail = 'https://img.youtube.com/vi/' + entry.video + '/mqdefault.jpg';
+    }
+    return entry;
+  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
+
+  var result = {
+    ok: true,
+    source: 'google',
+    scope: adGroup || campaign || customer,
+    range: { since: since, until: until },
+    creatives: creatives,
+    fetchedAt: new Date().toISOString()
+  };
+  var text = JSON.stringify(result);
+  if (text.length < 90000) cache.put(key, text, META_CACHE_SECONDS);
+  return result;
 }

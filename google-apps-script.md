@@ -219,6 +219,7 @@ FM          https://minix.life/?fm=gfa&sn=feed&ea=20260829_flender-mini_benefit-
 |---|---|---|
 | `metaAccounts` | — | 토큰으로 볼 수 있는 광고 계정 목록 (이름 · 번호 · 통화) |
 | `metaReport` | `account` · `since` · `until` · `refresh` | 캠페인 · 광고그룹별 성과와 지금 켜져 있는지 |
+| `metaCreatives` · `googleCreatives` | 위에 더해 `campaign` · `adset` | 그 자리의 소재(광고)별 성과와 미리보기 주소 |
 
 ### 숫자를 만드는 규칙
 
