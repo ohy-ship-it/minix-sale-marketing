@@ -3451,15 +3451,39 @@ const mediaPerformance = document.querySelector('#media-performance');
 if (mediaPerformance) {
   const STORAGE_KEY = 'minix-media-performance-v1';
 
-  // CPA 에서 빼는 목적. CPA 계산은 여기서만 한다 (Apps Script 는 목적 이름을 그대로 넘겨준다)
-  const TRAFFIC_OBJECTIVES = ['OUTCOME_TRAFFIC', 'LINK_CLICKS'];
+  // 매체마다 다른 것만 여기 모아 둔다. 요약 · 표 · 계산은 두 매체가 같은 코드를 쓴다.
+  const SOURCES = {
+    meta: {
+      name: 'Meta Ads',
+      // CPA 에서 빼는 목적. CPA 계산은 화면에서만 한다 (Apps Script 는 목적 이름을 그대로 넘겨준다)
+      skip: ['OUTCOME_TRAFFIC', 'LINK_CLICKS'],
+      skipLabel: '트래픽',
+      clicks: '링크 클릭',
+      note: 'CPC · CTR 은 링크 클릭 기준, 결과는 구매 + 장바구니 + 리드, CPA 는 트래픽 목적을 뺀 값입니다.',
+      fallback: AD_ACCOUNTS,
+    },
+    google: {
+      name: 'Google Ads',
+      // 구글에는 캠페인 목적이 없다. 전환을 노리지 않는 동영상(브랜딩)을 CPA 에서 뺀다.
+      skip: ['VIDEO'],
+      skipLabel: '동영상',
+      clicks: '클릭',
+      note: '결과는 전환 카테고리(구매 + 장바구니 + 리드), CPA 는 동영상(브랜딩) 캠페인을 뺀 값입니다.',
+      fallback: [['앳홈_미닉스', '4112908407']],
+    },
+  };
 
   const OBJECTIVES = {
+    // 메타 — 캠페인 목적
     OUTCOME_SALES: '판매', OUTCOME_TRAFFIC: '트래픽', OUTCOME_ENGAGEMENT: '참여',
     OUTCOME_LEADS: '잠재고객', OUTCOME_AWARENESS: '인지도', OUTCOME_APP_PROMOTION: '앱 홍보',
     LINK_CLICKS: '트래픽', CONVERSIONS: '전환', PRODUCT_CATALOG_SALES: '카탈로그 판매',
     POST_ENGAGEMENT: '게시물 참여', REACH: '도달', BRAND_AWARENESS: '브랜드 인지도',
     VIDEO_VIEWS: '동영상 조회', LEAD_GENERATION: '잠재고객', MESSAGES: '메시지',
+    // 구글 — 캠페인 유형
+    SEARCH: '검색', DISPLAY: '디스플레이', VIDEO: '동영상', DEMAND_GEN: '디맨드젠',
+    PERFORMANCE_MAX: 'P맥스', SHOPPING: '쇼핑', MULTI_CHANNEL: '앱', LOCAL: '지역',
+    SMART: '스마트', DISCOVERY: '디스커버리', LOCAL_SERVICES: '지역 서비스', TRAVEL: '여행',
   };
 
   // 메타 관리자와 같은 기준 — '최근 N일' 은 오늘을 넣지 않는다 (오늘 수치는 계속 움직이므로)
@@ -3491,13 +3515,23 @@ if (mediaPerformance) {
     return null;
   };
 
-  const defaults = { account: '', preset: '7d', since: '', until: '' };
+  // 고른 계정은 매체마다 따로 기억한다. 탭을 오가도 각자 보던 계정으로 돌아온다.
+  const defaults = { source: 'meta', accounts: {}, preset: '7d', since: '', until: '' };
   let state = { ...defaults };
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-    if (saved && typeof saved === 'object') state = { ...defaults, ...saved };
+    if (saved && typeof saved === 'object') {
+      state = { ...defaults, ...saved, accounts: { ...(saved.accounts || {}) } };
+      // 매체 탭이 없던 때의 저장값
+      if (saved.account && !state.accounts.meta) state.accounts.meta = saved.account;
+    }
   } catch { /* 저장값이 깨졌으면 기본값으로 시작한다 */ }
+  if (!SOURCES[state.source]) state.source = 'meta';
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+  const source = () => SOURCES[state.source];
+  const account = () => state.accounts[state.source] || '';
+  const setAccount = (id) => { state.accounts[state.source] = id; };
 
   let accounts = [];
   let report = null;
@@ -3534,7 +3568,8 @@ if (mediaPerformance) {
   const ratio = (top, bottom) => (bottom > 0 ? top / bottom : null);
   const blank = (value, format) => (value === null ? '<span class="tool-blank">—</span>' : format(value));
 
-  const isTraffic = (row) => TRAFFIC_OBJECTIVES.indexOf(row.objective) >= 0;
+  // CPA 에서 뺄 캠페인인가 (메타 = 트래픽 목적, 구글 = 동영상)
+  const isTraffic = (row) => source().skip.indexOf(row.objective) >= 0;
 
   const totalsOf = (rows) => rows.reduce((sum, row) => ({
     spend: sum.spend + row.spend,
@@ -3549,15 +3584,19 @@ if (mediaPerformance) {
 
   // ── 화면 ────────────────────────────────────────────────────────
   const accountOptions = () => {
-    if (!accounts.length) return `<option value="">${state.account ? escapeHtml(state.account) : '계정을 불러오는 중…'}</option>`;
-    return accounts.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === state.account ? ' selected' : ''}>`
+    if (!accounts.length) return `<option value="">${account() ? escapeHtml(account()) : '계정을 불러오는 중…'}</option>`;
+    return accounts.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === account() ? ' selected' : ''}>`
       + `${escapeHtml(item.name)} (${escapeHtml(item.accountId)})${item.disabled ? ' · 중지됨' : ''}</option>`).join('');
   };
 
   const controls = () => {
     const range = currentRange();
     const custom = state.preset === 'custom';
-    return `<div class="tool-card perf-controls">
+    return `<div class="perf-tabs">
+      ${Object.keys(SOURCES).map((key) => `<button type="button" class="perf-tab${state.source === key ? ' is-on' : ''}"
+        data-perf="source" data-source="${key}">${SOURCES[key].name}</button>`).join('')}
+    </div>
+    <div class="tool-card perf-controls">
       <div class="perf-fields">
         <label class="perf-account">광고 계정
           <select data-perf="account"${accounts.length ? '' : ' disabled'}>${accountOptions()}</select>
@@ -3568,14 +3607,14 @@ if (mediaPerformance) {
         ${custom ? `<label>시작<input type="date" data-perf="since" value="${escapeHtml(range.since)}"></label>
         <label>종료<input type="date" data-perf="until" value="${escapeHtml(range.until)}"></label>` : ''}
         <button type="button" class="tool-add" data-perf="reload"${status === 'loading' ? ' disabled' : ''}>
-          <i data-lucide="refresh-cw"></i>${status === 'loading' ? '불러오는 중…' : '메타에서 새로 받기'}</button>
+          <i data-lucide="refresh-cw"></i>${status === 'loading' ? '불러오는 중…' : source().name + ' 에서 새로 받기'}</button>
       </div>
       <p class="perf-note">
         <b>${escapeHtml(range.since)} ~ ${escapeHtml(range.until)}</b>
         ${report ? ` · ${escapeHtml(report.account.name)}${report.account.timezone ? ` · ${escapeHtml(report.account.timezone)}` : ''}` : ''}
         ${report?.fetchedAt ? ` · 갱신 ${new Date(report.fetchedAt).toLocaleString('ko-KR')}${report.cached ? ' (담아 둔 값)' : ''}` : ''}
       </p>
-      ${listNote ? `<p class="perf-warn">계정 목록을 받지 못해 <b>기본 계정 8개</b>로 채웠습니다. 성과 숫자는 그대로입니다.<small>${escapeHtml(listNote)}</small></p>` : ''}
+      ${listNote ? `<p class="perf-warn">계정 목록을 받지 못해 <b>기본 계정 ${source().fallback.length}개</b>로 채웠습니다. 성과 숫자는 그대로입니다.<small>${escapeHtml(listNote)}</small></p>` : ''}
     </div>`;
   };
 
@@ -3590,12 +3629,12 @@ if (mediaPerformance) {
     return `<div class="perf-stats">
       ${statCard('총광고비', money(all.spend), `캠페인 ${count(rows.length)}개`)}
       ${statCard('총결과', count(all.results), `구매 ${count(all.purchase)} · 장바구니 ${count(all.addToCart)} · 리드 ${count(all.lead)}`)}
-      ${statCard('CPC', blank(ratio(all.spend, all.linkClicks), money), `링크 클릭 ${count(all.linkClicks)}회`)}
-      ${statCard('CTR', blank(ratio(all.linkClicks, all.impressions), percent), '링크 클릭 ÷ 노출')}
+      ${statCard('CPC', blank(ratio(all.spend, all.linkClicks), money), `${source().clicks} ${count(all.linkClicks)}회`)}
+      ${statCard('CTR', blank(ratio(all.linkClicks, all.impressions), percent), `${source().clicks} ÷ 노출`)}
       ${statCard('CPM', blank(ratio(all.spend * 1000, all.impressions), money), `노출 ${count(all.impressions)}회`)}
       ${statCard('CPA', blank(ratio(paid.spend, paid.results), money), trafficSpend > 0
-        ? `트래픽 ${money(trafficSpend)} 제외`
-        : '트래픽 목적 제외')}
+        ? `${source().skipLabel} ${money(trafficSpend)} 제외`
+        : `${source().skipLabel} 제외`)}
     </div>`;
   };
 
@@ -3610,7 +3649,7 @@ if (mediaPerformance) {
     <td class="perf-num">${blank(ratio(row.linkClicks, row.impressions), percent)}</td>
     <td class="perf-num">${blank(ratio(row.spend, row.linkClicks), money)}</td>
     <td class="perf-num">${count(row.results)}</td>
-    <td class="perf-num">${isTraffic(row) ? '<span class="tool-blank">트래픽</span>' : blank(ratio(row.spend, row.results), money)}</td>`;
+    <td class="perf-num">${isTraffic(row) ? `<span class="tool-blank">${source().skipLabel}</span>` : blank(ratio(row.spend, row.results), money)}</td>`;
 
   const delivery = () => {
     const live = report.campaigns.filter((row) => row.active);
@@ -3679,20 +3718,20 @@ if (mediaPerformance) {
       return stats() + delivery();
     };
     mediaPerformance.innerHTML = `<div class="tool-head">
-        <h2>매체별 성과 <small>메타 광고</small></h2>
+        <h2>매체별 성과 <small>${source().name}</small></h2>
         <p>광고 계정을 고르면 메타 API 로 성과를 불러옵니다.
-          CPC · CTR 은 링크 클릭 기준, 결과는 구매 + 장바구니 + 리드, CPA 는 트래픽 목적을 뺀 값입니다.</p>
+          ${source().note}</p>
       </div>${controls()}${body()}`;
     lucide.createIcons();
   };
 
   // ── 불러오기 ────────────────────────────────────────────────────
   const loadReport = (refresh) => {
-    if (!state.account) return;
+    if (!account()) return;
     const range = currentRange();
     status = 'loading';
     render();
-    ask({ action: 'metaReport', account: state.account, since: range.since, until: range.until, refresh: Boolean(refresh) })
+    ask({ action: `${state.source}Report`, account: account(), since: range.since, until: range.until, refresh: Boolean(refresh) })
       .then((body) => {
         report = body;
         status = 'ready';
@@ -3707,7 +3746,7 @@ if (mediaPerformance) {
   };
 
   const useAccounts = () => {
-    if (!accounts.some((item) => item.id === state.account)) state.account = accounts[0].id;
+    if (!accounts.some((item) => item.id === account())) setAccount(accounts[0].id);
     save();
     loadReport(false);
   };
@@ -3715,7 +3754,7 @@ if (mediaPerformance) {
   const loadAccounts = () => {
     status = 'loading';
     render();
-    ask({ action: 'metaAccounts' })
+    ask({ action: `${state.source}Accounts` })
       .then((body) => {
         accounts = body.accounts || [];
         if (!accounts.length) throw new Error('토큰으로 볼 수 있는 광고 계정이 없습니다.');
@@ -3724,7 +3763,7 @@ if (mediaPerformance) {
       })
       .catch((reason) => {
         // 목록을 못 받아도 성과는 볼 수 있어야 한다. 아는 계정으로 채우고 그대로 이어 간다.
-        accounts = AD_ACCOUNTS.map(([name, id]) => ({
+        accounts = source().fallback.map(([name, id]) => ({
           id, accountId: id.replace('act_', ''), name, currency: 'KRW', disabled: false,
         }));
         listNote = reason.message;
@@ -3735,7 +3774,7 @@ if (mediaPerformance) {
   mediaPerformance.addEventListener('change', (event) => {
     const field = event.target.dataset.perf;
     if (!field) return;
-    if (field === 'account') { state.account = event.target.value; save(); loadReport(false); return; }
+    if (field === 'account') { setAccount(event.target.value); save(); loadReport(false); return; }
     if (field === 'preset') {
       state.preset = event.target.value;
       if (state.preset === 'custom') {
@@ -3758,6 +3797,18 @@ if (mediaPerformance) {
   });
 
   mediaPerformance.addEventListener('click', (event) => {
+    const tab = event.target.closest('[data-perf="source"]');
+    if (tab) {
+      if (tab.dataset.source === state.source) return;
+      state.source = tab.dataset.source;
+      save();
+      accounts = [];
+      report = null;
+      opened = [];
+      listNote = '';
+      loadAccounts();
+      return;
+    }
     if (event.target.closest('[data-perf="reload"]')) { loadReport(true); return; }
     if (event.target.closest('[data-perf="copy"]')) {
       const text = copyText();

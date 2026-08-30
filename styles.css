@@ -587,6 +587,10 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 
 /* 매체별 성과 (메타 광고 API) */
 .media-performance{background:#fbfbf8}
+.perf-tabs{display:flex;gap:6px;margin:-2px 0 12px}
+.perf-tab{border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 15px;font:700 12px inherit;color:#8c8c85;cursor:pointer}
+.perf-tab:hover{background:#f4f4f1;color:#555}
+.perf-tab.is-on{border-color:#2f86d9;background:#eef5fc;color:#2f86d9}
 .perf-fields{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}
 .perf-fields label{display:block;font-size:11px;font-weight:700;color:#8c8c85}
 .perf-fields select,.perf-fields input{display:block;width:100%;margin-top:5px;border:1px solid #e3e2dc;border-radius:6px;padding:8px;font:400 12px inherit;background:#fff;box-sizing:border-box}

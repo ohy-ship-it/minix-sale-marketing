@@ -187,6 +187,7 @@ function onOpen() {
     .addItem('전체 행 다시 계산', 'fillAllUtm')
     .addItem('설정 시트 만들기 · 확인', 'openConfigSheet')
     .addItem('메타 연결 확인', 'checkMetaToken')
+    .addItem('구글 연결 확인', 'checkGoogleAds')
     .addToUi();
 }
 
@@ -489,6 +490,8 @@ function handleAction_(payload) {
   try {
     if (payload.action === 'metaAccounts') return { ok: true, accounts: metaAccounts_() };
     if (payload.action === 'metaReport') return metaReport_(payload);
+    if (payload.action === 'googleAccounts') return { ok: true, accounts: adsAccounts_() };
+    if (payload.action === 'googleReport') return adsReport_(payload);
     return { ok: false, error: '모르는 요청입니다: ' + payload.action };
   } catch (error) {
     return { ok: false, error: String(error && error.message ? error.message : error) };
@@ -797,6 +800,287 @@ function checkMetaToken() {
   }
   Logger.log(message);
   // 편집기에서 실행하면 알림창이 없다. 그때는 실행 로그로 본다.
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
+}
+
+// ── 구글 광고 성과 조회 (매체별 성과 화면의 Google Ads 탭) ─────────────
+// 스크립트 속성 5개가 필요하다 (env.txt 의 GOOGLE_ADS_* 와 같은 값):
+//   GOOGLE_ADS_DEVELOPER_TOKEN · GOOGLE_ADS_CLIENT_ID · GOOGLE_ADS_CLIENT_SECRET
+//   GOOGLE_ADS_REFRESH_TOKEN · GOOGLE_ADS_LOGIN_CUSTOMER_ID (MCC 번호)
+// 리프레시 토큰으로 액세스 토큰을 받아 REST(GAQL)로 부른다.
+var ADS_URL = 'https://googleads.googleapis.com/v22';
+
+// 전환 카테고리 → 메타와 같은 묶음 (구매 · 장바구니 · 리드)
+var ADS_RESULT_CATEGORIES = {
+  PURCHASE: 'purchase',
+  ADD_TO_CART: 'addToCart',
+  SUBMIT_LEAD_FORM: 'lead'
+};
+
+// CPA 에서 빼는 캠페인 유형. 메타의 트래픽 목적에 해당하는 자리다. (앱도 같은 목록을 쓴다)
+var ADS_TRAFFIC_TYPES = ['VIDEO'];
+
+function adsProperty_(name) {
+  var value = cleanToken_(PropertiesService.getScriptProperties().getProperty(name));
+  if (!value) {
+    throw new Error(name + ' 스크립트 속성이 없습니다. '
+      + 'Apps Script 편집기 → 프로젝트 설정 → 스크립트 속성에 넣어 주세요.');
+  }
+  return value;
+}
+
+// 리프레시 토큰으로 액세스 토큰을 받는다. 한 시간짜리라 50분만 담아 둔다.
+function adsAccessToken_() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get('adsAccessToken');
+  if (hit) return hit;
+
+  var response = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method: 'post',
+    muteHttpExceptions: true,
+    payload: {
+      client_id: adsProperty_('GOOGLE_ADS_CLIENT_ID'),
+      client_secret: adsProperty_('GOOGLE_ADS_CLIENT_SECRET'),
+      refresh_token: adsProperty_('GOOGLE_ADS_REFRESH_TOKEN'),
+      grant_type: 'refresh_token'
+    }
+  });
+  var body = {};
+  try { body = JSON.parse(response.getContentText() || '{}'); } catch (error) { body = {}; }
+  if (!body.access_token) {
+    throw new Error('구글 인증: ' + (body.error_description || body.error || 'access_token 을 받지 못했습니다'));
+  }
+  cache.put('adsAccessToken', body.access_token, 3000);
+  return body.access_token;
+}
+
+// GAQL 질의. 쪽이 나뉘면 이어서 받는다.
+function adsQuery_(customerId, query, maxPages) {
+  var id = String(customerId).replace(/[^0-9]/g, '');
+  var rows = [];
+  var token = null;
+  var pages = 0;
+  do {
+    var payload = { query: query };
+    if (token) payload.pageToken = token;
+    var response = UrlFetchApp.fetch(ADS_URL + '/customers/' + id + '/googleAds:search', {
+      method: 'post',
+      contentType: 'application/json',
+      muteHttpExceptions: true,
+      headers: {
+        Authorization: 'Bearer ' + adsAccessToken_(),
+        'developer-token': adsProperty_('GOOGLE_ADS_DEVELOPER_TOKEN'),
+        'login-customer-id': adsProperty_('GOOGLE_ADS_LOGIN_CUSTOMER_ID').replace(/[^0-9]/g, '')
+      },
+      payload: JSON.stringify(payload)
+    });
+    var body = {};
+    try { body = JSON.parse(response.getContentText() || '{}'); } catch (error) { body = {}; }
+    if (body.error) throw new Error('구글 광고 API: ' + (body.error.message || JSON.stringify(body.error)));
+    if (response.getResponseCode() >= 400) throw new Error('구글 광고 API 오류 (HTTP ' + response.getResponseCode() + ')');
+    rows = rows.concat(body.results || []);
+    token = body.nextPageToken || null;
+    pages += 1;
+  } while (token && pages < (maxPages || 8));
+  return rows;
+}
+
+// MCC 아래 광고 계정 목록 (관리자 계정은 뺀다)
+function adsAccounts_() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get('adsAccounts');
+  if (hit) return JSON.parse(hit);
+
+  var mcc = adsProperty_('GOOGLE_ADS_LOGIN_CUSTOMER_ID');
+  var rows = adsQuery_(mcc, 'SELECT customer_client.id, customer_client.descriptive_name, '
+    + 'customer_client.manager, customer_client.currency_code, customer_client.status '
+    + 'FROM customer_client', 3);
+
+  var list = [];
+  rows.forEach(function (row) {
+    var client = row.customerClient || {};
+    if (client.manager) return;   // 관리자(MCC) 계정에는 광고가 없다
+    list.push({
+      id: String(client.id),
+      accountId: String(client.id),
+      name: client.descriptiveName || String(client.id),
+      currency: client.currencyCode || 'KRW',
+      disabled: client.status && client.status !== 'ENABLED'
+    });
+  });
+  cache.put('adsAccounts', JSON.stringify(list), 600);
+  return list;
+}
+
+function adsReport_(payload) {
+  var customer = String(payload.account || '').replace(/[^0-9]/g, '');
+  if (!customer) throw new Error('광고 계정을 고르지 않았습니다.');
+
+  var since = String(payload.since || '');
+  var until = String(payload.until || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    throw new Error('조회 기간이 올바르지 않습니다.');
+  }
+
+  var cache = CacheService.getScriptCache();
+  var key = ['ads', customer, since, until].join('|');
+  if (!payload.refresh) {
+    var hit = cache.get(key);
+    if (hit) {
+      var cached = JSON.parse(hit);
+      cached.cached = true;
+      return cached;
+    }
+  }
+
+  var period = ' WHERE segments.date BETWEEN "' + since + '" AND "' + until + '"';
+
+  var info = adsQuery_(customer,
+    'SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone FROM customer', 1);
+  var account = (info[0] && info[0].customer) || {};
+
+  var campaignRows = adsQuery_(customer,
+    'SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, '
+    + 'metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions FROM campaign' + period, 8);
+
+  // 결과는 전환 카테고리로 나눠 받는다 (구매 · 장바구니 · 리드)
+  var categoryRows = adsQuery_(customer,
+    'SELECT campaign.id, segments.conversion_action_category, metrics.conversions FROM campaign'
+    + period + ' AND metrics.conversions > 0', 8);
+
+  var adGroupRows = adsQuery_(customer,
+    'SELECT ad_group.id, ad_group.name, ad_group.status, campaign.id, '
+    + 'metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions FROM ad_group' + period, 8);
+
+  // 기간에 안 돌았어도 지금 켜져 있으면 목록에 넣는다
+  var liveCampaigns = adsQuery_(customer,
+    'SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, '
+    + 'campaign_budget.amount_micros FROM campaign WHERE campaign.status = "ENABLED"', 5);
+  var liveAdGroups = adsQuery_(customer,
+    'SELECT ad_group.id, ad_group.name, ad_group.status, ad_group.cpc_bid_micros, campaign.id '
+    + 'FROM ad_group WHERE ad_group.status = "ENABLED" AND campaign.status = "ENABLED"', 5);
+
+  var byCategory = {};
+  categoryRows.forEach(function (row) {
+    var id = String((row.campaign || {}).id);
+    var category = (row.segments || {}).conversionActionCategory;
+    var slot = ADS_RESULT_CATEGORIES[category];
+    if (!slot) return;
+    if (!byCategory[id]) byCategory[id] = { purchase: 0, addToCart: 0, lead: 0 };
+    byCategory[id][slot] += Number((row.metrics || {}).conversions || 0);
+  });
+
+  var campaigns = {};
+  campaignRows.forEach(function (row) {
+    var campaign = row.campaign || {};
+    var id = String(campaign.id);
+    campaigns[id] = adsMetrics_(row, byCategory[id], {
+      id: id,
+      name: campaign.name || id,
+      objective: campaign.advertisingChannelType || '',
+      active: campaign.status === 'ENABLED',
+      status: campaign.status || '',
+      budget: 0, budgetKind: ''
+    });
+  });
+  liveCampaigns.forEach(function (row) {
+    var campaign = row.campaign || {};
+    var id = String(campaign.id);
+    var entry = campaigns[id];
+    if (!entry) {
+      entry = adsMetrics_(null, null, {
+        id: id, name: campaign.name || id, objective: campaign.advertisingChannelType || '',
+        active: false, status: '', budget: 0, budgetKind: ''
+      });
+      campaigns[id] = entry;
+    }
+    entry.active = true;
+    entry.status = 'ENABLED';
+    var budget = Number(((row.campaignBudget || {}).amountMicros) || 0) / 1000000;
+    if (budget) { entry.budget = budget; entry.budgetKind = 'daily'; }
+  });
+
+  var adsets = {};
+  adGroupRows.forEach(function (row) {
+    var group = row.adGroup || {};
+    var id = String(group.id);
+    adsets[id] = adsMetrics_(row, null, {
+      id: id,
+      name: group.name || id,
+      campaignId: String((row.campaign || {}).id || ''),
+      objective: '',
+      active: group.status === 'ENABLED',
+      status: group.status || '',
+      budget: 0, budgetKind: '', goal: ''
+    });
+  });
+  liveAdGroups.forEach(function (row) {
+    var group = row.adGroup || {};
+    var id = String(group.id);
+    var entry = adsets[id];
+    if (!entry) {
+      entry = adsMetrics_(null, null, {
+        id: id, name: group.name || id, campaignId: String((row.campaign || {}).id || ''),
+        objective: '', active: false, status: '', budget: 0, budgetKind: '', goal: ''
+      });
+      adsets[id] = entry;
+    }
+    entry.active = true;
+    entry.status = 'ENABLED';
+  });
+
+  var result = {
+    ok: true,
+    source: 'google',
+    account: {
+      id: String(account.id || customer),
+      name: account.descriptiveName || customer,
+      currency: account.currencyCode || 'KRW',
+      timezone: account.timeZone || ''
+    },
+    range: { since: since, until: until },
+    campaigns: sortBySpend_(campaigns),
+    adsets: sortBySpend_(adsets),
+    fetchedAt: new Date().toISOString()
+  };
+
+  var text = JSON.stringify(result);
+  if (text.length < 90000) cache.put(key, text, META_CACHE_SECONDS);
+  return result;
+}
+
+// 메타 쪽과 같은 모양으로 맞춘다. 화면이 두 매체를 같은 코드로 그린다.
+// 구글의 클릭은 링크 클릭이라 linkClicks 에 그대로 넣는다.
+function adsMetrics_(row, categories, base) {
+  var metrics = (row && row.metrics) || {};
+  base.spend = Number(metrics.costMicros || 0) / 1000000;
+  base.impressions = Number(metrics.impressions || 0);
+  base.clicks = Number(metrics.clicks || 0);
+  base.linkClicks = base.clicks;
+  base.purchase = categories ? categories.purchase : 0;
+  base.addToCart = categories ? categories.addToCart : 0;
+  base.lead = categories ? categories.lead : 0;
+  base.results = base.purchase + base.addToCart + base.lead;
+  // 카테고리가 안 잡힌 계정(전환 액션 분류가 비어 있는 경우)은 전환수를 그대로 쓴다
+  if (!base.results && metrics.conversions) base.results = Number(metrics.conversions);
+  return base;
+}
+
+// 구글 연결 확인 — 시트 UTM 메뉴에서 부른다.
+function checkGoogleAds() {
+  var message;
+  try {
+    CacheService.getScriptCache().remove('adsAccounts');
+    var accounts = adsAccounts_();
+    message = '연결됐습니다. 광고 계정 ' + accounts.length + '개\n\n'
+      + accounts.map(function (account) {
+        return '· ' + account.name + ' (' + account.accountId + ')' + (account.disabled ? ' · 중지됨' : '');
+      }).join('\n');
+  } catch (error) {
+    message = '연결하지 못했습니다.\n\n' + (error && error.message ? error.message : error);
+  }
+  Logger.log(message);
   try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
   return message;
 }
