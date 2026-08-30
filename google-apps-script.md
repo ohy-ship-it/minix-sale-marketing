@@ -245,6 +245,9 @@ FM          https://minix.life/?fm=gfa&sn=feed&ea=20260829_flender-mini_benefit-
 | `GOOGLE_ADS_REFRESH_TOKEN` | 리프레시 토큰 (`1//` 로 시작) |
 | `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | MCC 번호 (하이픈 있어도 됩니다) |
 
+> 이름은 **접두사를 떼고 넣어도 됩니다** — `CLIENT_ID` · `CLIENT_SECRET` · `REFRESH_TOKEN` · `LOGIN_CUSTOMER_ID` 로 적어 둬도 찾아 씁니다.
+> 잘못 적었을 때는 **구글 연결 확인** 이 어떤 속성이 들어와 있는지(이름과 길이만) 함께 보여 줍니다.
+
 넣고 나서 **UTM → 구글 연결 확인** 을 누르면 계정 목록이 뜹니다. 웹 앱에도 반영하려면
 **배포 → 배포 관리 → 연필 → 버전: 새 버전 → 배포** 를 한 번 하면 됩니다.
 

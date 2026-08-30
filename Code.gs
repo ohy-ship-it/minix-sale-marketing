@@ -821,13 +821,21 @@ var ADS_RESULT_CATEGORIES = {
 // CPA 에서 빼는 캠페인 유형. 메타의 트래픽 목적에 해당하는 자리다. (앱도 같은 목록을 쓴다)
 var ADS_TRAFFIC_TYPES = ['VIDEO'];
 
+// GOOGLE_ADS_CLIENT_ID 로 넣든 CLIENT_ID 로 넣든 받는다. (짧은 이름으로 적어 둔 경우가 있다)
+function adsNames_(name) {
+  var short = name.replace(/^GOOGLE_ADS_/, '');
+  return [name, 'GOOGLE_' + short, short];
+}
+
 function adsProperty_(name) {
-  var value = cleanToken_(PropertiesService.getScriptProperties().getProperty(name));
-  if (!value) {
-    throw new Error(name + ' 스크립트 속성이 없습니다. '
-      + 'Apps Script 편집기 → 프로젝트 설정 → 스크립트 속성에 넣어 주세요.');
+  var all = PropertiesService.getScriptProperties().getProperties();
+  var names = adsNames_(name);
+  for (var i = 0; i < names.length; i += 1) {
+    var value = cleanToken_(all[names[i]]);
+    if (value) return value;
   }
-  return value;
+  throw new Error(name + ' 스크립트 속성이 없습니다 (' + names.join(' · ') + ' 중 아무 이름이나 됩니다). '
+    + 'Apps Script 편집기 → 프로젝트 설정 → 스크립트 속성에 넣어 주세요.');
 }
 
 // 리프레시 토큰으로 액세스 토큰을 받는다. 한 시간짜리라 50분만 담아 둔다.
@@ -1067,18 +1075,47 @@ function adsMetrics_(row, categories, base) {
   return base;
 }
 
+// 넣어 둔 속성이 무엇인지 이름만 보여 준다 (값은 길이만).
+// 이름을 한 글자라도 다르게 적으면 '없습니다' 가 나오므로, 무엇이 들어와 있는지 보여 준다.
+var ADS_PROPERTIES = [
+  'GOOGLE_ADS_DEVELOPER_TOKEN', 'GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_SECRET',
+  'GOOGLE_ADS_REFRESH_TOKEN', 'GOOGLE_ADS_LOGIN_CUSTOMER_ID'
+];
+
+function adsShape_() {
+  var all = PropertiesService.getScriptProperties().getProperties();
+  var used = {};
+  var lines = ADS_PROPERTIES.map(function (name) {
+    var names = adsNames_(name);
+    for (var i = 0; i < names.length; i += 1) {
+      var value = cleanToken_(all[names[i]]);
+      if (!value) continue;
+      used[names[i]] = true;
+      return '  O ' + names[i] + ' (' + value.length + '자)';
+    }
+    return '  X ' + name;
+  });
+  var others = Object.keys(all).filter(function (key) {
+    return !used[key] && key !== 'META_ACCESS_TOKEN';
+  });
+  if (others.length) lines.push('\n쓰이지 않는 속성: ' + others.join(', '));
+  return lines.join('\n');
+}
+
 // 구글 연결 확인 — 시트 UTM 메뉴에서 부른다.
 function checkGoogleAds() {
   var message;
   try {
     CacheService.getScriptCache().remove('adsAccounts');
+    CacheService.getScriptCache().remove('adsAccessToken');
     var accounts = adsAccounts_();
     message = '연결됐습니다. 광고 계정 ' + accounts.length + '개\n\n'
       + accounts.map(function (account) {
         return '· ' + account.name + ' (' + account.accountId + ')' + (account.disabled ? ' · 중지됨' : '');
       }).join('\n');
   } catch (error) {
-    message = '연결하지 못했습니다.\n\n' + (error && error.message ? error.message : error);
+    message = '연결하지 못했습니다.\n\n' + (error && error.message ? error.message : error)
+      + '\n\n넣어 둔 스크립트 속성\n' + adsShape_();
   }
   Logger.log(message);
   try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
