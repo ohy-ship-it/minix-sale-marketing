@@ -604,6 +604,21 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .perf-stat small{display:block;margin-bottom:5px;color:#a4a39a;font-size:10px;font-weight:700}
 .perf-stat strong{display:block;font:700 20px 'DM Sans','Noto Sans KR';letter-spacing:-.4px}
 .perf-stat em{display:block;margin-top:5px;font-style:normal;font-size:10px;color:#a5a49f}
+.perf-filter{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 11px}
+.perf-search{position:relative;display:flex;align-items:center;min-width:230px}
+.perf-search svg{position:absolute;left:9px;width:14px;color:#b6b5b0}
+.perf-search input{width:100%;border:1px solid #e3e2dc;border-radius:7px;padding:8px 26px 8px 29px;font:400 12px inherit;background:#fff}
+.perf-search input:focus{outline:none;border-color:#9db4e8;box-shadow:0 0 0 3px #3d71d815}
+.perf-search input::-webkit-search-cancel-button{display:none}
+.perf-clear{position:absolute;right:6px;border:0;background:none;color:#a5a49f;font-size:15px;line-height:1;padding:3px 5px;border-radius:4px;cursor:pointer}
+.perf-clear:hover{background:#f0f0eb;color:#555}
+.perf-chips{display:flex;flex-wrap:wrap;gap:4px}
+.perf-chip{border:1px solid #e3e2dc;border-radius:14px;background:#fff;padding:5px 11px;font:600 11px inherit;color:#8c8c85;cursor:pointer}
+.perf-chip:hover{background:#f4f4f1;color:#555}
+.perf-chip.is-on{border-color:#2f86d9;background:#eef5fc;color:#2f86d9}
+.perf-check{display:flex;align-items:center;gap:5px;font-size:11px;color:#8c8c85;cursor:pointer}
+.perf-check input{margin:0;cursor:pointer}
+.perf-count{margin-left:auto;font-size:11px;color:#a5a49f}
 .perf-table{min-width:940px}
 .perf-table th,.perf-table td{white-space:nowrap}
 .perf-table th:not(:first-child),.perf-table .perf-num{text-align:right}

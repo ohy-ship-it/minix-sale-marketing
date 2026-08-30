@@ -3539,6 +3539,10 @@ if (mediaPerformance) {
   let error = '';
   let opened = [];       // 펼쳐 둔 캠페인 id
   let listNote = '';    // 계정 목록을 못 받았을 때의 사유
+  let query = '';        // 캠페인 · 광고그룹 이름 검색
+  let picked = [];       // 고른 목적 · 유형 (여럿이면 OR)
+  let withPaused = false; // 꺼진 캠페인도 표에 보이기
+  let caret = null;      // 다시 그린 뒤 검색창에 커서를 돌려놓을 자리
   let loadedOnce = false;
 
   const currentRange = () => rangeOf(state.preset) || {
@@ -3651,23 +3655,59 @@ if (mediaPerformance) {
     <td class="perf-num">${count(row.results)}</td>
     <td class="perf-num">${isTraffic(row) ? `<span class="tool-blank">${source().skipLabel}</span>` : blank(ratio(row.spend, row.results), money)}</td>`;
 
+  const hit = (name) => !query || String(name).toLowerCase().indexOf(query.toLowerCase()) >= 0;
+
+  // 고를 수 있는 목적 · 유형 (표에 올라온 캠페인에서 뽑는다)
+  const objectives = (rows) => {
+    const seen = [];
+    rows.forEach((row) => { if (row.objective && seen.indexOf(row.objective) < 0) seen.push(row.objective); });
+    return seen.sort();
+  };
+
+  const filters = (rows, shown, all) => {
+    const list = objectives(rows);
+    return `<div class="perf-filter">
+      <div class="perf-search">
+        <i data-lucide="search"></i>
+        <input type="search" data-perf="search" value="${escapeHtml(query)}"
+          placeholder="캠페인 · 광고그룹 이름으로 검색" autocomplete="off">
+        ${query ? '<button type="button" class="perf-clear" data-perf="clear" aria-label="지우기">×</button>' : ''}
+      </div>
+      ${list.length > 1 ? `<div class="perf-chips">
+        ${list.map((key) => `<button type="button" class="perf-chip${picked.indexOf(key) >= 0 ? ' is-on' : ''}"
+          data-perf="objective" data-objective="${escapeHtml(key)}">${OBJECTIVES[key] || escapeHtml(key)}</button>`).join('')}
+      </div>` : ''}
+      <label class="perf-check"><input type="checkbox" data-perf="paused"${withPaused ? ' checked' : ''}>꺼진 것도 보기</label>
+      ${shown !== all ? `<span class="perf-count">${count(shown)} / ${count(all)}</span>` : ''}
+    </div>`;
+  };
+
   const delivery = () => {
-    const live = report.campaigns.filter((row) => row.active);
-    const liveAdsets = report.adsets.filter((row) => row.active);
+    const liveAdsets = report.adsets.filter((row) => row.active || withPaused);
+    const listed = report.campaigns.filter((row) => row.active || (withPaused && row.spend > 0));
     const resting = report.campaigns.filter((row) => !row.active && row.spend > 0);
     const restingSpend = totalsOf(resting).spend;
 
+    // 이름은 캠페인 · 광고그룹 어느 쪽이 걸려도 그 캠페인을 남긴다
+    const groupsOf = (campaign) => liveAdsets.filter((adset) => adset.campaignId === campaign.id);
+    const live = listed.filter((campaign) => {
+      if (picked.length && picked.indexOf(campaign.objective) < 0) return false;
+      return hit(campaign.name) || groupsOf(campaign).some((adset) => hit(adset.name));
+    });
+
     const rows = live.map((campaign) => {
-      const children = liveAdsets.filter((adset) => adset.campaignId === campaign.id);
-      const isOpen = opened.indexOf(campaign.id) >= 0;
+      const all = groupsOf(campaign);
+      // 캠페인 이름이 걸렸으면 광고그룹은 다 보여주고, 아니면 걸린 광고그룹만 보여준다
+      const children = hit(campaign.name) ? all : all.filter((adset) => hit(adset.name));
+      const isOpen = opened.indexOf(campaign.id) >= 0 || (Boolean(query) && !hit(campaign.name) && children.length > 0);
       const head = `<tr class="perf-row${isOpen ? ' is-open' : ''}" data-campaign="${escapeHtml(campaign.id)}">
         <td class="perf-name">
           <button type="button" class="perf-toggle"${children.length ? '' : ' disabled'}>
             <i data-lucide="${isOpen ? 'chevron-down' : 'chevron-right'}"></i></button>
           <span><b>${escapeHtml(campaign.name)}</b><small>${OBJECTIVES[campaign.objective] || escapeHtml(campaign.objective || '—')}
-            · 광고그룹 ${count(children.length)}</small></span>
+            · 광고그룹 ${count(all.length)}</small></span>
         </td>
-        <td class="perf-num">${budgetText(campaign)}</td>
+        <td class="perf-num">${campaign.active ? budgetText(campaign) : '<span class="tool-blank">꺼짐</span>'}</td>
         ${metricCells(campaign)}
       </tr>`;
       if (!isOpen || !children.length) return head;
@@ -3680,17 +3720,18 @@ if (mediaPerformance) {
 
     return `<div class="tool-card">
       <div class="tool-list-head">
-        <h3>게재 <small>지금 켜져 있는 캠페인 ${count(live.length)}개 · 광고그룹 ${count(liveAdsets.length)}개</small></h3>
+        <h3>게재 <small>지금 켜져 있는 캠페인 ${count(listed.filter((row) => row.active).length)}개 · 광고그룹 ${count(report.adsets.filter((row) => row.active).length)}개</small></h3>
         <div class="tool-list-actions">
           <button type="button" class="tool-copy-all" data-perf="copy"${live.length ? '' : ' disabled'}>
             <i data-lucide="copy"></i>표 복사</button>
         </div>
       </div>
+      ${filters(listed, live.length, listed.length)}
       ${live.length ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
         <thead><tr><th>캠페인 · 광고그룹</th><th>예산</th><th>광고비</th><th>노출</th><th>링크 클릭</th>
           <th>CTR</th><th>CPC</th><th>결과</th><th>CPA</th></tr></thead>
         <tbody>${rows}</tbody>
-      </table></div>` : '<p class="tool-empty">지금 켜져 있는 캠페인이 없습니다.</p>'}
+      </table></div>` : `<p class="tool-empty">${query || picked.length ? '찾는 캠페인이 없습니다.' : '지금 켜져 있는 캠페인이 없습니다.'}</p>`}
       ${resting.length ? `<p class="perf-resting">이 기간에 돌았지만 지금 꺼져 있는 캠페인 ${count(resting.length)}개
         (${money(restingSpend)})도 위 요약에는 들어 있습니다.</p>` : ''}
     </div>`;
@@ -3723,6 +3764,14 @@ if (mediaPerformance) {
           ${source().note}</p>
       </div>${controls()}${body()}`;
     lucide.createIcons();
+    if (caret !== null) {
+      const search = mediaPerformance.querySelector('[data-perf="search"]');
+      if (search) {
+        search.focus();
+        search.setSelectionRange(caret, caret);
+      }
+      caret = null;
+    }
   };
 
   // ── 불러오기 ────────────────────────────────────────────────────
@@ -3771,9 +3820,18 @@ if (mediaPerformance) {
       });
   };
 
+  // 검색은 input 에서 받는다 (change 를 기다리면 한 박자 늦다)
+  mediaPerformance.addEventListener('input', (event) => {
+    if (event.target.dataset.perf !== 'search') return;
+    query = event.target.value;
+    caret = event.target.selectionStart;
+    render();
+  });
+
   mediaPerformance.addEventListener('change', (event) => {
     const field = event.target.dataset.perf;
     if (!field) return;
+    if (field === 'paused') { withPaused = event.target.checked; render(); return; }
     if (field === 'account') { setAccount(event.target.value); save(); loadReport(false); return; }
     if (field === 'preset') {
       state.preset = event.target.value;
@@ -3806,7 +3864,17 @@ if (mediaPerformance) {
       report = null;
       opened = [];
       listNote = '';
+      query = '';
+      picked = [];
       loadAccounts();
+      return;
+    }
+    if (event.target.closest('[data-perf="clear"]')) { query = ''; caret = 0; render(); return; }
+    const chip = event.target.closest('[data-perf="objective"]');
+    if (chip) {
+      const key = chip.dataset.objective;
+      picked = picked.indexOf(key) >= 0 ? picked.filter((entry) => entry !== key) : picked.concat(key);
+      render();
       return;
     }
     if (event.target.closest('[data-perf="reload"]')) { loadReport(true); return; }
