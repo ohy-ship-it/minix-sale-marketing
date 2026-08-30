@@ -92,6 +92,10 @@ var DEFAULT_PRODUCT = [
 function doPost(e) {
   try {
     var payload = JSON.parse(e.postData.contents);
+
+    // action 이 있으면 시트 적재가 아니라 조회 요청이다 (매체별 성과 화면)
+    if (payload.action) return json(handleAction_(payload));
+
     var columns = (payload.columns && payload.columns.length) ? payload.columns : FALLBACK_COLUMNS;
     var rows = payload.rows || [];
 
@@ -182,6 +186,7 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('UTM')
     .addItem('전체 행 다시 계산', 'fillAllUtm')
     .addItem('설정 시트 만들기 · 확인', 'openConfigSheet')
+    .addItem('메타 연결 확인', 'checkMetaToken')
     .addToUi();
 }
 
@@ -461,4 +466,337 @@ function addMissingRows_(config, column, rows) {
   var missing = rows.filter(function (row) { return !have[row[0]]; });
   if (!missing.length) return;
   config.getRange(end + 1, column, missing.length, rows[0].length).setValues(missing);
+}
+
+// ── 메타 광고 성과 조회 (워크스페이스 '매체별 성과' 화면) ──────────────
+// 액세스 토큰은 스크립트 속성 META_ACCESS_TOKEN 에 둔다. 브라우저로는 내려보내지 않는다.
+//   Apps Script 편집기 → 프로젝트 설정(톱니) → 스크립트 속성 → META_ACCESS_TOKEN 추가
+var GRAPH_URL = 'https://graph.facebook.com/v21.0';
+
+// 결과로 세는 행동 (구매 · 장바구니 · 리드).
+// 한 묶음에서는 먼저 잡히는 것 하나만 센다. omni_* 와 픽셀 이벤트가 겹쳐 두 번 세지 않게 한다.
+var RESULT_GROUPS = [
+  { key: 'purchase', types: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_web_purchase', 'purchase'] },
+  { key: 'addToCart', types: ['omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart', 'add_to_cart'] },
+  { key: 'lead', types: ['lead', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.lead_grouped'] }
+];
+
+// 조회 결과를 담아 두는 시간(초). 같은 계정 · 같은 기간을 다시 물으면 그 안에서는 메타를 부르지 않는다.
+var META_CACHE_SECONDS = 300;
+
+// 앱이 action 을 담아 보내면 시트 적재 대신 이쪽으로 온다.
+function handleAction_(payload) {
+  try {
+    if (payload.action === 'metaAccounts') return { ok: true, accounts: metaAccounts_() };
+    if (payload.action === 'metaReport') return metaReport_(payload);
+    return { ok: false, error: '모르는 요청입니다: ' + payload.action };
+  } catch (error) {
+    return { ok: false, error: String(error && error.message ? error.message : error) };
+  }
+}
+
+function metaToken_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('META_ACCESS_TOKEN');
+  var token = cleanToken_(raw);
+  if (!token) {
+    throw new Error('META_ACCESS_TOKEN 스크립트 속성이 없습니다. '
+      + 'Apps Script 편집기 → 프로젝트 설정 → 스크립트 속성에 토큰을 넣어 주세요.');
+  }
+  return token;
+}
+
+// 붙여넣기 사고를 걸러 낸다 — 줄바꿈 · 공백 · 따옴표 · 'META_ACCESS_TOKEN=' 까지 같이 붙은 경우.
+// 토큰 자체에는 공백이 없다.
+function cleanToken_(raw) {
+  var token = String(raw === null || raw === undefined ? '' : raw).trim();
+  var at = token.indexOf('META_ACCESS_TOKEN=');
+  if (at >= 0) token = token.slice(at + 'META_ACCESS_TOKEN='.length);
+  token = token.replace(/^\s*["']|["']\s*$/g, '');   // 앞뒤 따옴표
+  return token.replace(/\s+/g, '');                  // 줄바꿈 · 공백
+}
+
+// 토큰을 드러내지 않고 모양만 알려 준다 (길이 · 앞 4글자)
+function tokenShape_() {
+  var token = cleanToken_(PropertiesService.getScriptProperties().getProperty('META_ACCESS_TOKEN'));
+  if (!token) return '스크립트 속성이 비어 있습니다';
+  return token.length + '자, ' + token.slice(0, 4) + '… 로 시작';
+}
+
+// path 가 http 로 시작하면 (다음 쪽 주소) 그대로 부른다.
+function graph_(path, params) {
+  var url = path;
+  if (path.indexOf('http') !== 0) {
+    var query = ['access_token=' + encodeURIComponent(metaToken_())];
+    Object.keys(params || {}).forEach(function (key) {
+      var value = params[key];
+      if (value === undefined || value === null || value === '') return;
+      query.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+    });
+    url = GRAPH_URL + path + '?' + query.join('&');
+  }
+  var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  var body = {};
+  try { body = JSON.parse(response.getContentText() || '{}'); } catch (error) { body = {}; }
+  if (body.error) {
+    throw new Error('메타 API: ' + (body.error.error_user_msg || body.error.message || JSON.stringify(body.error)));
+  }
+  if (response.getResponseCode() >= 400) {
+    throw new Error('메타 API 오류 (HTTP ' + response.getResponseCode() + ')');
+  }
+  return body;
+}
+
+function graphAll_(path, params, maxPages) {
+  var rows = [];
+  var body = graph_(path, params);
+  var pages = 1;
+  while (body && body.data) {
+    rows = rows.concat(body.data);
+    var next = body.paging && body.paging.next;
+    if (!next || pages >= (maxPages || 5)) break;
+    body = graph_(next, null);
+    pages += 1;
+  }
+  return rows;
+}
+
+// 계정 목록을 못 읽는 토큰일 때 쓰는 목록 (메타 광고 세팅 화면과 같은 8개).
+// 페이지 토큰은 /me 가 페이지라 adaccounts 를 못 준다. 그때는 이 id 로 하나씩 물어본다.
+// 스크립트 속성 META_AD_ACCOUNTS 에 쉼표로 적어 두면 그 목록이 우선한다.
+var DEFAULT_AD_ACCOUNTS = [
+  ['미닉스', 'act_370223898721955'], ['컬리', 'act_876846528408565'],
+  ['CJ', 'act_1467742828251405'], ['오늘의집', 'act_1194498995371808'],
+  ['네이버', 'act_1010891704382690'], ['쿠팡', 'act_1182774429560123'],
+  ['무신사', 'act_996624009865646'], ['29cm', 'act_1019016880920556']
+];
+
+// 토큰으로 볼 수 있는 광고 계정 목록
+function metaAccounts_() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get('metaAccounts');
+  if (hit) return JSON.parse(hit);
+
+  var list = null;
+  // 사용자 토큰이면 목록을 그대로 읽는다.
+  try {
+    list = graphAll_('/me/adaccounts', { fields: 'name,account_id,currency,account_status', limit: 100 }, 3)
+      .map(function (row) {
+        return {
+          id: row.id,
+          accountId: row.account_id || String(row.id || '').replace('act_', ''),
+          name: row.name || row.id,
+          currency: row.currency || 'KRW',
+          disabled: Number(row.account_status) !== 1
+        };
+      });
+  } catch (error) {
+    list = null;   // 페이지 토큰 등 목록을 못 주는 토큰
+  }
+
+  if (!list || !list.length) list = listedAccounts_();
+  cache.put('metaAccounts', JSON.stringify(list), 600);
+  return list;
+}
+
+// 정해 둔 id 로 계정을 하나씩 물어본다. 볼 수 없는 계정은 건너뛴다.
+function listedAccounts_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('META_AD_ACCOUNTS');
+  var ids = raw ? String(raw).split(',') : DEFAULT_AD_ACCOUNTS.map(function (row) { return row[1]; });
+  var names = {};
+  DEFAULT_AD_ACCOUNTS.forEach(function (row) { names[row[1]] = row[0]; });
+
+  var out = [];
+  var lastError = null;
+  ids.forEach(function (value) {
+    var id = String(value).trim();
+    if (!id) return;
+    if (id.indexOf('act_') !== 0) id = 'act_' + id;
+    try {
+      var info = graph_('/' + id, { fields: 'name,currency,account_status' });
+      out.push({
+        id: id,
+        accountId: id.replace('act_', ''),
+        name: info.name || names[id] || id,
+        currency: info.currency || 'KRW',
+        disabled: Number(info.account_status) !== 1
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  });
+  // 하나도 못 읽었으면 토큰 · 권한 문제다. 이유를 그대로 올려 보낸다.
+  if (!out.length && lastError) throw lastError;
+  return out;
+}
+
+function metaReport_(payload) {
+  var account = String(payload.account || '').trim();
+  if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
+  if (account.indexOf('act_') !== 0) account = 'act_' + account;
+
+  var since = String(payload.since || '');
+  var until = String(payload.until || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    throw new Error('조회 기간이 올바르지 않습니다.');
+  }
+
+  var cache = CacheService.getScriptCache();
+  var key = ['meta', account, since, until].join('|');
+  if (!payload.refresh) {
+    var hit = cache.get(key);
+    if (hit) {
+      var cached = JSON.parse(hit);
+      cached.cached = true;
+      return cached;
+    }
+  }
+
+  var range = JSON.stringify({ since: since, until: until });
+  var fields = 'campaign_id,campaign_name,objective,spend,impressions,clicks,inline_link_clicks,actions';
+
+  var info = graph_('/' + account, { fields: 'name,currency,account_status,timezone_name' });
+  var campaignRows = graphAll_('/' + account + '/insights',
+    { level: 'campaign', fields: fields, time_range: range, limit: 200 }, 8);
+  var adsetRows = graphAll_('/' + account + '/insights',
+    { level: 'adset', fields: 'adset_id,adset_name,' + fields, time_range: range, limit: 300 }, 8);
+  var liveCampaigns = graphAll_('/' + account + '/campaigns',
+    { fields: 'id,name,objective,effective_status,daily_budget,lifetime_budget', effective_status: '["ACTIVE"]', limit: 200 }, 5);
+  var liveAdsets = graphAll_('/' + account + '/adsets',
+    { fields: 'id,name,campaign_id,effective_status,daily_budget,lifetime_budget,optimization_goal', effective_status: '["ACTIVE"]', limit: 300 }, 5);
+
+  // 기간 안에 돈을 쓴 것 + 지금 켜져 있는 것을 합친다.
+  // (기간에는 돌았지만 지금 꺼진 캠페인도 광고비에는 들어가야 하므로 목록에서 빼지 않는다)
+  var campaigns = {};
+  campaignRows.forEach(function (row) {
+    campaigns[row.campaign_id] = metrics_(row, {
+      id: row.campaign_id,
+      name: row.campaign_name || row.campaign_id,
+      objective: row.objective || '',
+      active: false, status: '', budget: 0, budgetKind: ''
+    });
+  });
+  liveCampaigns.forEach(function (row) {
+    var entry = campaigns[row.id];
+    if (!entry) {
+      entry = metrics_(null, {
+        id: row.id, name: row.name || row.id, objective: row.objective || '',
+        active: false, status: '', budget: 0, budgetKind: ''
+      });
+      campaigns[row.id] = entry;
+    }
+    entry.active = true;
+    entry.status = row.effective_status || 'ACTIVE';
+    if (!entry.objective) entry.objective = row.objective || '';
+    if (row.daily_budget) { entry.budget = Number(row.daily_budget); entry.budgetKind = 'daily'; }
+    else if (row.lifetime_budget) { entry.budget = Number(row.lifetime_budget); entry.budgetKind = 'lifetime'; }
+  });
+
+  var adsets = {};
+  adsetRows.forEach(function (row) {
+    adsets[row.adset_id] = metrics_(row, {
+      id: row.adset_id,
+      name: row.adset_name || row.adset_id,
+      campaignId: row.campaign_id || '',
+      objective: row.objective || '',
+      active: false, status: '', budget: 0, budgetKind: '', goal: ''
+    });
+  });
+  liveAdsets.forEach(function (row) {
+    var entry = adsets[row.id];
+    if (!entry) {
+      entry = metrics_(null, {
+        id: row.id, name: row.name || row.id, campaignId: row.campaign_id || '',
+        objective: '', active: false, status: '', budget: 0, budgetKind: '', goal: ''
+      });
+      adsets[row.id] = entry;
+    }
+    entry.active = true;
+    entry.status = row.effective_status || 'ACTIVE';
+    entry.campaignId = entry.campaignId || row.campaign_id || '';
+    entry.goal = row.optimization_goal || '';
+    if (row.daily_budget) { entry.budget = Number(row.daily_budget); entry.budgetKind = 'daily'; }
+    else if (row.lifetime_budget) { entry.budget = Number(row.lifetime_budget); entry.budgetKind = 'lifetime'; }
+  });
+
+  var result = {
+    ok: true,
+    account: {
+      id: account,
+      name: info.name || account,
+      currency: info.currency || 'KRW',
+      timezone: info.timezone_name || ''
+    },
+    range: { since: since, until: until },
+    campaigns: sortBySpend_(campaigns),
+    adsets: sortBySpend_(adsets),
+    fetchedAt: new Date().toISOString()
+  };
+
+  var text = JSON.stringify(result);
+  // 캐시 한 칸은 100KB 까지다. 넘치면 담지 않고 그냥 돌려준다.
+  if (text.length < 90000) cache.put(key, text, META_CACHE_SECONDS);
+  return result;
+}
+
+function sortBySpend_(map) {
+  return Object.keys(map).map(function (id) { return map[id]; }).sort(function (a, b) {
+    if (b.spend !== a.spend) return b.spend - a.spend;
+    return String(a.name).localeCompare(String(b.name));
+  });
+}
+
+function metrics_(row, base) {
+  base.spend = row ? Number(row.spend || 0) : 0;
+  base.impressions = row ? Number(row.impressions || 0) : 0;
+  base.clicks = row ? Number(row.clicks || 0) : 0;
+  base.linkClicks = row ? Number(row.inline_link_clicks || 0) : 0;
+  var counted = countResults_(row ? row.actions : null);
+  base.purchase = counted.purchase;
+  base.addToCart = counted.addToCart;
+  base.lead = counted.lead;
+  base.results = counted.purchase + counted.addToCart + counted.lead;
+  return base;
+}
+
+function countResults_(actions) {
+  var out = { purchase: 0, addToCart: 0, lead: 0 };
+  if (!actions || !actions.length) return out;
+  RESULT_GROUPS.forEach(function (group) {
+    for (var i = 0; i < group.types.length; i += 1) {
+      var value = pickAction_(actions, group.types[i]);
+      if (value !== null) { out[group.key] = value; break; }
+    }
+  });
+  return out;
+}
+
+function pickAction_(actions, type) {
+  for (var i = 0; i < actions.length; i += 1) {
+    if (actions[i].action_type === type) return Number(actions[i].value || 0);
+  }
+  return null;
+}
+
+// 메타 연결 확인 — 스크립트 속성의 토큰으로 광고 계정을 불러와 본다.
+// 처음 실행할 때 외부 요청 권한을 묻는다. (Apps Script 는 _ 로 끝나는 함수를 실행 목록에 보여주지 않아 이 함수를 둔다)
+function checkMetaToken() {
+  var message;
+  try {
+    // 담아 둔 목록 말고 지금 토큰으로 진짜 물어본다
+    CacheService.getScriptCache().remove('metaAccounts');
+    var accounts = metaAccounts_();
+    message = '연결됐습니다. 광고 계정 ' + accounts.length + '개\n\n'
+      + accounts.map(function (account) {
+        return '· ' + account.name + ' (' + account.accountId + ')' + (account.disabled ? ' · 중지됨' : '');
+      }).join('\n');
+  } catch (error) {
+    // 토큰 모양을 함께 알려 준다. 잘렸는지 · 엉뚱한 값이 들어갔는지 바로 보인다.
+    message = '연결하지 못했습니다.\n\n' + (error && error.message ? error.message : error)
+      + '\n\n넣어 둔 토큰: ' + tokenShape_()
+      + '\n(정상이라면 EAA… 로 시작하고 150자가 넘습니다)';
+  }
+  Logger.log(message);
+  // 편집기에서 실행하면 알림창이 없다. 그때는 실행 로그로 본다.
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
 }

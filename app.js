@@ -762,6 +762,7 @@ const VIEWS = {
   '메타 광고 세팅': { section: '#ad-setup', hash: '#meta-ad-setup' },
   '퍼포먼스일정': { section: '#brand-schedule', hash: '#performance-schedule' },
   'UTM 빌더': { section: '#utm-builder', hash: '#utm' },
+  '매체별 성과': { section: '#media-performance', hash: '#media-report' },
 };
 const DASHBOARD_PARTS = ['.content-tabs', '.target-section', '.channel-section', '.notes-section'];
 
@@ -965,7 +966,16 @@ teamNote.addEventListener('input', () => {
 
 // 파일명 적재 시트와 그 시트에 배포한 Apps Script 웹 앱. 파일명 · UTM 빌더 두 화면이 함께 쓴다.
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E/edit';
-const SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyofczGX39x47gJlpdUcJFnWwkFq4i8VFqgXxyJviIemkxvwrSuMerAH8OMMfEuCnUh/exec';
+const SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwWEYRTgiY7g5Hoz1U5Y9HGauaSjuZal5AQmO4vU8lN-SrU2xwc17wszUpPypHBixbV/exec';
+
+// 광고 계정 — 메타 광고 세팅 · 매체별 성과가 함께 쓴다.
+// 매체별 성과는 시트 쪽에서 계정 목록을 받아 오고, 못 받으면 이 목록으로 채운다.
+const AD_ACCOUNTS = [
+  ['미닉스', 'act_370223898721955'], ['컬리', 'act_876846528408565'],
+  ['CJ', 'act_1467742828251405'], ['오늘의집', 'act_1194498995371808'],
+  ['네이버', 'act_1010891704382690'], ['쿠팡', 'act_1182774429560123'],
+  ['무신사', 'act_996624009865646'], ['29cm', 'act_1019016880920556'],
+];
 
 const filenameTool = document.querySelector('#filename-tool');
 if (filenameTool) {
@@ -1508,12 +1518,7 @@ if (adSetup) {
   const UTM_SHEET_NAME = 'utm-builder';
   const TND_SHEET_NAME = '[DA] 메타';
 
-  const ACCOUNTS = [
-    ['미닉스', 'act_370223898721955'], ['컬리', 'act_876846528408565'],
-    ['CJ', 'act_1467742828251405'], ['오늘의집', 'act_1194498995371808'],
-    ['네이버', 'act_1010891704382690'], ['쿠팡', 'act_1182774429560123'],
-    ['무신사', 'act_996624009865646'], ['29cm', 'act_1019016880920556'],
-  ];
+  const ACCOUNTS = AD_ACCOUNTS;
   const PURPOSES = ['구매', '트래픽', '참여', '잠재고객'];
   const URL_TYPES = [['url', 'URL'], ['linkGA', 'LINK(GA)'], ['nt', 'NT'], ['shoplive', '쇼핑라이브']];
   const OBJECTIVES = ['구매', '링크클릭', '도달'];
@@ -3437,4 +3442,369 @@ if (brandSchedule) {
   });
 
   renderView();
+}
+
+// ── 매체별 성과 (메타 광고 API) ──────────────────────────────────────
+// 액세스 토큰은 Apps Script 쪽 스크립트 속성에 있다. 이 화면은 SHEET_ENDPOINT 에 물어보기만 한다.
+// 숫자 정의: CPC · CTR 은 링크 클릭 기준, 결과는 구매 + 장바구니 + 리드, CPA 는 트래픽 목적을 뺀다.
+const mediaPerformance = document.querySelector('#media-performance');
+if (mediaPerformance) {
+  const STORAGE_KEY = 'minix-media-performance-v1';
+
+  // CPA 에서 빼는 목적. CPA 계산은 여기서만 한다 (Apps Script 는 목적 이름을 그대로 넘겨준다)
+  const TRAFFIC_OBJECTIVES = ['OUTCOME_TRAFFIC', 'LINK_CLICKS'];
+
+  const OBJECTIVES = {
+    OUTCOME_SALES: '판매', OUTCOME_TRAFFIC: '트래픽', OUTCOME_ENGAGEMENT: '참여',
+    OUTCOME_LEADS: '잠재고객', OUTCOME_AWARENESS: '인지도', OUTCOME_APP_PROMOTION: '앱 홍보',
+    LINK_CLICKS: '트래픽', CONVERSIONS: '전환', PRODUCT_CATALOG_SALES: '카탈로그 판매',
+    POST_ENGAGEMENT: '게시물 참여', REACH: '도달', BRAND_AWARENESS: '브랜드 인지도',
+    VIDEO_VIEWS: '동영상 조회', LEAD_GENERATION: '잠재고객', MESSAGES: '메시지',
+  };
+
+  // 메타 관리자와 같은 기준 — '최근 N일' 은 오늘을 넣지 않는다 (오늘 수치는 계속 움직이므로)
+  const PRESETS = [
+    ['today', '오늘'], ['yesterday', '어제'], ['7d', '최근 7일'], ['14d', '최근 14일'],
+    ['30d', '최근 30일'], ['month', '이번 달'], ['lastMonth', '지난 달'], ['custom', '직접 지정'],
+  ];
+
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+  // toISOString 은 UTC 라 한국 시간 기준 날짜가 하루 밀린다. 로컬 값으로 만든다.
+  const ymd = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const daysAgo = (days) => { const date = new Date(); date.setDate(date.getDate() - days); return date; };
+
+  const rangeOf = (preset) => {
+    const today = new Date();
+    if (preset === 'today') return { since: ymd(today), until: ymd(today) };
+    if (preset === 'yesterday') return { since: ymd(daysAgo(1)), until: ymd(daysAgo(1)) };
+    if (preset === '7d') return { since: ymd(daysAgo(7)), until: ymd(daysAgo(1)) };
+    if (preset === '14d') return { since: ymd(daysAgo(14)), until: ymd(daysAgo(1)) };
+    if (preset === '30d') return { since: ymd(daysAgo(30)), until: ymd(daysAgo(1)) };
+    if (preset === 'month') return { since: ymd(new Date(today.getFullYear(), today.getMonth(), 1)), until: ymd(today) };
+    if (preset === 'lastMonth') {
+      return {
+        since: ymd(new Date(today.getFullYear(), today.getMonth() - 1, 1)),
+        until: ymd(new Date(today.getFullYear(), today.getMonth(), 0)),
+      };
+    }
+    return null;
+  };
+
+  const defaults = { account: '', preset: '7d', since: '', until: '' };
+  let state = { ...defaults };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (saved && typeof saved === 'object') state = { ...defaults, ...saved };
+  } catch { /* 저장값이 깨졌으면 기본값으로 시작한다 */ }
+  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+  let accounts = [];
+  let report = null;
+  let status = 'idle';   // idle · loading · ready · error
+  let error = '';
+  let opened = [];       // 펼쳐 둔 캠페인 id
+  let listNote = '';    // 계정 목록을 못 받았을 때의 사유
+  let loadedOnce = false;
+
+  const currentRange = () => rangeOf(state.preset) || {
+    since: state.since || ymd(daysAgo(7)),
+    until: state.until || ymd(daysAgo(1)),
+  };
+
+  const ask = (payload) => window.fetch(SHEET_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload),
+  })
+    .then((response) => (response.ok ? response.json() : Promise.reject(new Error('HTTP ' + response.status))))
+    .then((body) => {
+      if (!body || !body.ok) throw new Error((body && body.error) || '알 수 없는 오류');
+      return body;
+    });
+
+  // ── 숫자 ────────────────────────────────────────────────────────
+  const currency = () => (report?.account?.currency) || 'KRW';
+  const money = (value) => new Intl.NumberFormat('ko-KR', {
+    style: 'currency', currency: currency(),
+    maximumFractionDigits: currency() === 'KRW' ? 0 : 2,
+  }).format(Number(value) || 0);
+  const count = (value) => new Intl.NumberFormat('ko-KR').format(Math.round(Number(value) || 0));
+  const percent = (value) => `${((Number(value) || 0) * 100).toFixed(2)}%`;
+  const ratio = (top, bottom) => (bottom > 0 ? top / bottom : null);
+  const blank = (value, format) => (value === null ? '<span class="tool-blank">—</span>' : format(value));
+
+  const isTraffic = (row) => TRAFFIC_OBJECTIVES.indexOf(row.objective) >= 0;
+
+  const totalsOf = (rows) => rows.reduce((sum, row) => ({
+    spend: sum.spend + row.spend,
+    impressions: sum.impressions + row.impressions,
+    linkClicks: sum.linkClicks + row.linkClicks,
+    clicks: sum.clicks + row.clicks,
+    results: sum.results + row.results,
+    purchase: sum.purchase + row.purchase,
+    addToCart: sum.addToCart + row.addToCart,
+    lead: sum.lead + row.lead,
+  }), { spend: 0, impressions: 0, linkClicks: 0, clicks: 0, results: 0, purchase: 0, addToCart: 0, lead: 0 });
+
+  // ── 화면 ────────────────────────────────────────────────────────
+  const accountOptions = () => {
+    if (!accounts.length) return `<option value="">${state.account ? escapeHtml(state.account) : '계정을 불러오는 중…'}</option>`;
+    return accounts.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === state.account ? ' selected' : ''}>`
+      + `${escapeHtml(item.name)} (${escapeHtml(item.accountId)})${item.disabled ? ' · 중지됨' : ''}</option>`).join('');
+  };
+
+  const controls = () => {
+    const range = currentRange();
+    const custom = state.preset === 'custom';
+    return `<div class="tool-card perf-controls">
+      <div class="perf-fields">
+        <label class="perf-account">광고 계정
+          <select data-perf="account"${accounts.length ? '' : ' disabled'}>${accountOptions()}</select>
+        </label>
+        <label>기간
+          <select data-perf="preset">${PRESETS.map(([key, name]) => `<option value="${key}"${state.preset === key ? ' selected' : ''}>${name}</option>`).join('')}</select>
+        </label>
+        ${custom ? `<label>시작<input type="date" data-perf="since" value="${escapeHtml(range.since)}"></label>
+        <label>종료<input type="date" data-perf="until" value="${escapeHtml(range.until)}"></label>` : ''}
+        <button type="button" class="tool-add" data-perf="reload"${status === 'loading' ? ' disabled' : ''}>
+          <i data-lucide="refresh-cw"></i>${status === 'loading' ? '불러오는 중…' : '메타에서 새로 받기'}</button>
+      </div>
+      <p class="perf-note">
+        <b>${escapeHtml(range.since)} ~ ${escapeHtml(range.until)}</b>
+        ${report ? ` · ${escapeHtml(report.account.name)}${report.account.timezone ? ` · ${escapeHtml(report.account.timezone)}` : ''}` : ''}
+        ${report?.fetchedAt ? ` · 갱신 ${new Date(report.fetchedAt).toLocaleString('ko-KR')}${report.cached ? ' (담아 둔 값)' : ''}` : ''}
+      </p>
+      ${listNote ? `<p class="perf-warn">계정 목록을 받지 못해 <b>기본 계정 8개</b>로 채웠습니다. 성과 숫자는 그대로입니다.<small>${escapeHtml(listNote)}</small></p>` : ''}
+    </div>`;
+  };
+
+  const statCard = (label, value, note) => `<div class="perf-stat">
+    <small>${label}</small><strong>${value}</strong><em>${note}</em></div>`;
+
+  const stats = () => {
+    const rows = report.campaigns;
+    const all = totalsOf(rows);
+    const paid = totalsOf(rows.filter((row) => !isTraffic(row)));
+    const trafficSpend = all.spend - paid.spend;
+    return `<div class="perf-stats">
+      ${statCard('총광고비', money(all.spend), `캠페인 ${count(rows.length)}개`)}
+      ${statCard('총결과', count(all.results), `구매 ${count(all.purchase)} · 장바구니 ${count(all.addToCart)} · 리드 ${count(all.lead)}`)}
+      ${statCard('CPC', blank(ratio(all.spend, all.linkClicks), money), `링크 클릭 ${count(all.linkClicks)}회`)}
+      ${statCard('CTR', blank(ratio(all.linkClicks, all.impressions), percent), '링크 클릭 ÷ 노출')}
+      ${statCard('CPM', blank(ratio(all.spend * 1000, all.impressions), money), `노출 ${count(all.impressions)}회`)}
+      ${statCard('CPA', blank(ratio(paid.spend, paid.results), money), trafficSpend > 0
+        ? `트래픽 ${money(trafficSpend)} 제외`
+        : '트래픽 목적 제외')}
+    </div>`;
+  };
+
+  const budgetText = (row) => {
+    if (!row.budget) return '<span class="tool-blank">—</span>';
+    return `${money(row.budget)}<small>${row.budgetKind === 'daily' ? '일' : '총'}</small>`;
+  };
+
+  const metricCells = (row) => `<td class="perf-num">${money(row.spend)}</td>
+    <td class="perf-num">${count(row.impressions)}</td>
+    <td class="perf-num">${count(row.linkClicks)}</td>
+    <td class="perf-num">${blank(ratio(row.linkClicks, row.impressions), percent)}</td>
+    <td class="perf-num">${blank(ratio(row.spend, row.linkClicks), money)}</td>
+    <td class="perf-num">${count(row.results)}</td>
+    <td class="perf-num">${isTraffic(row) ? '<span class="tool-blank">트래픽</span>' : blank(ratio(row.spend, row.results), money)}</td>`;
+
+  const delivery = () => {
+    const live = report.campaigns.filter((row) => row.active);
+    const liveAdsets = report.adsets.filter((row) => row.active);
+    const resting = report.campaigns.filter((row) => !row.active && row.spend > 0);
+    const restingSpend = totalsOf(resting).spend;
+
+    const rows = live.map((campaign) => {
+      const children = liveAdsets.filter((adset) => adset.campaignId === campaign.id);
+      const isOpen = opened.indexOf(campaign.id) >= 0;
+      const head = `<tr class="perf-row${isOpen ? ' is-open' : ''}" data-campaign="${escapeHtml(campaign.id)}">
+        <td class="perf-name">
+          <button type="button" class="perf-toggle"${children.length ? '' : ' disabled'}>
+            <i data-lucide="${isOpen ? 'chevron-down' : 'chevron-right'}"></i></button>
+          <span><b>${escapeHtml(campaign.name)}</b><small>${OBJECTIVES[campaign.objective] || escapeHtml(campaign.objective || '—')}
+            · 광고그룹 ${count(children.length)}</small></span>
+        </td>
+        <td class="perf-num">${budgetText(campaign)}</td>
+        ${metricCells(campaign)}
+      </tr>`;
+      if (!isOpen || !children.length) return head;
+      return head + children.map((adset) => `<tr class="perf-child">
+        <td class="perf-name"><span class="perf-branch"></span><span>${escapeHtml(adset.name)}</span></td>
+        <td class="perf-num">${budgetText(adset)}</td>
+        ${metricCells({ ...adset, objective: adset.objective || campaign.objective })}
+      </tr>`).join('');
+    }).join('');
+
+    return `<div class="tool-card">
+      <div class="tool-list-head">
+        <h3>게재 <small>지금 켜져 있는 캠페인 ${count(live.length)}개 · 광고그룹 ${count(liveAdsets.length)}개</small></h3>
+        <div class="tool-list-actions">
+          <button type="button" class="tool-copy-all" data-perf="copy"${live.length ? '' : ' disabled'}>
+            <i data-lucide="copy"></i>표 복사</button>
+        </div>
+      </div>
+      ${live.length ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
+        <thead><tr><th>캠페인 · 광고그룹</th><th>예산</th><th>광고비</th><th>노출</th><th>링크 클릭</th>
+          <th>CTR</th><th>CPC</th><th>결과</th><th>CPA</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>` : '<p class="tool-empty">지금 켜져 있는 캠페인이 없습니다.</p>'}
+      ${resting.length ? `<p class="perf-resting">이 기간에 돌았지만 지금 꺼져 있는 캠페인 ${count(resting.length)}개
+        (${money(restingSpend)})도 위 요약에는 들어 있습니다.</p>` : ''}
+    </div>`;
+  };
+
+  const guide = () => `<div class="tool-card perf-guide">
+    <h3>메타 액세스 토큰을 넣어 주세요</h3>
+    <p>토큰은 브라우저가 아니라 시트에 붙은 Apps Script 안에 둡니다. 화면에는 내려오지 않습니다.</p>
+    <ol>
+      <li><a href="${SHEET_URL}" target="_blank" rel="noopener">적재 시트</a> → 확장 프로그램 → Apps Script</li>
+      <li>왼쪽 <b>프로젝트 설정</b> → 스크립트 속성 → 속성 추가</li>
+      <li>이름 <code>META_ACCESS_TOKEN</code>, 값에 토큰을 넣고 저장</li>
+      <li>배포 → <b>배포 관리</b> → 연필 → 버전 <b>새 버전</b> → 배포 (주소는 그대로입니다)</li>
+    </ol>
+  </div>`;
+
+  const render = () => {
+    const body = () => {
+      if (status === 'loading' && !report) return '<div class="tool-card perf-loading">메타에서 불러오는 중…</div>';
+      if (status === 'error') {
+        return `<div class="tool-card perf-error"><b>불러오지 못했습니다.</b><p>${escapeHtml(error)}</p></div>`
+          + (/META_ACCESS_TOKEN|토큰/.test(error) ? guide() : '');
+      }
+      if (!report) return '<div class="tool-card perf-loading">광고 계정을 고르면 성과를 불러옵니다.</div>';
+      return stats() + delivery();
+    };
+    mediaPerformance.innerHTML = `<div class="tool-head">
+        <h2>매체별 성과 <small>메타 광고</small></h2>
+        <p>광고 계정을 고르면 메타 API 로 성과를 불러옵니다.
+          CPC · CTR 은 링크 클릭 기준, 결과는 구매 + 장바구니 + 리드, CPA 는 트래픽 목적을 뺀 값입니다.</p>
+      </div>${controls()}${body()}`;
+    lucide.createIcons();
+  };
+
+  // ── 불러오기 ────────────────────────────────────────────────────
+  const loadReport = (refresh) => {
+    if (!state.account) return;
+    const range = currentRange();
+    status = 'loading';
+    render();
+    ask({ action: 'metaReport', account: state.account, since: range.since, until: range.until, refresh: Boolean(refresh) })
+      .then((body) => {
+        report = body;
+        status = 'ready';
+        error = '';
+        render();
+      })
+      .catch((reason) => {
+        status = 'error';
+        error = reason.message;
+        render();
+      });
+  };
+
+  const useAccounts = () => {
+    if (!accounts.some((item) => item.id === state.account)) state.account = accounts[0].id;
+    save();
+    loadReport(false);
+  };
+
+  const loadAccounts = () => {
+    status = 'loading';
+    render();
+    ask({ action: 'metaAccounts' })
+      .then((body) => {
+        accounts = body.accounts || [];
+        if (!accounts.length) throw new Error('토큰으로 볼 수 있는 광고 계정이 없습니다.');
+        listNote = '';
+        useAccounts();
+      })
+      .catch((reason) => {
+        // 목록을 못 받아도 성과는 볼 수 있어야 한다. 아는 계정으로 채우고 그대로 이어 간다.
+        accounts = AD_ACCOUNTS.map(([name, id]) => ({
+          id, accountId: id.replace('act_', ''), name, currency: 'KRW', disabled: false,
+        }));
+        listNote = reason.message;
+        useAccounts();
+      });
+  };
+
+  mediaPerformance.addEventListener('change', (event) => {
+    const field = event.target.dataset.perf;
+    if (!field) return;
+    if (field === 'account') { state.account = event.target.value; save(); loadReport(false); return; }
+    if (field === 'preset') {
+      state.preset = event.target.value;
+      if (state.preset === 'custom') {
+        const range = currentRange();
+        state.since = state.since || range.since;
+        state.until = state.until || range.until;
+        save();
+        render();
+        return;
+      }
+      save();
+      loadReport(false);
+      return;
+    }
+    if (field === 'since' || field === 'until') {
+      state[field] = event.target.value;
+      save();
+      if (state.since && state.until) loadReport(false);
+    }
+  });
+
+  mediaPerformance.addEventListener('click', (event) => {
+    if (event.target.closest('[data-perf="reload"]')) { loadReport(true); return; }
+    if (event.target.closest('[data-perf="copy"]')) {
+      const text = copyText();
+      if (window.navigator.clipboard?.writeText) window.navigator.clipboard.writeText(text).catch(() => {});
+      else window.prompt('복사하세요', text);
+      const button = event.target.closest('[data-perf="copy"]');
+      button.classList.add('is-copied');
+      window.setTimeout(() => button.classList.remove('is-copied'), 1200);
+      return;
+    }
+    const row = event.target.closest('[data-campaign]');
+    if (!row) return;
+    const id = row.dataset.campaign;
+    opened = opened.indexOf(id) >= 0 ? opened.filter((entry) => entry !== id) : opened.concat(id);
+    render();
+  });
+
+  // 엑셀 · 시트에 그대로 붙일 수 있게 탭으로 나눈다
+  const copyText = () => {
+    const head = ['캠페인', '광고그룹', '목적', '예산', '광고비', '노출', '링크 클릭', 'CTR', 'CPC', '결과', 'CPA'];
+    const line = (campaign, adset) => {
+      const row = adset || campaign;
+      const cpa = isTraffic(row) ? '' : ratio(row.spend, row.results);
+      return [
+        campaign.name, adset ? adset.name : '', OBJECTIVES[campaign.objective] || campaign.objective || '',
+        row.budget || '', Math.round(row.spend), row.impressions, row.linkClicks,
+        ratio(row.linkClicks, row.impressions) === null ? '' : percent(ratio(row.linkClicks, row.impressions)),
+        ratio(row.spend, row.linkClicks) === null ? '' : Math.round(ratio(row.spend, row.linkClicks)),
+        row.results, cpa === null || cpa === '' ? '' : Math.round(cpa),
+      ].join('\t');
+    };
+    const lines = [head.join('\t')];
+    report.campaigns.filter((row) => row.active).forEach((campaign) => {
+      lines.push(line(campaign, null));
+      report.adsets.filter((adset) => adset.active && adset.campaignId === campaign.id)
+        .forEach((adset) => lines.push(line(campaign, adset)));
+    });
+    return lines.join('\n');
+  };
+
+  // 화면을 처음 열 때 한 번만 부른다 (메뉴에 들어오지 않으면 메타를 부르지 않는다)
+  const openOnce = () => {
+    if (loadedOnce || mediaPerformance.hidden) return;
+    loadedOnce = true;
+    loadAccounts();
+  };
+  new MutationObserver(openOnce).observe(mediaPerformance, { attributes: true, attributeFilter: ['hidden'] });
+  render();
+  openOnce();
 }
