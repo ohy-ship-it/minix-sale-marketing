@@ -4078,9 +4078,40 @@ if (creativePerformance) {
     </article>`;
   };
 
+  // 고른 캠페인 · 광고그룹의 합계. 검색으로 걸러 두면 걸러진 것만 더한다.
+  const summary = () => {
+    const rows = shown();
+    const total = rows.reduce((sum, row) => ({
+      spend: sum.spend + row.spend,
+      impressions: sum.impressions + row.impressions,
+      linkClicks: sum.linkClicks + row.linkClicks,
+      results: sum.results + row.results,
+      purchase: sum.purchase + row.purchase,
+      addToCart: sum.addToCart + row.addToCart,
+      lead: sum.lead + row.lead,
+    }), { spend: 0, impressions: 0, linkClicks: 0, results: 0, purchase: 0, addToCart: 0, lead: 0 });
+
+    const where = state.adset
+      ? (report.adsets.find((row) => row.id === state.adset) || {}).name
+      : (state.campaign ? (report.campaigns.find((row) => row.id === state.campaign) || {}).name : '');
+    const scope = where || '전체 캠페인';
+    const card = (label, value, note) => `<div class="perf-stat"><small>${label}</small><strong>${value}</strong><em>${note}</em></div>`;
+
+    return `<p class="creative-scope">${perfEscape(scope)}
+        <small>소재 ${perfCount(rows.length)}개${rows.length !== creatives.length ? ' (검색한 것만)' : ''}</small></p>
+      <div class="perf-stats">
+        ${card('총광고비', money(total.spend), `소재 ${perfCount(rows.length)}개`)}
+        ${card('총결과', perfCount(total.results), `구매 ${perfCount(total.purchase)} · 장바구니 ${perfCount(total.addToCart)} · 리드 ${perfCount(total.lead)}`)}
+        ${card('CPC', blank(perfRatio(total.spend, total.linkClicks), money), `${source().clicks} ${perfCount(total.linkClicks)}회`)}
+        ${card('CTR', blank(perfRatio(total.linkClicks, total.impressions), perfPercent), `${source().clicks} ÷ 노출`)}
+        ${card('CPM', blank(perfRatio(total.spend * 1000, total.impressions), money), `노출 ${perfCount(total.impressions)}회`)}
+        ${card('CPA', blank(perfRatio(total.spend, total.results), money), '광고비 ÷ 결과')}
+      </div>`;
+  };
+
   const list = () => {
     const rows = shown();
-    return `<div class="tool-card">
+    return `${summary()}<div class="tool-card">
       <div class="tool-list-head">
         <h3>소재 <small>광고비가 큰 차례 · ${perfCount(creatives.length)}개</small></h3>
         <div class="tool-list-actions">

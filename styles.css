@@ -652,6 +652,8 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 /* 소재별 결과 */
 .creative-performance{background:#fbfbf8}
 .perf-scope{margin-top:10px}
+.creative-scope{margin:0 0 9px;font:800 13px inherit;color:#20211e}
+.creative-scope small{margin-left:7px;font:400 11px inherit;color:#a5a49f}
 .creative-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px}
 .creative-card{border:1px solid #eeede8;border-radius:10px;background:#fff;overflow:hidden;display:flex;flex-direction:column}
 .creative-shot{position:relative;background:#f4f4f1;aspect-ratio:1/1;display:grid;place-items:center;overflow:hidden}
