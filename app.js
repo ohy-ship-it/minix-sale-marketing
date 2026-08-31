@@ -764,6 +764,7 @@ const VIEWS = {
   'UTM 빌더': { section: '#utm-builder', hash: '#utm' },
   '매체별 성과': { section: '#media-performance', hash: '#media-report' },
   '소재별 결과': { section: '#creative-performance', hash: '#creative-result' },
+  '페이지 결과': { section: '#page-performance', hash: '#page-result' },
 };
 const DASHBOARD_PARTS = ['.content-tabs', '.target-section', '.channel-section', '.notes-section'];
 
@@ -4335,4 +4336,33 @@ if (creativePerformance) {
   new MutationObserver(openOnce).observe(creativePerformance, { attributes: true, attributeFilter: ['hidden'] });
   render();
   openOnce();
+}
+
+// ── 페이지 결과 (Clarity 연동 예정) ──────────────────────────────────
+// 아직 연동 전이라 무엇이 들어올지와 무엇이 필요한지만 적어 둔다.
+// 붙일 때는 매체별 성과처럼 Apps Script 에 토큰을 두고 그쪽에서 부르면 된다.
+const pagePerformance = document.querySelector('#page-performance');
+if (pagePerformance) {
+  pagePerformance.innerHTML = `<div class="tool-head">
+      <h2>페이지 결과 <small>Microsoft Clarity</small></h2>
+      <p>상세페이지에서 사람들이 어디까지 보고 어디를 누르는지 봅니다. 아직 연동 전입니다.</p>
+    </div>
+    <div class="tool-card page-todo">
+      <span class="page-badge">연동 예정</span>
+      <h3>Clarity 를 붙이면 여기에 들어올 것</h3>
+      <ul>
+        <li>페이지별 <b>세션 · 스크롤 깊이</b> — 어디서 사람들이 내려가다 멈추는지</li>
+        <li><b>클릭 히트맵</b>과 <b>죽은 클릭</b>(눌러도 아무 일 없는 자리)</li>
+        <li><b>분노 클릭 · 되돌아가기</b> 같은 막힘 신호</li>
+        <li>광고에서 들어온 세션만 골라 보기 (UTM 기준)</li>
+      </ul>
+      <h3>붙일 때 필요한 것</h3>
+      <ul>
+        <li>Clarity <b>프로젝트 ID</b> 와 <b>API 토큰</b> — Apps Script 스크립트 속성에 둡니다(브라우저로 내려보내지 않습니다)</li>
+        <li>상세페이지에 Clarity 스크립트가 심겨 있어야 합니다</li>
+      </ul>
+      <p class="page-note">Clarity 대시보드는 iframe 을 막아 두어 화면 안에 그대로 띄울 수 없습니다.
+        데이터 내보내기 API 로 숫자를 받아 매체별 성과와 같은 모양으로 그리는 쪽이 낫습니다.</p>
+    </div>`;
+  lucide.createIcons();
 }
