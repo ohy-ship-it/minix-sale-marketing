@@ -1181,16 +1181,20 @@ function metaCreatives_(payload) {
   }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
 
   // 돈을 쓴 광고의 소재만 가져온다 (한 번에 50개씩 id 로 물어본다)
-  //   thumbnail_url 은 64x64 라 화면에서 뭉개진다. 그래서
-  //   image_url → 게시물 이미지(full_picture, 640px) → 동영상 표지 → 마지막에 thumbnail_url 차례로 쓴다.
+  //   thumbnail_url 은 64x64 라 화면에서 뭉개진다. 그래서 큰 이미지를 차례로 찾는다.
+  //     image_url → 인스타 미디어(1080px, 실제 소재) → 동영상 표지 → 게시물 이미지 → thumbnail_url
+  //   게시물 이미지(full_picture)를 뒤로 둔 이유: 링크 게시물이면 소재가 아니라
+  //   랜딩 페이지 미리보기 이미지가 온다.
   var ids = creatives.map(function (row) { return row.id; });
-  var stories = {};   // 광고 id → 게시물 id
-  var videos = {};    // 광고 id → 동영상 id
+  var instagram = {};   // 광고 id → 인스타 미디어 id
+  var videos = {};      // 광고 id → 동영상 id
+  var stories = {};     // 광고 id → 게시물 id
   for (var at = 0; at < ids.length; at += 50) {
     var chunk = ids.slice(at, at + 50);
     var body = graph_('/', {
       ids: chunk.join(','),
-      fields: 'name,effective_status,creative{thumbnail_url,image_url,object_type,video_id,effective_object_story_id}'
+      fields: 'name,effective_status,creative{thumbnail_url,image_url,object_type,video_id,'
+        + 'effective_instagram_media_id,effective_object_story_id}'
     });
     creatives.forEach(function (row) {
       var found = body[row.id];
@@ -1202,13 +1206,15 @@ function metaCreatives_(payload) {
       row.status = found.effective_status || '';
       row.active = found.effective_status === 'ACTIVE';
       if (found.name) row.name = found.name;
-      if (!row.thumbnail && creative.effective_object_story_id) stories[row.id] = creative.effective_object_story_id;
-      if (!row.thumbnail && creative.video_id) videos[row.id] = creative.video_id;
+      if (creative.effective_instagram_media_id) instagram[row.id] = creative.effective_instagram_media_id;
+      if (creative.video_id) videos[row.id] = creative.video_id;
+      if (creative.effective_object_story_id) stories[row.id] = creative.effective_object_story_id;
     });
   }
 
-  fillBigPictures_(creatives, stories, 'full_picture');
+  fillBigPictures_(creatives, instagram, 'media_url');
   fillBigPictures_(creatives, videos, 'picture');
+  fillBigPictures_(creatives, stories, 'full_picture');
 
   // 큰 이미지를 못 찾은 줄은 작은 썸네일이라도 쓴다
   creatives.forEach(function (row) {
@@ -1232,7 +1238,12 @@ function metaCreatives_(payload) {
 // 광고 id → (게시물 id · 동영상 id) 를 받아 큰 이미지 주소를 채운다.
 // 볼 수 없는 게시물이 섞여 있어도 나머지는 채운다.
 function fillBigPictures_(creatives, map, field) {
-  var ids = Object.keys(map).map(function (adId) { return map[adId]; });
+  // 아직 큰 이미지를 못 찾은 줄만 물어본다. 앞 단계에서 다 채웠으면 한 번도 부르지 않는다.
+  var need = {};
+  creatives.forEach(function (row) {
+    if (!row.thumbnail && map[row.id]) need[map[row.id]] = true;
+  });
+  var ids = Object.keys(need);
   if (!ids.length) return;
 
   var pictures = {};
