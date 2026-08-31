@@ -3980,6 +3980,7 @@ if (creativePerformance) {
   let status = 'idle';    // idle · loading · ready · error
   let error = '';
   let query = '';
+  let kind = '';        // '' 전체 · image · video
   let caret = null;
   let fetchedAt = '';
   let cached = false;
@@ -3999,8 +4000,18 @@ if (creativePerformance) {
       && (row.spend > 0 || row.active));
   };
 
-  const shown = () => creatives.filter((row) => !query
-    || String(row.name).toLowerCase().indexOf(query.toLowerCase()) >= 0);
+  // 소재 유형 — 메타는 동영상 id 가 있으면 동영상, 구글은 광고 유형에 VIDEO 가 들어 있으면 동영상.
+  const kindOf = (row) => {
+    if (row.video) return 'video';
+    if (/VIDEO/.test(String(row.objective || ''))) return 'video';
+    return 'image';
+  };
+  const KINDS = [['image', '이미지'], ['video', '동영상']];
+
+  const shown = () => creatives.filter((row) => {
+    if (kind && kindOf(row) !== kind) return false;
+    return !query || String(row.name).toLowerCase().indexOf(query.toLowerCase()) >= 0;
+  });
 
   // ── 화면 ────────────────────────────────────────────────────────
   const options = (rows, chosen, allLabel) => `<option value="">${allLabel}</option>`
@@ -4061,6 +4072,7 @@ if (creativePerformance) {
         src="${perfEscape(row.thumbnail)}" alt="${perfEscape(row.name)}" loading="lazy" referrerpolicy="no-referrer"></a>`
     : '<span class="creative-none"><i data-lucide="image-off"></i>미리보기 없음</span>'}
         ${row.active ? '<span class="creative-live">게재중</span>' : ''}
+        <span class="creative-kind">${kindOf(row) === 'video' ? '동영상' : '이미지'}</span>
       </div>
       <div class="creative-body">
         <h4>${perfEscape(row.name)}</h4>
@@ -4099,7 +4111,9 @@ if (creativePerformance) {
     const card = (label, value, note) => `<div class="perf-stat"><small>${label}</small><strong>${value}</strong><em>${note}</em></div>`;
 
     return `<p class="creative-scope">${perfEscape(scope)}
-        <small>소재 ${perfCount(rows.length)}개${rows.length !== creatives.length ? ' (검색한 것만)' : ''}</small></p>
+        <small>소재 ${perfCount(rows.length)}개${rows.length !== creatives.length
+    ? ` (${[kind ? (kind === 'video' ? '동영상' : '이미지') : '', query ? '검색' : ''].filter(Boolean).join(' · ')}만)`
+    : ''}</small></p>
       <div class="perf-stats">
         ${card('총광고비', money(total.spend), `소재 ${perfCount(rows.length)}개`)}
         ${card('총결과', perfCount(total.results), `구매 ${perfCount(total.purchase)} · 장바구니 ${perfCount(total.addToCart)} · 리드 ${perfCount(total.lead)}`)}
@@ -4125,6 +4139,14 @@ if (creativePerformance) {
           <i data-lucide="search"></i>
           <input type="search" data-creative="search" value="${perfEscape(query)}" placeholder="소재 이름으로 검색" autocomplete="off">
           ${query ? '<button type="button" class="perf-clear" data-creative="clear" aria-label="지우기">×</button>' : ''}
+        </div>
+        <div class="perf-chips">
+          ${KINDS.map(([key, name]) => {
+    const many = creatives.filter((row) => kindOf(row) === key).length;
+    if (!many) return '';
+    return `<button type="button" class="perf-chip${kind === key ? ' is-on' : ''}"
+      data-creative="kind" data-kind="${key}">${name} ${perfCount(many)}</button>`;
+  }).join('')}
         </div>
         ${rows.length !== creatives.length ? `<span class="perf-count">${perfCount(rows.length)} / ${perfCount(creatives.length)}</span>` : ''}
       </div>
@@ -4286,6 +4308,7 @@ if (creativePerformance) {
       state.campaign = '';
       state.adset = '';
       query = '';
+      kind = '';
       accounts = [];
       report = null;
       creatives = [];
@@ -4294,6 +4317,12 @@ if (creativePerformance) {
       return;
     }
     if (event.target.closest('[data-creative="clear"]')) { query = ''; caret = 0; render(); return; }
+    const chip = event.target.closest('[data-creative="kind"]');
+    if (chip) {
+      kind = kind === chip.dataset.kind ? '' : chip.dataset.kind;
+      render();
+      return;
+    }
     if (event.target.closest('[data-creative="reload"]')) { loadReport(true); return; }
     const copy = event.target.closest('[data-creative="copy"]');
     if (copy) {
@@ -4307,7 +4336,7 @@ if (creativePerformance) {
 
   // 엑셀 · 시트에 그대로 붙일 수 있게 탭으로 나눈다
   const copyText = () => {
-    const head = ['소재', '캠페인', '광고그룹', '광고비', '노출', source().clicks, 'CTR', 'CPC', 'CPM', '결과', 'CPA'];
+    const head = ['소재', '유형', '캠페인', '광고그룹', '광고비', '노출', source().clicks, 'CTR', 'CPC', 'CPM', '결과', 'CPA'];
     const lines = [head.join('\t')];
     shown().forEach((row) => {
       const ctr = perfRatio(row.linkClicks, row.impressions);
@@ -4315,7 +4344,7 @@ if (creativePerformance) {
       const cpm = perfRatio(row.spend * 1000, row.impressions);
       const cpa = perfRatio(row.spend, row.results);
       lines.push([
-        row.name, row.campaignName || '', row.adsetName || '',
+        row.name, kindOf(row) === 'video' ? '동영상' : '이미지', row.campaignName || '', row.adsetName || '',
         Math.round(row.spend), row.impressions, row.linkClicks,
         ctr === null ? '' : perfPercent(ctr),
         cpc === null ? '' : Math.round(cpc),

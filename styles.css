@@ -662,6 +662,7 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .creative-none{display:flex;flex-direction:column;align-items:center;gap:6px;color:#b6b5b0;font-size:11px}
 .creative-none svg{width:20px}
 .creative-live{position:absolute;top:8px;left:8px;background:#20a56926;color:#1d7f52;border-radius:12px;padding:3px 8px;font:700 10px inherit}
+.creative-kind{position:absolute;top:8px;right:8px;background:#20211ecc;color:#fff;border-radius:12px;padding:3px 8px;font:700 10px inherit}
 .creative-body{padding:11px 12px 12px}
 .creative-body h4{margin:0 0 3px;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
 .creative-body p{margin:0 0 9px;font-size:10px;color:#a5a49f;overflow-wrap:anywhere}
