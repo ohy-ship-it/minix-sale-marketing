@@ -657,13 +657,13 @@ function metaReport_(payload) {
   }
 
   var range = JSON.stringify({ since: since, until: until });
-  var fields = 'campaign_id,campaign_name,objective,spend,impressions,clicks,inline_link_clicks,actions';
+  var fields = 'campaign_id,campaign_name,objective,spend,impressions,clicks,inline_link_clicks,actions,catalog_segment_actions';
 
   var info = graph_('/' + account, { fields: 'name,currency,account_status,timezone_name' });
   var campaignRows = graphAll_('/' + account + '/insights',
-    { level: 'campaign', fields: fields, time_range: range, limit: 200 }, 8);
+    { level: 'campaign', fields: fields, time_range: range, limit: 200, use_unified_attribution_setting: 'true' }, 8);
   var adsetRows = graphAll_('/' + account + '/insights',
-    { level: 'adset', fields: 'adset_id,adset_name,' + fields, time_range: range, limit: 300 }, 8);
+    { level: 'adset', fields: 'adset_id,adset_name,' + fields, time_range: range, limit: 300, use_unified_attribution_setting: 'true' }, 8);
   var liveCampaigns = graphAll_('/' + account + '/campaigns',
     { fields: 'id,name,objective,effective_status,daily_budget,lifetime_budget', effective_status: '["ACTIVE"]', limit: 200 }, 5);
   var liveAdsets = graphAll_('/' + account + '/adsets',
@@ -755,11 +755,15 @@ function metrics_(row, base) {
   base.impressions = row ? Number(row.impressions || 0) : 0;
   base.clicks = row ? Number(row.clicks || 0) : 0;
   base.linkClicks = row ? Number(row.inline_link_clicks || 0) : 0;
+
+  // 카탈로그(Advantage+) 캠페인은 전환이 actions 가 아니라 catalog_segment_actions 로 온다.
+  // actions 에 잡힌 게 없을 때만 그쪽 값을 쓴다. (둘 다 세면 같은 전환을 두 번 세게 된다)
   var counted = countResults_(row ? row.actions : null);
-  base.purchase = counted.purchase;
-  base.addToCart = counted.addToCart;
-  base.lead = counted.lead;
-  base.results = counted.purchase + counted.addToCart + counted.lead;
+  var catalog = countResults_(row ? row.catalog_segment_actions : null);
+  base.purchase = counted.purchase || catalog.purchase;
+  base.addToCart = counted.addToCart || catalog.addToCart;
+  base.lead = counted.lead || catalog.lead;
+  base.results = base.purchase + base.addToCart + base.lead;
   return base;
 }
 
@@ -1158,9 +1162,10 @@ function metaCreatives_(payload) {
   var range = JSON.stringify({ since: since, until: until });
   var rows = graphAll_('/' + scope + '/insights', {
     level: 'ad',
-    fields: 'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions',
+    fields: 'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,catalog_segment_actions',
     time_range: range,
-    limit: 200
+    limit: 200,
+    use_unified_attribution_setting: 'true'
   }, 8);
 
   var creatives = rows.map(function (row) {
