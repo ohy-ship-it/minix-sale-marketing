@@ -4056,7 +4056,8 @@ if (creativePerformance) {
     return `<article class="creative-card">
       <div class="creative-shot">
         ${row.thumbnail
-    ? `<img src="${perfEscape(row.thumbnail)}" alt="${perfEscape(row.name)}" loading="lazy" referrerpolicy="no-referrer">`
+    ? `<a href="${perfEscape(row.thumbnail)}" target="_blank" rel="noopener" title="원본 크게 보기"><img
+        src="${perfEscape(row.thumbnail)}" alt="${perfEscape(row.name)}" loading="lazy" referrerpolicy="no-referrer"></a>`
     : '<span class="creative-none"><i data-lucide="image-off"></i>미리보기 없음</span>'}
         ${row.active ? '<span class="creative-live">게재중</span>' : ''}
       </div>

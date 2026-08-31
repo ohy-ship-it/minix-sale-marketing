@@ -655,7 +655,8 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .creative-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px}
 .creative-card{border:1px solid #eeede8;border-radius:10px;background:#fff;overflow:hidden;display:flex;flex-direction:column}
 .creative-shot{position:relative;background:#f4f4f1;aspect-ratio:1/1;display:grid;place-items:center;overflow:hidden}
-.creative-shot img{width:100%;height:100%;object-fit:cover;display:block}
+.creative-shot a{display:block;width:100%;height:100%}
+.creative-shot img{width:100%;height:100%;object-fit:contain;display:block;background:#f0efeb}
 .creative-none{display:flex;flex-direction:column;align-items:center;gap:6px;color:#b6b5b0;font-size:11px}
 .creative-none svg{width:20px}
 .creative-live{position:absolute;top:8px;left:8px;background:#20a56926;color:#1d7f52;border-radius:12px;padding:3px 8px;font:700 10px inherit}

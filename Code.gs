@@ -1180,25 +1180,41 @@ function metaCreatives_(payload) {
     });
   }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
 
-  // 돈을 쓴 광고의 썸네일만 가져온다 (한 번에 50개씩 id 로 물어본다)
+  // 돈을 쓴 광고의 소재만 가져온다 (한 번에 50개씩 id 로 물어본다)
+  //   thumbnail_url 은 64x64 라 화면에서 뭉개진다. 그래서
+  //   image_url → 게시물 이미지(full_picture, 640px) → 동영상 표지 → 마지막에 thumbnail_url 차례로 쓴다.
   var ids = creatives.map(function (row) { return row.id; });
+  var stories = {};   // 광고 id → 게시물 id
+  var videos = {};    // 광고 id → 동영상 id
   for (var at = 0; at < ids.length; at += 50) {
     var chunk = ids.slice(at, at + 50);
     var body = graph_('/', {
       ids: chunk.join(','),
-      fields: 'name,effective_status,creative{thumbnail_url,image_url,object_type,video_id}'
+      fields: 'name,effective_status,creative{thumbnail_url,image_url,object_type,video_id,effective_object_story_id}'
     });
     creatives.forEach(function (row) {
       var found = body[row.id];
       if (!found) return;
       var creative = found.creative || {};
-      row.thumbnail = creative.thumbnail_url || creative.image_url || '';
+      row.thumbnail = creative.image_url || '';
+      row.small = creative.thumbnail_url || '';
       row.video = creative.video_id || '';
       row.status = found.effective_status || '';
       row.active = found.effective_status === 'ACTIVE';
       if (found.name) row.name = found.name;
+      if (!row.thumbnail && creative.effective_object_story_id) stories[row.id] = creative.effective_object_story_id;
+      if (!row.thumbnail && creative.video_id) videos[row.id] = creative.video_id;
     });
   }
+
+  fillBigPictures_(creatives, stories, 'full_picture');
+  fillBigPictures_(creatives, videos, 'picture');
+
+  // 큰 이미지를 못 찾은 줄은 작은 썸네일이라도 쓴다
+  creatives.forEach(function (row) {
+    if (!row.thumbnail) row.thumbnail = row.small || '';
+    delete row.small;
+  });
 
   var result = {
     ok: true,
@@ -1211,6 +1227,39 @@ function metaCreatives_(payload) {
   var text = JSON.stringify(result);
   if (text.length < 90000) cache.put(key, text, META_CACHE_SECONDS);
   return result;
+}
+
+// 광고 id → (게시물 id · 동영상 id) 를 받아 큰 이미지 주소를 채운다.
+// 볼 수 없는 게시물이 섞여 있어도 나머지는 채운다.
+function fillBigPictures_(creatives, map, field) {
+  var ids = Object.keys(map).map(function (adId) { return map[adId]; });
+  if (!ids.length) return;
+
+  var pictures = {};
+  for (var at = 0; at < ids.length; at += 50) {
+    var chunk = ids.slice(at, at + 50);
+    try {
+      var body = graph_('/', { ids: chunk.join(','), fields: field });
+      Object.keys(body).forEach(function (id) {
+        if (body[id] && body[id][field]) pictures[id] = body[id][field];
+      });
+    } catch (error) {
+      // 볼 수 없는 게시물(다른 페이지 것)이 하나라도 섞이면 묶음이 통째로 실패한다.
+      // 그럴 때는 하나씩 되짚는다. 너무 오래 걸리지 않게 앞쪽 40개까지만 본다.
+      chunk.slice(0, 40).forEach(function (id) {
+        try {
+          var one = graph_('/' + id, { fields: field });
+          if (one && one[field]) pictures[id] = one[field];
+        } catch (ignore) { /* 이 게시물은 볼 수 없다 */ }
+      });
+    }
+  }
+
+  creatives.forEach(function (row) {
+    if (row.thumbnail) return;
+    var found = pictures[map[row.id]];
+    if (found) row.thumbnail = found;
+  });
 }
 
 function adsCreatives_(payload) {
