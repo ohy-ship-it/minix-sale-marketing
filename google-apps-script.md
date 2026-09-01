@@ -106,7 +106,7 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 |---|---|
 | `LINK(GA)` | 랜딩링크 + UTM 파라미터 — **랜딩링크를 채워야 나옵니다** |
 | `NT(일반)` | 랜딩링크 + `?nt_source`(=utm_source_utm_medium) · `nt_medium`(=광고명) |
-| `NT(쇼핑스토리)` | 랜딩링크 + `?nt_source` · `nt_medium` · `nt_detail` — utm-builder 의 원래 3개짜리 형태 |
+| `NT(쇼핑스토리)` | **`&`** 로 시작하는 `nt_source` · `nt_medium` · `nt_detail` — 파라미터가 이미 붙은 주소 뒤에 이어 붙입니다 |
 | `FM(쇼핑라이브)` | 랜딩링크 + `?fm`(=utm_source) · `sn`(=utm_medium) · `ea`(=utm_content) |
 | `캠페인명` | `utm_source_제품 정식명_목적(영문)` — 예: `facebook_미닉스 더 플렌더(mini)_purchase` |
 | `광고그룹명` | `[행사명]_타겟팅_매출채널` — 빈 칸도 자리를 지킵니다 (`[naver-260829]_none_naver`) |
@@ -139,7 +139,7 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 utm_content 20260829_flender-mini_benefit-537
 LINK(GA)    https://minix.life/?utm_source=gfa&utm_medium=feed&utm_campaign=purchase&utm_content=20260829_flender-mini_benefit-537
 NT(일반)      https://minix.life/?nt_source=gfa_feed&nt_medium=20260829_flender-mini_benefit-537
-NT(쇼핑스토리) https://minix.life/?nt_source=gfa&nt_medium=feed&nt_detail=20260829_flender-mini_benefit-537
+NT(쇼핑스토리) &nt_source=gfa&nt_medium=feed&nt_detail=20260829_flender-mini_benefit-537
 FM          https://minix.life/?fm=gfa&sn=feed&ea=20260829_flender-mini_benefit-537
 ```
 

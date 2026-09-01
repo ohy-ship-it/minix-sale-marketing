@@ -353,7 +353,7 @@ function colLetter_(index) {
 // utm-builder 탭의 규칙을 그 행 안에서 그대로 계산한다.
 //   LINK(GA)     = 랜딩링크 ? utm 파라미터              ← 랜딩링크를 채우면 그때 만들어진다
 //   NT(일반)      = 랜딩링크 ?nt_source(소스_미디엄) · nt_medium(광고명)
-//   NT(쇼핑스토리) = 랜딩링크 ?nt_source · nt_medium · nt_detail  (utm-builder 원래 3개짜리 형태)
+//   NT(쇼핑스토리) = &nt_source · nt_medium · nt_detail  ← 이미 파라미터가 붙은 주소 뒤에 이어 붙인다
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
 //   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
 //   광고그룹명    = [행사명]_타겟팅_매출채널              ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
@@ -403,7 +403,7 @@ function utmFormulas_(map, row) {
       + param('utm_content', content) + ',' + param('utm_term', term) + '))',
     '=IF(' + source + '="","",' + head + '&TEXTJOIN("&",TRUE,'
       + param('nt_source', sourceMedium) + ',' + param('nt_medium', content) + '))',
-    '=IF(' + source + '="","",' + head + '&TEXTJOIN("&",TRUE,'
+    '=IF(' + source + '="","","&"&TEXTJOIN("&",TRUE,'
       + param('nt_source', source) + ',' + param('nt_medium', medium) + ',' + param('nt_detail', content) + '))',
     '=IF(' + source + '="","",' + head + '&TEXTJOIN("&",TRUE,'
       + param('fm', source) + ',' + param('sn', medium) + ',' + param('ea', content) + '))',
