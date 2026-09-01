@@ -87,7 +87,7 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 | **랜딩링크 · 목적** | **사람** | 파일명만으로는 알 수 없음 |
 | **타겟팅** | **사람** | 광고그룹명에만 쓰입니다 |
 | 담당자 | 앱 · 사람 | UTM 빌더에서 이니셜로 고르거나 직접 적습니다 |
-| LINK(GA) · NT · FM | 수식 | 랜딩링크 + 각 파라미터 |
+| LINK(GA) · NT(일반) · NT(쇼핑스토리) · FM | 수식 | 랜딩링크 + 각 파라미터 |
 | 캠페인명 · 광고그룹명 · 광고명 | 수식 | 광고자동세팅용 이름 |
 
 **`utm_source` 같은 낱개 열은 두지 않습니다.** 링크 안에 이미 들어 있어 그 자리에서 계산합니다.
@@ -105,7 +105,8 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
 | 항목 | 규칙 |
 |---|---|
 | `LINK(GA)` | 랜딩링크 + UTM 파라미터 — **랜딩링크를 채워야 나옵니다** |
-| `NT` | 랜딩링크 + `?nt_source`(=utm_source_utm_medium) · `nt_medium`(=utm_content) |
+| `NT(일반)` | 랜딩링크 + `?nt_source`(=utm_source_utm_medium) · `nt_medium`(=광고명) |
+| `NT(쇼핑스토리)` | **아직 규칙이 없어 빈칸입니다** |
 | `FM(쇼핑라이브)` | 랜딩링크 + `?fm`(=utm_source) · `sn`(=utm_medium) · `ea`(=utm_content) |
 | `캠페인명` | `utm_source_제품 정식명_목적(영문)` — 예: `facebook_미닉스 더 플렌더(mini)_purchase` |
 | `광고그룹명` | `[행사명]_타겟팅_매출채널` — 빈 칸도 자리를 지킵니다 (`[naver-260829]_none_naver`) |
@@ -137,7 +138,7 @@ https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0G
         ↓
 utm_content 20260829_flender-mini_benefit-537
 LINK(GA)    https://minix.life/?utm_source=gfa&utm_medium=feed&utm_campaign=purchase&utm_content=20260829_flender-mini_benefit-537
-NT          https://minix.life/?nt_source=gfa_feed&nt_medium=20260829_flender-mini_benefit-537
+NT(일반)     https://minix.life/?nt_source=gfa_feed&nt_medium=20260829_flender-mini_benefit-537
 FM          https://minix.life/?fm=gfa&sn=feed&ea=20260829_flender-mini_benefit-537
 ```
 
@@ -262,6 +263,40 @@ FM          https://minix.life/?fm=gfa&sn=feed&ea=20260829_flender-mini_benefit-
 - 광고비 · 예산은 마이크로 단위로 오므로 1,000,000 으로 나눠 원으로 바꿉니다
 - 계정 목록은 MCC 아래 `customer_client` 에서 읽고 **관리자 계정은 뺍니다**
 - 액세스 토큰은 50분, 계정 목록은 10분, 성과는 5분 담아 둡니다
+
+
+### 카카오모먼트도 같은 자리에서
+
+**매체별 성과** 화면의 **카카오모먼트** 탭이 씁니다. 메타 · 구글과 같은 구조입니다.
+
+**스크립트 속성 1개**
+
+| 속성 | 무엇 |
+|---|---|
+| `KAKAO_BUSINESS_TOKEN` | 카카오 비즈니스 토큰 (`kakao_business_token.txt` 의 값) |
+
+> **어드민 키로는 부를 수 없습니다.** 카카오모먼트는 '비즈니스 토큰' 만 받습니다.
+> 비즈니스 토큰에는 리프레시가 없어 한 번 받아 두고 계속 씁니다. 자주 재발급하면 막힙니다.
+> 다시 받아야 할 때는 `python get_kakao_business_token.py --redirect-uri <등록한 URI>` 를 씁니다.
+> 받으려면 앱이 **비즈 앱 + 카카오모먼트 권한(심사)** 상태여야 하고,
+> **REST API 키에 클라이언트 시크릿이 켜져** 있어야 합니다. 리다이렉트 URI 는
+> `앱 설정 → 플랫폼 키 → REST API 키 → 리다이렉트 URI` 에 등록합니다(카카오 로그인 화면이 아닙니다).
+
+넣고 나서 **UTM → 카카오 연결 확인** 을 누르면 광고계정 목록이 뜹니다.
+
+**숫자를 만드는 규칙 (메타와 다른 곳)**
+
+- **결과** = 픽셀&SDK 전환의 구매 + 장바구니 + 가입입니다.
+  전환 지표 이름이 계정마다 달라서, 아는 이름을 먼저 찾고 못 찾으면 뜻이 담긴 낱말로 찾습니다.
+  **카카오 연결 확인** 이 어제 보고서에 실제로 담겨 온 지표 이름을 모두 보여 주므로,
+  결과가 0 으로만 나오면 그 목록을 보고 `KAKAO_RESULT_FIELDS` 를 고치면 됩니다
+- **CPC · CTR** 은 클릭(`click`) 기준입니다. 카카오의 클릭은 한 가지라 메타의 링크 클릭 자리에 그대로 넣습니다
+- **CPA** 는 **도달 · 동영상 캠페인을 뺀** 광고비 ÷ 결과입니다. 캠페인 유형(`campaignType`)으로 가릅니다
+- 보고서에는 **id 만** 담겨 옵니다. 이름 · 유형 · 예산은 목록 API 로 따로 받아 이어 붙입니다
+- **기간은 한 번에 31일까지** 입니다. 더 긴 기간을 고르면 그렇게 알려 줍니다
+- 호출 제한이 빡빡합니다(보고서는 앱 기준 5초당 1회). 호출 사이를 띄우고, 막히면 한 번 쉬었다 다시 묻습니다.
+  광고그룹까지 파고드는 캠페인은 **광고비가 큰 20개** 까지입니다
+- 당일 수치는 **다음날 오전 8시까지 계속 바뀝니다**
 
 
 ## 참고
