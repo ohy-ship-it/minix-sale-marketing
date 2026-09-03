@@ -4,3 +4,24 @@ client_secret_*.json
 env.txt
 __pycache__/
 .firebase/
+kakao_business_token.txt
+gfa-probe-*.json
+gfa-report*.json
+
+# 적재 · 검사 기록 (다시 만들 수 있는 값이다)
+gfa-load.log
+gfa-load-detail.log
+*.log
+
+# 배포 전 화면을 그대로 떠 둔 사본
+_deploy-backup/
+
+# 나눠 주려고 묶어 둔 것
+GFA적재도구.zip
+*.zip
+
+# 메타 광고 세팅 도구 — .env 와 env.txt 가 들어 있어 통째로 뺀다
+da_set/
+
+# 광고소재 검수 사이트. 자기 저장소가 따로 있다 (ljm1594-prog/ad-creative-checker)
+광고 소재 검수기/
