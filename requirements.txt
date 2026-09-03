@@ -4,3 +4,4 @@ python-dotenv>=1.0.1
 fastapi>=0.115.0
 gunicorn>=23.0.0
 uvicorn>=0.34.0
+selenium>=4.20.0
