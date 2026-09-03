@@ -8,11 +8,17 @@
       "**/node_modules/**",
       "**/__pycache__/**",
       "da_set/**",
+      "_deploy-backup/**",
+      "광고 소재 검수기/**",
       "**/*.py",
       "**/*.pyc",
       "**/*.txt",
       "**/*.md",
       "**/*.gs",
+      "**/*.bat",
+      "**/*.ps1",
+      "**/*.log",
+      "**/*.zip",
       "**/*.hta",
       "**/*.yaml",
       "**/*.yml",
@@ -23,6 +29,28 @@
       {
         "source": "**",
         "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "//": "파일 이름에 버전이 안 붙는 구조라, 기본값(max-age=3600)이면 배포 뒤 최대 1시간 동안 팀이 옛 화면을 본다. no-cache 는 '캐시 금지'가 아니라 '쓸 때마다 물어보기'다 — 안 바뀌었으면 304 로 끝나 무겁지 않다.",
+        "source": "/**/*.@(js|css|html)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "//": "주소 없이 들어오는 첫 화면(/) 도 같이 묶는다",
+        "source": "/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
       }
     ]
   }
