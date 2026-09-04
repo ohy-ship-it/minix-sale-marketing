@@ -11,12 +11,20 @@
   <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
+  <script>
+    // 다른 워크스페이스가 이 화면을 iframe 으로 끌어다 쓸 때(?embed=1) 사이드바 · 상단바를 뺀다.
+    // 렌더 전에 클래스를 붙여야 깜빡임 없이 바로 콘텐츠만 보인다.
+    if (new URLSearchParams(location.search).get('embed') === '1') {
+      document.documentElement.classList.add('embed-mode');
+    }
+  </script>
   <aside class="sidebar">
     <div class="brand"><span class="brand-mark">m</span><div><strong>minix</strong><small>통합 워크스페이스</small></div></div>
     <nav class="tree-nav" aria-label="주 메뉴">
       <button class="tree-group is-open" type="button"><span>퍼포먼스</span><i data-lucide="chevron-down"></i></button>
       <div class="tree-children">
         <button class="tree-item" type="button" data-view="월별 예산"><i data-lucide="wallet"></i>월별 예산</button>
+        <button class="tree-item" type="button" data-view="프로모션"><i data-lucide="tag"></i>프로모션</button>
         <button class="tree-item is-active" type="button" data-view="행사별 성과"><i data-lucide="calendar-days"></i>행사별 성과</button>
         <button class="tree-item" type="button" data-view="매체별 성과"><i data-lucide="chart-no-axes-combined"></i>매체별 성과</button>
         <button class="tree-item" type="button" data-view="소재별 결과"><i data-lucide="images"></i>소재별 결과</button>
@@ -72,6 +80,7 @@
       <section class="section-block creative-performance" id="creative-performance" hidden></section>
       <section class="section-block page-performance" id="page-performance" hidden></section>
       <section class="section-block budget-plan" id="budget-plan" hidden></section>
+      <section class="section-block promotion" id="promotion" hidden></section>
       <section class="section-block kol-live" id="kol-live" hidden></section>
       <section class="section-block brand-schedule" id="brand-schedule" hidden></section>
       <section class="section-block checker-view" id="creative-checker" hidden>

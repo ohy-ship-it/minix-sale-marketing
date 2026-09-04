@@ -975,3 +975,18 @@ body:has(#budget-plan:not([hidden])) .content-tabs,body:has(#kol-live:not([hidde
 .perf-mix-btn small{font-size:10.5px;color:#8c8c85}
 .perf-mix-note{margin:9px 0 0;font-size:11px;color:#8c8c85;line-height:1.55}
 .perf-mix-note b{font-weight:700;color:#6b6b64}
+
+/* 다른 워크스페이스가 iframe 으로 끌어다 쓸 때(?embed=1) — 사이드바 · 상단바를 빼고 본문만 보인다 */
+html.embed-mode .sidebar,html.embed-mode .topbar{display:none}
+html.embed-mode .main{margin-left:0}
+html.embed-mode .content{padding:14px}
+
+/* 프로모션 · 종료 배지(기존 .tag 팔레트에 회색만 보탠다) */
+.tag.gray{background:#ececE6;color:#82817a}
+.promo-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
+.promo-toolbar select,.promo-toolbar input[type="text"]{border:1px solid #e3e2dc;
+  border-radius:8px;height:32px;padding:0 10px;font:600 11px inherit;color:#3d3d39;background:#fff}
+.promo-toolbar select{cursor:pointer}
+.promo-toolbar input[type="text"]{flex:1;min-width:160px;font-weight:400}
+.promo-count{margin-left:auto;font-size:11px;color:#8c8c85;white-space:nowrap}
+.promo-count b{color:#3d3d39}

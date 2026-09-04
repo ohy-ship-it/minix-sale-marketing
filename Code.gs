@@ -690,6 +690,7 @@ function handleAction_(payload) {
     if (payload.action === 'clarityPages') return clarityPages_(payload);
     if (payload.action === 'clarityPage') return clarityPage_(payload);
     if (payload.action === 'budgetPlan') return budgetPlan_(payload);
+    if (payload.action === 'promoCalendar') return promoCalendar_(payload);
     if (payload.action === 'kolLive') return kolLive_(payload);
     if (payload.action === 'configList') return configList_();
     if (payload.action === 'configAdd') return configAdd_(payload);
@@ -3846,6 +3847,69 @@ function budgetPlan_(payload) {
   };
 
   cachePut_(cache, key, JSON.stringify(result), BUDGET_CACHE_SECONDS);
+  return result;
+}
+
+// ── 프로모션 (세일즈팀 미닉스 워크스페이스 · 행사 캘린더 시트 미러) ──────────
+// 프로모션 등록·수정은 세일즈팀 도구(미닉스)에서 한다. 그쪽이 저장할 때마다
+// 이 시트에 월별 탭(YYYY-MM)으로 그대로 복사해 두므로, 여기서는 읽기만 한다.
+var PROMO_CAL_SHEET_ID = '1H-UF2HBQD9sv-g81eCQ61lgdfK6TTHuEwsviVYkO1lw';
+var PROMO_CAL_CACHE_SECONDS = 300;
+var PROMO_CAL_UNDATED = '미정';   // 시작일 없는 행사가 모이는 탭
+
+// 달이 바뀌어 시트를 새로 만들면 스크립트 속성 PROMO_CAL_SHEET_ID 에 새 주소만 넣으면 된다.
+function promoCalSheetId_() {
+  var found = cleanToken_(PropertiesService.getScriptProperties().getProperty('PROMO_CAL_SHEET_ID'));
+  var picked = found || PROMO_CAL_SHEET_ID;
+  var inside = String(picked).match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  return inside ? inside[1] : picked;
+}
+
+function promoCalendar_(payload) {
+  var month = (payload && payload.month) || Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM');
+  var cache = CacheService.getScriptCache();
+  var key = 'promoCal|' + promoCalSheetId_() + '|' + month;
+  if (!payload || !payload.refresh) {
+    var hit = cacheGet_(cache, key);
+    if (hit) {
+      try {
+        var kept = JSON.parse(hit);
+        kept.cached = true;
+        return kept;
+      } catch (error) { /* 깨졌으면 다시 읽는다 */ }
+    }
+  }
+
+  var book = SpreadsheetApp.openById(promoCalSheetId_());
+  var months = book.getSheets()
+    .map(function (sheet) { return sheet.getName(); })
+    .filter(function (name) { return /^\d{4}-\d{2}$/.test(name) || name === PROMO_CAL_UNDATED; })
+    .sort();
+
+  var sheet = book.getSheetByName(month);
+  var columns = [];
+  var rows = [];
+  if (sheet) {
+    var grid = sheet.getDataRange().getValues();
+    columns = (grid[0] || []).map(budgetText_);
+    rows = grid.slice(1)
+      .map(function (line) { return line.map(budgetText_); })
+      .filter(function (line) { return line.some(function (cell) { return cell !== ''; }); });
+  }
+
+  var result = {
+    ok: true,
+    source: 'promoCalendar',
+    month: month,
+    months: months,
+    bookName: book.getName(),
+    url: 'https://docs.google.com/spreadsheets/d/' + promoCalSheetId_() + '/edit',
+    columns: columns,
+    rows: rows,
+    fetchedAt: new Date().toISOString()
+  };
+
+  cachePut_(cache, key, JSON.stringify(result), PROMO_CAL_CACHE_SECONDS);
   return result;
 }
 

@@ -766,6 +766,7 @@ const VIEWS = {
   '소재별 결과': { section: '#creative-performance', hash: '#creative-result' },
   '페이지 결과': { section: '#page-performance', hash: '#page-result' },
   '월별 예산': { section: '#budget-plan', hash: '#budget' },
+  '프로모션': { section: '#promotion', hash: '#promo-plan' },
   'KOL라이브': { section: '#kol-live', hash: '#kol' },
 };
 const DASHBOARD_PARTS = ['.content-tabs', '.target-section', '.channel-section', '.notes-section'];
@@ -6838,6 +6839,141 @@ if (budgetPlanView) {
   };
   new MutationObserver(openBudgetOnce).observe(budgetPlanView, { attributes: true, attributeFilter: ['hidden'] });
   openBudgetOnce();
+}
+
+// ── 프로모션 (세일즈팀 미닉스 워크스페이스 · 행사 캘린더 시트 미러) ────────────
+// 프로모션 등록 · 수정은 세일즈팀 도구(미닉스)에서 한다. 그쪽이 저장할 때마다 이 시트에
+// 월별 탭으로 그대로 복사해 두므로, 여기서는 그 시트를 우리 디자인으로 다시 그리기만 한다.
+const promotionView = document.querySelector('#promotion');
+if (promotionView) {
+  const escape = perfEscape;
+
+  let plan = null;
+  let status = 'idle';
+  let error = '';
+  let month = '';
+  let filterStatus = '전체';
+  let query = '';
+
+  const STATUS_TONE = { '진행중': 'green', '예정': 'blue', '종료': 'gray' };
+
+  const summary = () => {
+    const statusAt = plan.columns.indexOf('진행상태');
+    const counts = { '진행중': 0, '예정': 0, '종료': 0 };
+    plan.rows.forEach((row) => { if (counts[row[statusAt]] !== undefined) counts[row[statusAt]] += 1; });
+    return `<span class="promo-count">총 <b>${plan.rows.length}</b>건 · 진행중 <b>${counts['진행중']}</b>
+      · 예정 <b>${counts['예정']}</b> · 종료 <b>${counts['종료']}</b></span>`;
+  };
+
+  const toolbar = () => `<div class="promo-toolbar">
+    <select data-promo="month">${plan.months.map((one) =>
+      `<option value="${escape(one)}"${one === month ? ' selected' : ''}>${escape(one)}</option>`).join('')}</select>
+    <div class="segmented">${['전체', '진행중', '예정', '종료'].map((one) =>
+      `<button type="button" class="${one === filterStatus ? 'selected' : ''}" data-promo="status" data-value="${escape(one)}">${escape(one)}</button>`).join('')}</div>
+    <input type="text" data-promo="search" placeholder="채널 · 행사명으로 찾기" value="${escape(query)}">
+    ${summary()}
+  </div>`;
+
+  // ID 열은 시트 안에서만 쓰는 내부 값이라 화면에는 뺀다. 나머지는 시트에 있는 그대로 보여준다.
+  const table = () => {
+    const visible = plan.columns.map((name, at) => (name === 'ID' ? -1 : at)).filter((at) => at >= 0);
+    const statusAt = plan.columns.indexOf('진행상태');
+    const needle = query.trim().toLowerCase();
+    const rows = plan.rows.filter((row) => {
+      if (filterStatus !== '전체' && row[statusAt] !== filterStatus) return false;
+      if (!needle) return true;
+      return row.join(' ').toLowerCase().indexOf(needle) >= 0;
+    });
+
+    if (!rows.length) {
+      return '<div class="tool-card page-todo"><h3>표시할 프로모션이 없습니다</h3><p class="perf-note">달이나 필터를 바꿔 보세요.</p></div>';
+    }
+
+    return `<div class="table-wrap"><table>
+      <thead><tr>${visible.map((at) => `<th>${escape(plan.columns[at])}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map((row) => `<tr>${visible.map((at) => {
+        const value = row[at] || '';
+        if (at === statusAt) {
+          return `<td><span class="tag ${STATUS_TONE[value] || 'gray'}">${escape(value || '-')}</span></td>`;
+        }
+        return `<td>${escape(value || '-')}</td>`;
+      }).join('')}</tr>`).join('')}</tbody>
+    </table></div>`;
+  };
+
+  const render = () => {
+    if (!plan) {
+      promotionView.innerHTML = `<div class="tool-head"><h2>프로모션</h2></div>
+        ${status === 'error' ? `<p class="perf-warn">${escape(error)}</p>
+          <div class="tool-card page-todo"><h3>시트를 읽지 못했습니다</h3>
+            <ul><li>Apps Script 를 <b>새 버전으로 다시 배포</b>했는지 확인해 주세요</li>
+              <li>시트 접근 권한이 있어야 합니다 (뷰어 이상)</li></ul></div>`
+      : '<div class="tool-card page-loading">시트를 읽는 중…</div>'}`;
+      lucide.createIcons();
+      return;
+    }
+
+    promotionView.innerHTML = `<div class="tool-head">
+        <h2>프로모션</h2>
+        <p>세일즈팀 미닉스 워크스페이스의 행사 캘린더 시트를 그대로 읽어 옵니다. 등록 · 수정은 그쪽 도구에서 하고,
+          여기서는 <b>다시 받기</b>를 누르면 됩니다.</p>
+      </div>
+      <div class="tool-card">
+        <div class="perf-filter">
+          <a class="tool-add" href="${escape(plan.url)}" target="_blank" rel="noopener">
+            <i data-lucide="external-link"></i>시트 열기</a>
+          <button type="button" class="tool-copy-all" data-promo="refresh"${status === 'loading' ? ' disabled' : ''}>
+            <i data-lucide="refresh-cw"></i>${status === 'loading' ? '받는 중…' : '다시 받기'}</button>
+        </div>
+        <p class="perf-note">${escape(plan.bookName || '')}${plan.fetchedAt
+      ? ` · 갱신 ${new Date(plan.fetchedAt).toLocaleString('ko-KR')}` : ''}${plan.cached ? ' (담아 둔 값)' : ''}</p>
+      </div>
+      <div class="tool-card">${toolbar()}${table()}</div>`;
+    lucide.createIcons();
+  };
+
+  const load = (refresh) => {
+    status = 'loading';
+    error = '';
+    render();
+    window.fetch(SHEET_ENDPOINT, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'promoCalendar', month: month || undefined, refresh: Boolean(refresh) }),
+    }).then((response) => response.json()).then((body) => {
+      if (!body.ok) throw new Error(body.error || '시트를 읽지 못했습니다.');
+      plan = body;
+      month = body.month;
+      status = 'ready';
+      render();
+    }).catch((reason) => {
+      status = 'error';
+      error = reason.message;
+      render();
+    });
+  };
+
+  promotionView.addEventListener('click', (event) => {
+    if (event.target.closest('[data-promo="refresh"]')) { load(true); return; }
+    const statusButton = event.target.closest('[data-promo="status"]');
+    if (statusButton) { filterStatus = statusButton.dataset.value; render(); }
+  });
+
+  promotionView.addEventListener('change', (event) => {
+    if (event.target.closest('[data-promo="month"]')) { month = event.target.value; load(false); }
+  });
+
+  promotionView.addEventListener('input', (event) => {
+    if (event.target.closest('[data-promo="search"]')) { query = event.target.value; render(); }
+  });
+
+  let promoLoaded = false;
+  const openPromoOnce = () => {
+    if (promoLoaded || promotionView.hidden) return;
+    promoLoaded = true;
+    load(false);
+  };
+  new MutationObserver(openPromoOnce).observe(promotionView, { attributes: true, attributeFilter: ['hidden'] });
+  openPromoOnce();
 }
 
 // ── KOL 라이브 (라이브 & 행사 결과 시트) ────────────────────────────────
