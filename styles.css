@@ -926,3 +926,52 @@ body:has(#budget-plan:not([hidden])) .content-tabs,body:has(#kol-live:not([hidde
   font-size:11px;font-weight:700;color:#8c8c85}
 .perf-sort select{border:1px solid #e3e2dc;border-radius:6px;background:#fff;
   padding:6px 8px;font:600 11.5px inherit;color:#3d3d39;cursor:pointer}
+
+/* ── 전매체 검색 · 사전 · 당일 · 사후 나누기 ─────────────────── */
+/* 색은 세 단계를 한눈에 가르는 용도다. 숫자는 늘 글자로도 적어 둔다 — 색만으로 읽히는 표는 만들지 않는다. */
+.perf-pick{flex:none;display:inline-flex;align-items:center;margin-right:2px}
+.perf-pick input{width:13px;height:13px;cursor:pointer}
+.perf-phase{margin-left:6px;padding:1px 6px;border-radius:4px;font:700 10px inherit;font-style:normal}
+.perf-phase.is-0{background:#fbf1c7;color:#8a6d1f}
+.perf-phase.is-1{background:#dff3e0;color:#3b7a45}
+.perf-phase.is-2{background:#dceafb;color:#2f6aa8}
+.perf-phase.is-3{background:#f1f1ed;color:#8c8c85}
+
+.perf-phase-pick{align-items:center;gap:7px;margin-top:-4px}
+.perf-phase-label{font-size:11px;color:#8c8c85}
+.perf-phase-label b{color:#20211e}
+.perf-phase-btn{border:1px solid transparent;border-radius:7px;padding:7px 14px;
+  font:700 11.5px inherit;cursor:pointer}
+.perf-phase-btn:disabled{opacity:.45;cursor:default}
+.perf-phase-btn.is-0{background:#fbf1c7;color:#8a6d1f;border-color:#f0e2a8}
+.perf-phase-btn.is-1{background:#dff3e0;color:#3b7a45;border-color:#c6e6c9}
+.perf-phase-btn.is-2{background:#dceafb;color:#2f6aa8;border-color:#c2dbf5}
+
+.perf-phases{display:flex;flex-direction:column;gap:12px;margin-top:12px}
+.perf-phase-box{border:1px solid var(--line);border-left-width:4px;border-radius:9px;
+  background:#fff;padding:11px 12px}
+.perf-phase-box.is-0{border-left-color:#e8c84a}
+.perf-phase-box.is-1{border-left-color:#5aba6a}
+.perf-phase-box.is-2{border-left-color:#4a9be0}
+.perf-phase-box.is-3{border-left-color:#c9c8c3}
+.perf-phase-head{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.perf-phase-head b{font-size:12.5px;font-weight:800;color:#2a2a27}
+.perf-phase-head small{font-size:11px;color:#8c8c85}
+.perf-phase-box .perf-name small{display:block;color:#8c8c85;font-weight:400}
+
+/* 프로모션 MIX 로 보내기 — 매체 × 단계마다 파일 하나씩 내려받는 단추 */
+.perf-mix{margin-top:12px;border:1px solid var(--line);border-radius:9px;background:#fbfbf9;padding:11px 12px}
+.perf-mix-head{display:flex;flex-direction:column;gap:3px;margin-bottom:9px}
+.perf-mix-head b{font-size:12.5px;font-weight:800;color:#2a2a27}
+.perf-mix-head small{font-size:11px;color:#8c8c85;line-height:1.5}
+.perf-mix-head small b{font-weight:700;color:#6b6b64}
+.perf-mix-list{display:flex;flex-wrap:wrap;gap:7px}
+.perf-mix-btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);
+  border-radius:8px;background:#fff;padding:7px 11px;cursor:pointer;font:inherit;text-align:left}
+.perf-mix-btn:hover{border-color:#c8c7c1;background:#f6f6f3}
+.perf-mix-btn i{width:14px;height:14px;color:#8c8c85;flex:none}
+.perf-mix-btn span{display:flex;flex-direction:column;gap:1px}
+.perf-mix-btn b{font-size:11.5px;font-weight:700;color:#2a2a27}
+.perf-mix-btn small{font-size:10.5px;color:#8c8c85}
+.perf-mix-note{margin:9px 0 0;font-size:11px;color:#8c8c85;line-height:1.55}
+.perf-mix-note b{font-weight:700;color:#6b6b64}

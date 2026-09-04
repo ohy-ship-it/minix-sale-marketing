@@ -4301,6 +4301,24 @@ if (mediaPerformance) {
   let crossFor = '';      // 실제로 찾은 검색어 (결과가 어느 말로 나온 것인지)
   let cross = {};         // 매체 → { status, error, rows, account, accountName }
   let crossOpen = [];     // 펼친 매체
+
+  // 단계 나누기. 매체가 알려 주지 않는 값이라 사람이 고르고, 이 브라우저에 남긴다.
+  const PHASES = ['사전', '당일', '사후'];
+  const PHASE_KEY = 'minix-cross-phase';
+  let phaseOf = {};       // '매체|광고그룹ID' → '사전' · '당일' · '사후'
+  try { phaseOf = JSON.parse(window.localStorage.getItem(PHASE_KEY) || '{}') || {}; } catch (ignore) { phaseOf = {}; }
+  let crossPick = [];     // 지금 체크해 둔 줄 (다시 그려도 남게 여기에 둔다)
+
+  const phaseKeyOf = (key, row) => `${key}|${row.id}`;
+
+  // 매체 · 광고그룹을 한 줄짜리 목록으로 편다 (단계 블록이 이걸 쓴다)
+  const crossFlat = () => Object.keys(SOURCES).reduce((into, key) => into.concat(
+    (((cross[key] || {}).rows) || []).map((row) => ({ key: key, row: row })),
+  ), []);
+
+  const savePhases = () => {
+    try { window.localStorage.setItem(PHASE_KEY, JSON.stringify(phaseOf)); } catch (ignore) { /* 거들기다 */ }
+  };
   let crossBracket = true;   // 전매체 검색: 대괄호 안(행사 이름)만 볼지
   let loadStart = 0;         // 매체 성과를 부르기 시작한 시각
   let loadTick = null;       // 흐른 시간을 고쳐 쓰는 타이머
@@ -4881,7 +4899,7 @@ if (mediaPerformance) {
   };
 
   const crossTable = () => {
-    const head = ['매체', '광고그룹', '캠페인', '집행시작', '집행종료',
+    const head = ['단계', '매체', '광고그룹', '캠페인', '집행시작', '집행종료',
       '광고비', '노출', '클릭', 'CTR', 'CPC', 'CPM', '결과', 'CVR(구매)', 'CPA', '구매전환값', 'ROAS'];
     const lines = [head.join('\t')];
     Object.keys(SOURCES).forEach((key) => {
@@ -4892,6 +4910,7 @@ if (mediaPerformance) {
         const cvr = ratio(row.purchase, row.linkClicks);
         const cpa = ratio(row.spend, row.results);
         lines.push([
+          phaseOf[phaseKeyOf(key, row)] || '',
           SOURCES[key].name, row.name, row.campaignName || '',
           row.begin || '', row.end || '',
           Math.round(row.spend), row.impressions, row.linkClicks,
@@ -4907,6 +4926,94 @@ if (mediaPerformance) {
       });
     });
     return lines.join('\n');
+  };
+
+  // 프로모션 MIX 의 매체 이름. MIX 쪽 MIX_MEDIA_LIST 에 있는 말로 맞춰 둔다.
+  const MIX_MEDIA = { meta: '메타', google: '구글', kakao: '카카오모먼트', naver: 'GFA' };
+  const MIX_HEAD = ['소재', '노출', '클릭', '광고비', '전환', '매출'];
+
+  // 나눠 둔 줄을 매체 × 단계로 묶는다 (묶음 하나가 파일 하나)
+  const mixFiles = () => {
+    const all = crossFlat();
+    const out = [];
+    PHASES.forEach((phase) => Object.keys(SOURCES).forEach((key) => {
+      const mine = all.filter((one) => one.key === key
+        && phaseOf[phaseKeyOf(one.key, one.row)] === phase);
+      if (mine.length) out.push({ key: key, phase: phase, rows: mine.map((one) => one.row) });
+    }));
+    return out;
+  };
+
+  // 전환은 구매로 넣는다 — 매출(구매전환값)과 짝이 맞아야 MIX 의 CVR · CPS · ROAS 가 맞는다
+  const mixCsv = (rows) => [MIX_HEAD.join('\t')].concat(rows.map((row) => [
+    row.name,
+    row.impressions,
+    row.linkClicks,
+    Math.round(row.spend),
+    row.purchase,
+    Math.round(row.revenue || 0),
+  ].join('\t'))).join('\n');
+
+  const mixName = (one) => `MIX_${(crossFor || '검색').replace(/[\\/:*?"<>|]/g, '')}`
+    + `_${MIX_MEDIA[one.key]}_${one.phase}.csv`;
+
+  const mixCard = () => {
+    const files = mixFiles();
+    if (!files.length) return '';
+    const late = files.some((one) => one.phase === '사후');
+    return `<div class="perf-mix">
+      <div class="perf-mix-head"><b>프로모션 MIX 로 보내기</b>
+        <small>매체 × 단계마다 파일 하나입니다. MIX 의 업로드 칸에서 <b>매체</b>와 <b>Phase</b> 를
+          고르고 그 파일을 올리면 컬럼 매핑은 저절로 채워집니다.</small></div>
+      <div class="perf-mix-list">
+        ${files.map((one) => `<button type="button" class="perf-mix-btn" data-cross="mix"
+          data-key="${escapeHtml(one.key)}" data-phase="${escapeHtml(one.phase)}">
+          <i data-lucide="download"></i>
+          <span><b>${escapeHtml(MIX_MEDIA[one.key])} · ${escapeHtml(one.phase)}</b>
+          <small>${count(one.rows.length)}줄 · ${money(totalsOf(one.rows).spend)}</small></span>
+        </button>`).join('')}
+      </div>
+      <p class="perf-mix-note">MIX 의 <b>부가세 설정</b>에서 이 매체들은 체크하지 마세요 —
+        여기 광고비는 이미 부가세를 뺀 금액입니다.${late
+      ? ' 그리고 MIX 에는 <b>사후</b> 칸이 없습니다 — 사후 파일은 <b>상시</b> 나 <b>Phase 미지정</b> 으로 올리세요.'
+      : ''}</p>
+    </div>`;
+  };
+
+  // 사전 · 당일 · 사후로 나눠 둔 줄을 단계마다 한 덩어리로 보여 준다.
+  // 합계는 더한 값에서 비율을 다시 계산한다 (줄마다의 CTR 을 평균 내면 틀린다).
+  const phaseBlocks = () => {
+    const all = crossFlat();
+    const block = (name, i, mine) => {
+      if (!mine.length) return '';
+      const sum = totalsOf(mine.map((one) => one.row));
+      return `<div class="perf-phase-box is-${i}">
+        <div class="perf-phase-head"><b>${escapeHtml(name)}</b>
+          <small>광고그룹 ${count(mine.length)} · 광고비 ${money(sum.spend)}</small></div>
+        <div class="tool-table-wrap"><table class="tool-table perf-table">
+          <thead><tr><th>매체 · 광고그룹</th><th class="perf-span-head">집행일자</th><th>광고비</th><th>노출</th><th>클릭</th>
+            <th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th><th>CVR<small>구매</small></th><th>CPA</th>
+            <th>전환값</th><th>ROAS</th></tr></thead>
+          <tbody>${mine.map((one) => `<tr class="perf-child">
+            <td class="perf-name"><span>${escapeHtml(SOURCES[one.key].name)}<small>${escapeHtml(one.row.name)}</small></span></td>
+            <td class="perf-span">${spanText(one.row) ? escapeHtml(spanText(one.row)) : '<span class="tool-blank">-</span>'}</td>
+            ${crossCells(one.row)}
+          </tr>`).join('')}
+            <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>${escapeHtml(name)} 합계</b>
+              <small>광고그룹 ${count(mine.length)}</small></span></td><td></td>
+              ${crossCells(sum, true)}</tr>
+          </tbody>
+        </table></div>
+      </div>`;
+    };
+
+    const blocks = PHASES.map((name, i) => block(name, i,
+      all.filter((one) => phaseOf[phaseKeyOf(one.key, one.row)] === name))).filter(Boolean);
+    if (!blocks.length) return '';   // 아무것도 안 나눴으면 위 표와 똑같아진다
+
+    // 아직 안 나눈 줄. 세 단계 뒤에 둔다 — 무엇이 남았는지, 그 합이 얼마인지 보인다.
+    const rest = all.filter((one) => !phaseOf[phaseKeyOf(one.key, one.row)]);
+    return `<div class="perf-phases">${blocks.join('')}${block('분류 없음', 3, rest)}</div>${mixCard()}`;
   };
 
   const crossCard = () => {
@@ -4934,7 +5041,12 @@ if (mediaPerformance) {
       </tr>`;
       if (!open || !rows.length) return head;
       return head + rows.map((row) => `<tr class="perf-child">
-        <td class="perf-name"><span class="perf-branch"></span><span>${escapeHtml(row.name)}
+        <td class="perf-name"><span class="perf-branch"></span>
+          <label class="perf-pick" title="골라서 사전 · 당일 · 사후로 나눕니다">
+            <input type="checkbox" data-cross="pick" data-key="${escapeHtml(phaseKeyOf(key, row))}"${
+      crossPick.indexOf(phaseKeyOf(key, row)) >= 0 ? ' checked' : ''}></label>
+          <span>${escapeHtml(row.name)}
+          ${phaseOf[phaseKeyOf(key, row)] ? `<em class="perf-phase is-${PHASES.indexOf(phaseOf[phaseKeyOf(key, row)])}">${escapeHtml(phaseOf[phaseKeyOf(key, row)])}</em>` : ''}
           ${row.campaignName ? `<small>${escapeHtml(row.campaignName)}</small>` : ''}</span></td>
         <td class="perf-span"${row.begin || row.end ? ` title="${escapeHtml(`${row.begin || '?'} ~ ${row.end || '종료일 없음'}`)}"` : ''}>${spanText(row) ? escapeHtml(spanText(row)) : '<span class="tool-blank">-</span>'}</td>
         ${crossCells(row)}
@@ -4960,6 +5072,21 @@ if (mediaPerformance) {
         <button type="button" class="tool-add" data-perf="cross-go"${busy ? ' disabled' : ''}>
           <i data-lucide="search"></i>${busy ? '찾는 중…' : '찾기'}</button>
       </div>
+      ${found ? `<div class="perf-filter perf-phase-pick">
+        <span class="perf-phase-label">${crossPick.length
+      ? `<b>${count(crossPick.length)}개</b> 골랐습니다 →`
+      : '광고그룹을 체크해서 나눕니다 →'}</span>
+        ${PHASES.map((name, i) => `<button type="button" class="perf-phase-btn is-${i}"
+          data-cross="phase" data-phase="${escapeHtml(name)}"${crossPick.length ? '' : ' disabled'}>${escapeHtml(name)}</button>`).join('')}
+        <button type="button" class="tool-copy-all" data-cross="unpick"${crossPick.length ? '' : ' disabled'}
+          title="체크만 풉니다 (붙어 있는 단계는 그대로)">
+          <i data-lucide="x"></i>취소</button>
+        <button type="button" class="tool-copy-all" data-cross="phase" data-phase=""${crossPick.length ? '' : ' disabled'}
+          title="고른 줄에 붙은 단계를 뗍니다">
+          분류 지우기</button>
+        ${Object.keys(phaseOf).length ? `<button type="button" class="tool-copy-all" data-cross="phase-reset">
+          <i data-lucide="eraser"></i>전부 지우기</button>` : ''}
+      </div>` : ''}
       ${searched ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
         <thead><tr><th>매체 · 광고그룹</th><th class="perf-span-head">집행일자</th><th>광고비</th><th>노출</th><th>클릭</th>
           <th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th><th>CVR<small>구매</small></th><th>CPA</th>
@@ -4971,6 +5098,7 @@ if (mediaPerformance) {
             ${crossCells(sum, true)}</tr>
         </tbody>
       </table></div>
+      ${phaseBlocks()}
       <p class="perf-note"><em class="perf-net">카카오모먼트 · 네이버 GFA ${PERF_NET_TEXT}
         (메타 · 구글은 매체가 준 값 그대로입니다)</em></p>
       ${found ? '' : `<p class="tool-empty">${busy ? '' : `'${escapeHtml(crossFor)}' 가 들어간 광고그룹을 찾지 못했습니다.`}</p>`}`
@@ -5131,6 +5259,25 @@ if (mediaPerformance) {
   });
 
   mediaPerformance.addEventListener('change', (event) => {
+    const pick = event.target.closest('[data-cross="pick"]');
+    if (pick) {
+      const key = pick.dataset.key;
+      crossPick = event.target.checked
+        ? crossPick.concat(crossPick.indexOf(key) < 0 ? [key] : [])
+        : crossPick.filter((one) => one !== key);
+      // 단추만 켜고 끈다. 표를 다시 그리면 체크하던 자리를 잃는다.
+      // 취소까지 함께 깨워야 한다 — 빼먹으면 체크해도 잠긴 채로 남아 눌리지 않는다.
+      mediaPerformance.querySelectorAll('[data-cross="phase"], [data-cross="unpick"]').forEach((button) => {
+        button.disabled = !crossPick.length;
+      });
+      const label = mediaPerformance.querySelector('.perf-phase-label');
+      if (label) {
+        label.innerHTML = crossPick.length
+          ? `<b>${count(crossPick.length)}개</b> 골랐습니다 →`
+          : '광고그룹을 체크해서 나눕니다 →';
+      }
+      return;
+    }
     const field = event.target.dataset.perf;
     if (!field) return;
     if (field === 'paused') { withPaused = event.target.checked; render(); return; }
@@ -5226,6 +5373,39 @@ if (mediaPerformance) {
     if (event.target.closest('[data-perf="cross-go"]')) { crossSearch(); return; }
     if (event.target.closest('[data-cross="wait-close"]')) { crossWaitOff = true; render(); return; }
     if (event.target.closest('[data-perf="wait-close"]')) { loadWaitOff = true; render(); return; }
+    const mixBtn = event.target.closest('[data-cross="mix"]');
+    if (mixBtn) {
+      const one = mixFiles().find((x) => x.key === mixBtn.dataset.key
+        && x.phase === mixBtn.dataset.phase);
+      if (one) perfDownload(mixName(one), mixCsv(one.rows));
+      return;
+    }
+
+    const phaseBtn = event.target.closest('[data-cross="phase"]');
+    if (phaseBtn) {
+      const name = phaseBtn.dataset.phase;
+      crossPick.forEach((key) => {
+        if (name) phaseOf[key] = name;
+        else delete phaseOf[key];
+      });
+      crossPick = [];
+      savePhases();
+      render();
+      return;
+    }
+    if (event.target.closest('[data-cross="unpick"]')) {
+      crossPick = [];
+      render();
+      return;
+    }
+    if (event.target.closest('[data-cross="phase-reset"]')) {
+      phaseOf = {};
+      crossPick = [];
+      savePhases();
+      render();
+      return;
+    }
+
     const crossToggle = event.target.closest('[data-cross="toggle"]');
     if (crossToggle) {
       const key = crossToggle.dataset.source;
