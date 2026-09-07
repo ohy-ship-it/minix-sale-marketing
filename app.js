@@ -4404,32 +4404,49 @@ if (mediaPerformance) {
   let cross = {};         // 매체 → { status, error, rows, account, accountName }
   let crossOpen = [];     // 펼친 매체
 
-  // 단계 나누기. 매체가 알려 주지 않는 값이라 사람이 고르고, 이 브라우저에 남긴다.
+  // 단계 나누기 — 날짜로 가른다.
+  // 한 캠페인이 사전에도 당일에도 걸쳐 있어 광고그룹 단위로는 가를 수 없다. 그래서 단계마다
+  // 그 기간만 매체에 따로 물어 온다 (매체가 그 날짜 범위만 합쳐서 준다). 하루가 한 단계에만
+  // 들어가므로 사전 + 당일 + 사후가 조회 합계와 그대로 맞는다.
   const PHASES = ['사전', '당일', '사후'];
-  const PHASE_KEY = 'minix-cross-phase';
-  let phaseOf = {};       // '매체|광고그룹ID' → ['사전', '당일'] — 겹쳐 붙일 수 있다
-  try { phaseOf = JSON.parse(window.localStorage.getItem(PHASE_KEY) || '{}') || {}; } catch (ignore) { phaseOf = {}; }
-  // 예전에는 단계를 하나만 붙였다 ('사전'). 그때 저장해 둔 값을 목록으로 바꿔 받는다.
-  Object.keys(phaseOf).forEach((key) => {
-    const value = phaseOf[key];
-    const list = PHASES.filter((name) => (Array.isArray(value) ? value : [value]).indexOf(name) >= 0);
-    if (list.length) phaseOf[key] = list;
-    else delete phaseOf[key];
-  });
-  let crossPick = [];     // 지금 체크해 둔 줄 (다시 그려도 남게 여기에 둔다)
+  const PHASE_KEY = 'minix-cross-phase-days';
+  const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
+  let phaseSpan = {};     // 단계 → { since, until }
+  PHASES.forEach((name) => { phaseSpan[name] = { since: '', until: '' }; });
+  try {
+    const kept = JSON.parse(window.localStorage.getItem(PHASE_KEY) || '{}') || {};
+    PHASES.forEach((name) => {
+      const one = kept[name] || {};
+      phaseSpan[name] = { since: isDay(one.since) ? one.since : '', until: isDay(one.until) ? one.until : '' };
+    });
+  } catch (ignore) { /* 거들기다 */ }
+  let phaseData = {};     // 단계 → { status, error, rows: [{ key, row }] }
 
-  const phaseKeyOf = (key, row) => `${key}|${row.id}`;
-  const phasesFor = (key, row) => phaseOf[phaseKeyOf(key, row)] || [];
-  const hasPhase = (one, name) => phasesFor(one.key, one.row).indexOf(name) >= 0;
+  const savePhases = () => {
+    try { window.localStorage.setItem(PHASE_KEY, JSON.stringify(phaseSpan)); } catch (ignore) { /* 거들기다 */ }
+  };
+  const spanReady = (name) => Boolean(phaseSpan[name].since && phaseSpan[name].until
+    && phaseSpan[name].since <= phaseSpan[name].until);
+  const phaseRows = (name) => ((phaseData[name] || {}).rows) || [];
+  const phaseBusy = () => PHASES.some((name) => (phaseData[name] || {}).status === 'loading');
+  const phaseDone = () => PHASES.filter((name) => (phaseData[name] || {}).status === 'ready' && phaseRows(name).length);
+  const spanText2 = (name) => `${phaseSpan[name].since.slice(5)} ~ ${phaseSpan[name].until.slice(5)}`.replace(/-/g, '/');
 
-  // 매체 · 광고그룹을 한 줄짜리 목록으로 편다 (단계 블록이 이걸 쓴다)
+  // 날짜가 겹치면 같은 하루가 두 단계에 들어가 합계가 부푼다. 미리 알려 준다.
+  const spanClash = () => {
+    const ready = PHASES.filter(spanReady);
+    const bad = [];
+    ready.forEach((one, at) => ready.slice(at + 1).forEach((other) => {
+      if (phaseSpan[one].since <= phaseSpan[other].until
+        && phaseSpan[other].since <= phaseSpan[one].until) bad.push(`${one} · ${other}`);
+    }));
+    return bad;
+  };
+
+  // 매체 · 광고그룹을 한 줄짜리 목록으로 편다
   const crossFlat = () => Object.keys(SOURCES).reduce((into, key) => into.concat(
     (((cross[key] || {}).rows) || []).map((row) => ({ key: key, row: row })),
   ), []);
-
-  const savePhases = () => {
-    try { window.localStorage.setItem(PHASE_KEY, JSON.stringify(phaseOf)); } catch (ignore) { /* 거들기다 */ }
-  };
   let crossBracket = true;   // 전매체 검색: 대괄호 안(행사 이름)만 볼지
   let loadStart = 0;         // 매체 성과를 부르기 시작한 시각
   let loadTick = null;       // 흐른 시간을 고쳐 쓰는 타이머
@@ -4930,6 +4947,28 @@ if (mediaPerformance) {
       </div>`;
   };
 
+  // 매체 한 곳에 그 기간의 광고그룹을 묻고, 검색어로 걸러 돌려준다.
+  // 광고그룹 줄에는 캠페인 id 만 실려 온다 (네이버만 이름까지 온다). 같은 응답의 campaigns 로
+  // 이름을 되짚는다 — 이름이 똑같은 광고그룹이 여러 매체 · 여러 캠페인에 걸쳐 있어서다.
+  const crossAsk = (key, since, until, wanted) => {
+    const pickAccount = state.accounts[key]
+      ? Promise.resolve(state.accounts[key])
+      : ask({ action: `${key}Accounts` }).then((body) => ((body.accounts || [])[0] || {}).accountId || '');
+    return pickAccount.then((id) => {
+      if (!id) throw new Error('볼 수 있는 광고 계정이 없습니다.');
+      return ask({ action: `${key}Report`, account: id, since: since, until: until }).then((body) => {
+        const named = {};
+        (body.campaigns || []).forEach((one) => { named[one.id] = one.name; });
+        return {
+          account: id,
+          accountName: (body.account || {}).name || '',
+          rows: (body.adsets || []).filter((row) => perfNameHit(row.name, wanted.toLowerCase(), crossBracket))
+            .map((row) => ({ ...row, campaignName: row.campaignName || named[row.campaignId] || '' })),
+        };
+      });
+    });
+  };
+
   const crossSearch = () => {
     const wanted = crossText.trim();
     if (!wanted) return;
@@ -4937,39 +4976,47 @@ if (mediaPerformance) {
     crossFor = wanted;
     crossOpen = [];
     cross = {};
+    phaseData = {};       // 기간이 바뀌면 단계 값도 다시 받아야 한다
     crossWaitOff = false;
     Object.keys(SOURCES).forEach((key) => { cross[key] = { status: 'loading', rows: [] }; });
     render();
 
     Object.keys(SOURCES).forEach((key) => {
-      const pickAccount = state.accounts[key]
-        ? Promise.resolve(state.accounts[key])
-        : ask({ action: `${key}Accounts` }).then((body) => ((body.accounts || [])[0] || {}).accountId || '');
-
-      pickAccount
-        .then((id) => {
-          if (!id) throw new Error('볼 수 있는 광고 계정이 없습니다.');
-          cross[key].account = id;
-          return ask({ action: `${key}Report`, account: id, since: period.since, until: period.until });
-        })
-        .then((body) => {
-          const text = wanted.toLowerCase();
-          // 광고그룹 줄에는 캠페인 id 만 실려 온다 (네이버만 이름까지 온다).
-          // 같은 응답의 campaigns 로 이름을 되짚는다 — 이름이 똑같은 광고그룹이
-          // 여러 매체 · 여러 캠페인에 걸쳐 있어 캠페인명이 없으면 구별이 안 된다.
-          const named = {};
-          (body.campaigns || []).forEach((one) => { named[one.id] = one.name; });
-          cross[key] = {
-            status: 'ready',
-            account: cross[key].account,
-            accountName: (body.account || {}).name || '',
-            rows: (body.adsets || []).filter((row) => perfNameHit(row.name, text, crossBracket))
-              .map((row) => ({ ...row, campaignName: row.campaignName || named[row.campaignId] || '' })),
-          };
+      crossAsk(key, period.since, period.until, wanted)
+        .then((got) => {
+          cross[key] = { status: 'ready', account: got.account, accountName: got.accountName, rows: got.rows };
           render();
         })
         .catch((reason) => {
           cross[key] = { status: 'error', error: reason.message, rows: [] };
+          render();
+        });
+    });
+  };
+
+  // 단계마다 그 기간만 네 매체에 다시 묻는다.
+  const phaseLoad = () => {
+    const wanted = (crossFor || crossText).trim();
+    const want = PHASES.filter(spanReady);
+    if (!wanted || !want.length) return;
+    want.forEach((name) => { phaseData[name] = { status: 'loading', rows: [] }; });
+    render();
+
+    want.forEach((name) => {
+      const span = phaseSpan[name];
+      const trouble = [];
+      Promise.all(Object.keys(SOURCES).map((key) => crossAsk(key, span.since, span.until, wanted)
+        .then((got) => got.rows.map((row) => ({ key: key, row: row })))
+        .catch((reason) => {
+          trouble.push(`${SOURCES[key].name} — ${reason.message}`);
+          return [];
+        })))
+        .then((packs) => {
+          phaseData[name] = {
+            status: 'ready',
+            error: trouble.join(' · '),
+            rows: packs.reduce((into, one) => into.concat(one), []),
+          };
           render();
         });
     });
@@ -5010,32 +5057,48 @@ if (mediaPerformance) {
   };
 
   const crossTable = () => {
-    const head = ['단계', '매체', '광고그룹', '캠페인', '집행시작', '집행종료',
+    const head = ['구분', '매체', '광고그룹', '캠페인', '집행시작', '집행종료',
       '광고비', '노출', '클릭', 'CTR', 'CPC', 'CPM', '결과', 'CVR(구매)', 'CPA', '구매전환값', 'ROAS'];
     const lines = [head.join('\t')];
+    const cells = (row) => {
+      const ctr = ratio(row.linkClicks, row.impressions);
+      const cpc = ratio(row.spend, row.linkClicks);
+      const cpm = ratio(row.spend * 1000, row.impressions);
+      const cvr = ratio(row.purchase, row.linkClicks);
+      const cpa = ratio(row.spend, row.results);
+      const roas = ratio(row.revenue, row.spend);
+      return [
+        Math.round(row.spend), row.impressions, row.linkClicks,
+        ctr === null ? '' : percent(ctr),
+        cpc === null ? '' : Math.round(cpc),
+        cpm === null ? '' : Math.round(cpm),
+        row.results,
+        cvr === null ? '' : percent(cvr),
+        cpa === null ? '' : Math.round(cpa),
+        Math.round(row.revenue || 0),
+        roas === null ? '' : perfRoas(roas),
+      ];
+    };
     Object.keys(SOURCES).forEach((key) => {
       (((cross[key] || {}).rows) || []).forEach((row) => {
-        const ctr = ratio(row.linkClicks, row.impressions);
-        const cpc = ratio(row.spend, row.linkClicks);
-        const cpm = ratio(row.spend * 1000, row.impressions);
-        const cvr = ratio(row.purchase, row.linkClicks);
-        const cpa = ratio(row.spend, row.results);
-        lines.push([
-          phasesFor(key, row).join(', '),
-          SOURCES[key].name, row.name, row.campaignName || '',
-          row.begin || '', row.end || '',
-          Math.round(row.spend), row.impressions, row.linkClicks,
-          ctr === null ? '' : percent(ctr),
-          cpc === null ? '' : Math.round(cpc),
-          cpm === null ? '' : Math.round(cpm),
-          row.results,
-          cvr === null ? '' : percent(cvr),
-          cpa === null ? '' : Math.round(cpa),
-          Math.round(row.revenue || 0),
-          ratio(row.revenue, row.spend) === null ? '' : perfRoas(ratio(row.revenue, row.spend)),
-        ].join('\t'));
+        lines.push(['조회 기간', SOURCES[key].name, row.name, row.campaignName || '',
+          row.begin || '', row.end || ''].concat(cells(row)).join('\t'));
       });
     });
+
+    // 단계별로 받아 둔 것이 있으면 그 합을 뒤에 붙인다 (기간이 다르니 위 줄과는 따로 둔다)
+    const done = phaseDone();
+    if (done.length) {
+      lines.push('');
+      lines.push(['구분', '기간', '광고그룹 수', '', '', ''].concat(head.slice(6)).join('\t'));
+      done.forEach((name) => {
+        const mine = phaseRows(name);
+        lines.push([name, spanText2(name), mine.length, '', '', '']
+          .concat(cells(totalsOf(mine.map((one) => one.row)))).join('\t'));
+      });
+      const total = totalsOf(done.reduce((into, name) => into.concat(phaseRows(name).map((one) => one.row)), []));
+      lines.push(['총합', done.join(' + '), '', '', '', ''].concat(cells(total)).join('\t'));
+    }
     return lines.join('\n');
   };
 
@@ -5043,12 +5106,12 @@ if (mediaPerformance) {
   const MIX_MEDIA = { meta: '메타', google: '구글', kakao: '카카오모먼트', naver: 'GFA' };
   const MIX_HEAD = ['소재', '노출', '클릭', '광고비', '전환', '매출'];
 
-  // 나눠 둔 줄을 매체 × 단계로 묶는다 (묶음 하나가 파일 하나)
+  // 단계 × 매체로 묶는다 (묶음 하나가 파일 하나). 단계마다 그 기간만 받아 온 값이라
+  // 같은 광고그룹이 사전 · 당일에 다 나와도 광고비는 각 기간의 값으로 갈라져 있다.
   const mixFiles = () => {
-    const all = crossFlat();
     const out = [];
     PHASES.forEach((phase) => Object.keys(SOURCES).forEach((key) => {
-      const mine = all.filter((one) => one.key === key && hasPhase(one, phase));
+      const mine = phaseRows(phase).filter((one) => one.key === key);
       if (mine.length) out.push({ key: key, phase: phase, rows: mine.map((one) => one.row) });
     }));
     return out;
@@ -5095,71 +5158,79 @@ if (mediaPerformance) {
     <th>CVR<small>구매</small></th><th>CPA</th><th>전환값</th><th>ROAS</th></tr></thead>`;
 
   // 단계마다의 합을 맨 위에 한 표로 모은다.
-  // 한 광고그룹에 단계가 둘 붙어 있으면 그 단계마다 한 번씩 들어간다. 그래서 줄을 더하면
-  // 겹친 만큼 부풀어 오른다 — 총합은 겹치는 것을 한 번만 세어 따로 구한다.
+  // 단계마다 그 기간만 따로 받아 왔으니 하루가 한 단계에만 들어간다 — 그래서 세 줄을 더한
+  // 값이 곧 총합이고, 단계 날짜가 조회 기간을 다 덮으면 조회 합계와도 맞는다.
   const phaseSum = () => {
-    const all = crossFlat();
-    const lines = PHASES.map((name, i) => ({ name: name, i: i, mine: all.filter((one) => hasPhase(one, name)) }))
-      .filter((one) => one.mine.length);
-    if (!lines.length) return '';
-    const marked = all.filter((one) => phasesFor(one.key, one.row).length);
-    const twice = all.filter((one) => phasesFor(one.key, one.row).length > 1).length;
-    // 총합은 세 줄을 그대로 다 더한 값이다. 두 단계에 걸친 광고그룹은 그 단계마다
-    // 한 번씩 들어가므로 그만큼 겹쳐 세어진다 (그렇게 보고 싶다는 요청이다).
-    const total = totalsOf(lines.reduce((into, one) => into.concat(one.mine.map((each) => each.row)), []));
+    const done = phaseDone();
+    if (!done.length) return '';
+    const lines = done.map((name) => ({
+      name: name, i: PHASES.indexOf(name), rows: phaseRows(name),
+    }));
+    const total = totalsOf(lines.reduce((into, one) => into.concat(one.rows.map((each) => each.row)), []));
+    const searched = crossFlat();
+    const whole = searched.length ? totalsOf(searched.map((one) => one.row)) : null;
+    const gap = whole ? Math.round(whole.spend) - Math.round(total.spend) : 0;
     return `<div class="perf-phase-box perf-phase-sum">
       <div class="perf-phase-head"><b>단계별 합계</b>
-        <small>나눈 광고그룹 ${count(marked.length)} · 더한 광고비 ${money(total.spend)}${
-      twice ? ` · 두 단계에 걸친 것 ${count(twice)}` : ''}</small></div>
+        <small>${done.map((name) => `${name} ${spanText2(name)}`).join(' · ')}</small></div>
       <div class="tool-table-wrap"><table class="tool-table perf-table">
         ${crossHead('단계')}
         <tbody>${lines.map((one) => `<tr class="perf-row">
           <td class="perf-name"><span><em class="perf-phase is-${one.i}">${escapeHtml(one.name)}</em>
-            <small>광고그룹 ${count(one.mine.length)}</small></span></td><td></td>
-          ${crossCells(totalsOf(one.mine.map((each) => each.row)), true)}
+            <small>광고그룹 ${count(one.rows.length)}</small></span></td>
+          <td class="perf-span">${escapeHtml(spanText2(one.name))}</td>
+          ${crossCells(totalsOf(one.rows.map((each) => each.row)), true)}
         </tr>`).join('')}
           <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>총합</b>
-            <small>${lines.map((one) => one.name).join(' + ')}</small></span></td><td></td>
+            <small>${done.join(' + ')}</small></span></td><td></td>
             ${crossCells(total, true)}</tr>
         </tbody>
       </table></div>
-      ${twice ? `<p class="perf-note">단계가 둘 이상 붙은 광고그룹 ${count(twice)}개는 단계마다 한 번씩 들어갑니다 —
-        총합도 그대로 다 더한 값이라, 나눈 광고그룹 ${count(marked.length)}개의 실제 광고비보다 그만큼 큽니다.</p>` : ''}
+      ${whole ? `<p class="perf-note${gap ? ' is-warn' : ''}">조회 기간 합계는 ${money(whole.spend)} 입니다${gap > 0
+      ? ` — 단계에 안 들어간 광고비가 ${money(gap)} 있습니다 (단계 날짜가 조회 기간을 다 덮지 않습니다)`
+      : gap < 0
+        ? ` — 단계 합이 ${money(-gap)} 더 큽니다 (단계 날짜가 조회 기간을 넘어섭니다)`
+        : ' — 단계 날짜가 조회 기간을 그대로 덮습니다'}.</p>` : ''}
+      ${done.map((name) => ((phaseData[name] || {}).error
+      ? `<p class="perf-note is-warn">${escapeHtml(name)} — ${escapeHtml(phaseData[name].error)}</p>` : '')).join('')}
     </div>`;
   };
 
-  // 사전 · 당일 · 사후로 나눠 둔 줄을 단계마다 한 덩어리로 보여 준다.
+  // 단계마다 한 덩어리. 그 기간의 광고그룹과 그 기간의 값만 들어 있다.
   // 합계는 더한 값에서 비율을 다시 계산한다 (줄마다의 CTR 을 평균 내면 틀린다).
   const phaseBlocks = () => {
-    const all = crossFlat();
-    const block = (name, i, mine) => {
-      if (!mine.length) return '';
-      const sum = totalsOf(mine.map((one) => one.row));
-      return `<div class="perf-phase-box is-${i}">
-        <div class="perf-phase-head"><b>${escapeHtml(name)}</b>
-          <small>광고그룹 ${count(mine.length)} · 광고비 ${money(sum.spend)}</small></div>
-        <div class="tool-table-wrap"><table class="tool-table perf-table">
-          ${crossHead('매체 · 광고그룹')}
-          <tbody>${mine.map((one) => `<tr class="perf-child">
-            <td class="perf-name"><span>${escapeHtml(SOURCES[one.key].name)}<small>${escapeHtml(one.row.name)}</small></span></td>
-            <td class="perf-span">${spanText(one.row) ? escapeHtml(spanText(one.row)) : '<span class="tool-blank">-</span>'}</td>
-            ${crossCells(one.row)}
-          </tr>`).join('')}
-            <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>${escapeHtml(name)} 합계</b>
-              <small>광고그룹 ${count(mine.length)}</small></span></td><td></td>
-              ${crossCells(sum, true)}</tr>
-          </tbody>
-        </table></div>
-      </div>`;
-    };
+    const done = phaseDone();
+    const busy = PHASES.filter((name) => (phaseData[name] || {}).status === 'loading');
+    const empty = PHASES.filter((name) => (phaseData[name] || {}).status === 'ready' && !phaseRows(name).length);
+    if (!done.length && !busy.length && !empty.length) return '';
 
-    const blocks = PHASES.map((name, i) => block(name, i,
-      all.filter((one) => hasPhase(one, name)))).filter(Boolean);
-    if (!blocks.length) return '';   // 아무것도 안 나눴으면 위 표와 똑같아진다
+    const block = (name, i, mine) => `<div class="perf-phase-box is-${i}">
+      <div class="perf-phase-head"><b>${escapeHtml(name)}</b>
+        <small>${escapeHtml(spanText2(name))} · 광고그룹 ${count(mine.length)}
+          · 광고비 ${money(totalsOf(mine.map((one) => one.row)).spend)}</small></div>
+      <div class="tool-table-wrap"><table class="tool-table perf-table">
+        ${crossHead('매체 · 광고그룹')}
+        <tbody>${mine.map((one) => `<tr class="perf-child">
+          <td class="perf-name"><span>${escapeHtml(SOURCES[one.key].name)}<small>${escapeHtml(one.row.name)}</small></span></td>
+          <td class="perf-span">${spanText(one.row) ? escapeHtml(spanText(one.row)) : '<span class="tool-blank">-</span>'}</td>
+          ${crossCells(one.row)}
+        </tr>`).join('')}
+          <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>${escapeHtml(name)} 합계</b>
+            <small>광고그룹 ${count(mine.length)}</small></span></td><td></td>
+            ${crossCells(totalsOf(mine.map((one) => one.row)), true)}</tr>
+        </tbody>
+      </table></div>
+    </div>`;
 
-    // 아직 안 나눈 줄. 세 단계 뒤에 둔다 — 무엇이 남았는지, 그 합이 얼마인지 보인다.
-    const rest = all.filter((one) => !phasesFor(one.key, one.row).length);
-    return `<div class="perf-phases">${phaseSum()}${blocks.join('')}${block('분류 없음', 3, rest)}</div>${mixCard()}`;
+    const waiting = busy.map((name) => `<div class="perf-phase-box is-${PHASES.indexOf(name)}">
+      <div class="perf-phase-head"><b>${escapeHtml(name)}</b>
+        <small>${escapeHtml(spanText2(name))} · 불러오는 중…</small></div></div>`).join('');
+    const none = empty.map((name) => `<div class="perf-phase-box is-${PHASES.indexOf(name)}">
+      <div class="perf-phase-head"><b>${escapeHtml(name)}</b>
+        <small>${escapeHtml(spanText2(name))} · 이 기간에 나온 광고그룹이 없습니다</small></div></div>`).join('');
+
+    return `<div class="perf-phases">${phaseSum()}${
+      done.map((name) => block(name, PHASES.indexOf(name), phaseRows(name))).join('')}${waiting}${none}</div>${mixCard()}`;
   };
 
   const crossCard = () => {
@@ -5188,11 +5259,7 @@ if (mediaPerformance) {
       if (!open || !rows.length) return head;
       return head + rows.map((row) => `<tr class="perf-child">
         <td class="perf-name"><span class="perf-branch"></span>
-          <label class="perf-pick" title="골라서 사전 · 당일 · 사후로 나눕니다">
-            <input type="checkbox" data-cross="pick" data-key="${escapeHtml(phaseKeyOf(key, row))}"${
-      crossPick.indexOf(phaseKeyOf(key, row)) >= 0 ? ' checked' : ''}></label>
           <span>${escapeHtml(row.name)}
-          ${phasesFor(key, row).map((name) => `<em class="perf-phase is-${PHASES.indexOf(name)}">${escapeHtml(name)}</em>`).join('')}
           ${row.campaignName ? `<small>${escapeHtml(row.campaignName)}</small>` : ''}</span></td>
         <td class="perf-span"${row.begin || row.end ? ` title="${escapeHtml(`${row.begin || '?'} ~ ${row.end || '종료일 없음'}`)}"` : ''}>${spanText(row) ? escapeHtml(spanText(row)) : '<span class="tool-blank">-</span>'}</td>
         ${crossCells(row)}
@@ -5219,22 +5286,24 @@ if (mediaPerformance) {
           <i data-lucide="search"></i>${busy ? '찾는 중…' : '찾기'}</button>
       </div>
       ${found ? `<div class="perf-filter perf-phase-pick">
-        <span class="perf-phase-label">${crossPick.length
-      ? `<b>${count(crossPick.length)}개</b> 골랐습니다 →`
-      : '광고그룹을 체크해서 나눕니다 (단계는 겹쳐도 됩니다) →'}</span>
-        ${PHASES.map((name, i) => `<button type="button" class="perf-phase-btn is-${i}${
-      crossPick.length && crossPick.every((key) => (phaseOf[key] || []).indexOf(name) >= 0) ? ' is-on' : ''}"
-          data-cross="phase" data-phase="${escapeHtml(name)}"${crossPick.length ? '' : ' disabled'}
-          title="고른 줄에 붙입니다. 여러 단계를 겹쳐 붙일 수 있고, 다시 누르면 뗍니다.">${escapeHtml(name)}</button>`).join('')}
-        <button type="button" class="tool-copy-all" data-cross="unpick"${crossPick.length ? '' : ' disabled'}
-          title="체크만 풉니다 (붙어 있는 단계는 그대로)">
-          <i data-lucide="x"></i>취소</button>
-        <button type="button" class="tool-copy-all" data-cross="phase" data-phase=""${crossPick.length ? '' : ' disabled'}
-          title="고른 줄에 붙은 단계를 뗍니다">
-          분류 지우기</button>
-        ${Object.keys(phaseOf).length ? `<button type="button" class="tool-copy-all" data-cross="phase-reset">
-          <i data-lucide="eraser"></i>전부 지우기</button>` : ''}
-      </div>` : ''}
+        <span class="perf-phase-label">단계 날짜 →</span>
+        ${PHASES.map((name, i) => `<span class="perf-phase-span">
+          <em class="perf-phase is-${i}">${escapeHtml(name)}</em>
+          <input type="date" data-cross="span" data-phase="${escapeHtml(name)}" data-part="since"
+            value="${escapeHtml(phaseSpan[name].since)}" title="${escapeHtml(name)} 시작일">
+          <span class="perf-phase-tilde">~</span>
+          <input type="date" data-cross="span" data-phase="${escapeHtml(name)}" data-part="until"
+            value="${escapeHtml(phaseSpan[name].until)}" title="${escapeHtml(name)} 종료일">
+        </span>`).join('')}
+        <button type="button" class="tool-add" data-cross="phase-go"${
+      PHASES.some(spanReady) && !phaseBusy() ? '' : ' disabled'}
+          title="단계마다 그 기간만 매체에 다시 물어 옵니다">
+          <i data-lucide="calendar-range"></i>${phaseBusy() ? '불러오는 중…' : '단계별로 보기'}</button>
+        ${phaseDone().length ? `<button type="button" class="tool-copy-all" data-cross="phase-reset">
+          <i data-lucide="eraser"></i>지우기</button>` : ''}
+      </div>
+      ${spanClash().length ? `<p class="perf-note is-warn">단계 날짜가 겹칩니다 (${escapeHtml(spanClash().join(' / '))}) —
+        같은 하루가 두 단계에 들어가서 합계가 그만큼 부풉니다.</p>` : ''}` : ''}
       ${searched ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
         <thead><tr><th>매체 · 광고그룹</th><th class="perf-span-head">집행일자</th><th>광고비</th><th>노출</th><th>클릭</th>
           <th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th><th>CVR<small>구매</small></th><th>CPA</th>
@@ -5407,23 +5476,12 @@ if (mediaPerformance) {
   });
 
   mediaPerformance.addEventListener('change', (event) => {
-    const pick = event.target.closest('[data-cross="pick"]');
-    if (pick) {
-      const key = pick.dataset.key;
-      crossPick = event.target.checked
-        ? crossPick.concat(crossPick.indexOf(key) < 0 ? [key] : [])
-        : crossPick.filter((one) => one !== key);
-      // 단추만 켜고 끈다. 표를 다시 그리면 체크하던 자리를 잃는다.
-      // 취소까지 함께 깨워야 한다 — 빼먹으면 체크해도 잠긴 채로 남아 눌리지 않는다.
-      mediaPerformance.querySelectorAll('[data-cross="phase"], [data-cross="unpick"]').forEach((button) => {
-        button.disabled = !crossPick.length;
-      });
-      const label = mediaPerformance.querySelector('.perf-phase-label');
-      if (label) {
-        label.innerHTML = crossPick.length
-          ? `<b>${count(crossPick.length)}개</b> 골랐습니다 →`
-          : '광고그룹을 체크해서 나눕니다 →';
-      }
+    const span = event.target.closest('[data-cross="span"]');
+    if (span) {
+      phaseSpan[span.dataset.phase][span.dataset.part] = event.target.value;
+      savePhases();
+      // 날짜만 적어 둔 것이므로 값은 아직 그대로다. 단추가 살아나게만 다시 그린다.
+      render();
       return;
     }
     const field = event.target.dataset.perf;
@@ -5529,35 +5587,9 @@ if (mediaPerformance) {
       return;
     }
 
-    const phaseBtn = event.target.closest('[data-cross="phase"]');
-    if (phaseBtn) {
-      const name = phaseBtn.dataset.phase;
-      // 고른 줄이 이미 다 그 단계면 뗀다. 아니면 붙인다 (다른 단계는 그대로 둔다).
-      const already = Boolean(name) && crossPick.length > 0
-        && crossPick.every((key) => (phaseOf[key] || []).indexOf(name) >= 0);
-      crossPick.forEach((key) => {
-        if (!name) { delete phaseOf[key]; return; }
-        const list = (phaseOf[key] || []).filter((one) => one !== name);
-        if (!already) list.push(name);
-        // 늘 같은 차례로 보이게 사전 · 당일 · 사후 순으로 담는다
-        const sorted = PHASES.filter((one) => list.indexOf(one) >= 0);
-        if (sorted.length) phaseOf[key] = sorted;
-        else delete phaseOf[key];
-      });
-      // 체크는 풀지 않는다 — 같은 줄에 단계를 하나 더 붙일 수 있어야 한다
-      savePhases();
-      render();
-      return;
-    }
-    if (event.target.closest('[data-cross="unpick"]')) {
-      crossPick = [];
-      render();
-      return;
-    }
+    if (event.target.closest('[data-cross="phase-go"]')) { phaseLoad(); return; }
     if (event.target.closest('[data-cross="phase-reset"]')) {
-      phaseOf = {};
-      crossPick = [];
-      savePhases();
+      phaseData = {};
       render();
       return;
     }

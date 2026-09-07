@@ -1014,3 +1014,12 @@ html.embed-mode .content{padding:14px}
 /* 고른 줄에 이미 붙어 있는 단계는 단추에 표시한다 (다시 누르면 뗀다) */
 .perf-phase-btn.is-on{box-shadow:inset 0 0 0 2px rgba(0,0,0,.18)}
 .perf-phase-btn.is-on::after{content:' ✓';font-weight:800}
+
+/* 단계 날짜 — 사전 · 당일 · 사후마다 기간을 적는다 */
+.perf-phase-span{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);
+  border-radius:8px;background:#fff;padding:4px 8px}
+.perf-phase-span .perf-phase{margin-left:0}
+.perf-phase-span input[type="date"]{border:0;background:none;font:600 11px inherit;color:#3d3d39;
+  padding:0;width:104px;cursor:pointer}
+.perf-phase-tilde{color:#b6b4ac;font-size:11px}
+.perf-note.is-warn{color:#a5622f}
