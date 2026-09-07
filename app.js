@@ -5030,7 +5030,8 @@ if (mediaPerformance) {
         crossHits[key] = got.hits;
         cross[key] = {
           status: 'ready',
-          accountName: got.accountName || `계정 ${count(got.tried)}곳`,
+          accountName: got.accountName,
+          tried: got.tried,
           note: got.note,
           coverage: got.coverage,
           rows: got.rows,
@@ -5336,6 +5337,7 @@ if (mediaPerformance) {
           <span><b>${escapeHtml(SOURCES[key].name)}</b><small>${one.status === 'loading' ? '찾는 중…'
         : one.status === 'error' ? escapeHtml(one.error || '오류')
           : `광고그룹 ${count(rows.length)}${one.accountName ? ` · ${escapeHtml(one.accountName)}` : ''}${
+        one.tried ? ` · 계정 ${count(one.tried)}곳 훑음` : ''}${
         one.note ? ` · 못 읽은 계정: ${escapeHtml(one.note)}` : ''}`}</small></span>
         </td>
         <td></td>
