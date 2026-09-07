@@ -5104,10 +5104,12 @@ if (mediaPerformance) {
     if (!lines.length) return '';
     const marked = all.filter((one) => phasesFor(one.key, one.row).length);
     const twice = all.filter((one) => phasesFor(one.key, one.row).length > 1).length;
-    const total = totalsOf(marked.map((one) => one.row));
+    // 총합은 세 줄을 그대로 다 더한 값이다. 두 단계에 걸친 광고그룹은 그 단계마다
+    // 한 번씩 들어가므로 그만큼 겹쳐 세어진다 (그렇게 보고 싶다는 요청이다).
+    const total = totalsOf(lines.reduce((into, one) => into.concat(one.mine.map((each) => each.row)), []));
     return `<div class="perf-phase-box perf-phase-sum">
       <div class="perf-phase-head"><b>단계별 합계</b>
-        <small>나눈 광고그룹 ${count(marked.length)} · 광고비 ${money(total.spend)}${
+        <small>나눈 광고그룹 ${count(marked.length)} · 더한 광고비 ${money(total.spend)}${
       twice ? ` · 두 단계에 걸친 것 ${count(twice)}` : ''}</small></div>
       <div class="tool-table-wrap"><table class="tool-table perf-table">
         ${crossHead('단계')}
@@ -5117,12 +5119,12 @@ if (mediaPerformance) {
           ${crossCells(totalsOf(one.mine.map((each) => each.row)), true)}
         </tr>`).join('')}
           <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>총합</b>
-            <small>${twice ? '겹치는 광고그룹은 한 번만' : `광고그룹 ${count(marked.length)}`}</small></span></td><td></td>
+            <small>${lines.map((one) => one.name).join(' + ')}</small></span></td><td></td>
             ${crossCells(total, true)}</tr>
         </tbody>
       </table></div>
       ${twice ? `<p class="perf-note">단계가 둘 이상 붙은 광고그룹 ${count(twice)}개는 단계마다 한 번씩 들어갑니다 —
-        위 세 줄을 더하면 그만큼 겹칩니다. 총합은 한 번만 셌습니다.</p>` : ''}
+        총합도 그대로 다 더한 값이라, 나눈 광고그룹 ${count(marked.length)}개의 실제 광고비보다 그만큼 큽니다.</p>` : ''}
     </div>`;
   };
 
