@@ -5198,6 +5198,66 @@ if (mediaPerformance) {
   const mixName = (one) => `MIX_${(crossFor || '검색').replace(/[\\/:*?"<>|]/g, '')}`
     + `_${MIX_MEDIA[one.key]}_${one.phase}.csv`;
 
+  // 세일즈 워크스페이스(행사별 결과 → 매체결과)가 우리 화면과 똑같이 그릴 수 있게,
+  // 화면이 쓰는 값을 그대로 담는다. 비율(CTR · CPC · ROAS …)은 담지 않는다 —
+  // 받는 쪽에서 더한 값으로 다시 계산해야 합계가 맞는다.
+  const salesRow = (key, row) => ({
+    source: key,
+    sourceName: SOURCES[key].name,
+    adset: row.name,
+    campaign: row.campaignName || '',
+    begin: row.begin || '',
+    end: row.end || '',
+    spend: Math.round(row.spend),
+    imp: row.impressions,
+    clk: row.linkClicks,
+    conv: row.purchase,
+    results: row.results,
+    rev: Math.round(row.revenue || 0),
+  });
+
+  const salesPayload = () => {
+    const period = currentRange();
+    return {
+      kind: 'minix-cross-result',
+      version: 1,
+      word: crossFor,
+      bracketOnly: crossBracket,
+      range: { since: period.since, until: period.until },
+      madeAt: new Date().toISOString(),
+      note: '카카오모먼트 · 메타 · 구글은 매체가 준 값 그대로, 네이버 GFA 는 부가세 10% 를 뺀 값입니다.',
+      // 조회 기간 전체 (매체 · 광고그룹 단위)
+      searched: crossFlat().map((one) => salesRow(one.key, one.row)),
+      accounts: Object.keys(SOURCES).map((key) => ({
+        source: key, name: SOURCES[key].name,
+        found: (((cross[key] || {}).rows) || []).length,
+        account: (cross[key] || {}).accountName || '',
+        tried: (cross[key] || {}).tried || 0,
+        gap: gapText((cross[key] || {}).coverage) || '',
+      })),
+      // 단계마다 그 기간만 따로 받아 온 값 (매체 · 광고그룹 단위)
+      phases: phaseDone().map((name) => ({
+        name: name,
+        since: phaseSpan[name].since,
+        until: phaseSpan[name].until,
+        rows: phaseRows(name).map((one) => salesRow(one.key, one.row)),
+      })),
+    };
+  };
+
+  const salesDownload = () => {
+    const body = JSON.stringify(salesPayload(), null, 1);
+    const blob = new Blob([body], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `세일즈용_${(crossFor || '검색').replace(/[\\/:*?"<>|]/g, '')}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const mixCard = () => {
     const files = mixFiles();
     if (!files.length) return '';
@@ -5394,6 +5454,9 @@ if (mediaPerformance) {
         <div class="tool-list-actions">
           <button type="button" class="tool-copy-all" data-perf="cross-excel"${found ? '' : ' disabled'}>
             <i data-lucide="sheet"></i>엑셀 받기</button>
+          <button type="button" class="tool-copy-all" data-perf="cross-sales"${found ? '' : ' disabled'}
+            title="세일즈 워크스페이스 '행사별 결과 → 매체결과' 에 올리는 파일입니다 (우리 화면과 똑같이 보입니다)">
+            <i data-lucide="share-2"></i>세일즈용 파일</button>
         </div>
       </div>
       <div class="perf-filter">
@@ -5699,6 +5762,7 @@ if (mediaPerformance) {
       else loadAccounts();
       return;
     }
+    if (event.target.closest('[data-perf="cross-sales"]')) { salesDownload(); return; }
     if (event.target.closest('[data-perf="cross-excel"]')) {
       const period = currentRange();
       perfDownload(`전매체검색_${crossFor}_${period.since}_${period.until}.csv`, crossTable());
