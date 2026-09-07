@@ -671,7 +671,7 @@ if (creativeBoard) {
           </tr>` : `
           <tr class="week-row" data-week="${week.id}">
             <td class="week-grip"><button type="button" class="week-drag"
-              aria-label="순서 변경" title="끌어서 순서 변경"><i data-lucide="grip-vertical"></i></button></td>
+              aria-label="순서 변경" title="끌어서 순서 변경"><i data-lucide="chevrons-up-down"></i></button></td>
             <td class="week-year">${escapeHtml(week.year)}</td>
             <td class="week-month">${escapeHtml(week.month)}</td>
             <td><span class="chip chip-orange">${escapeHtml(week.week)}</span></td>

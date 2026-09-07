@@ -991,13 +991,17 @@ html.embed-mode .content{padding:14px}
 .promo-count{margin-left:auto;font-size:11px;color:#8c8c85;white-space:nowrap}
 .promo-count b{color:#3d3d39}
 
-/* 주차 목록 순서 바꾸기 — 손잡이만 끌 수 있다 */
-.week-table th.week-grip-head,.week-table td.week-grip{width:24px;padding-left:8px;padding-right:0}
-.week-drag{display:flex;align-items:center;justify-content:center;width:20px;height:22px;
-  padding:0;border:0;background:none;color:#d2d0c9;cursor:grab;touch-action:none;user-select:none}
-.week-row:hover .week-drag{color:#8a8477}
-.week-drag:active{cursor:grabbing}
-.week-drag i{width:14px;height:14px}
+/* 주차 목록 순서 바꾸기 — 손잡이만 끌 수 있다.
+   위쪽 '.week-table td button' 규칙이 테두리 · 흰 배경 · 좌우 여백 9px 을 씌워서
+   아이콘 자리가 2px 밖에 안 남았다. 그보다 센 선택자로 그 값들을 되돌린다. */
+.week-table th.week-grip-head,.week-table td.week-grip{width:26px;padding-left:6px;padding-right:0}
+.week-table td.week-grip .week-drag{display:flex;align-items:center;justify-content:center;
+  width:22px;min-width:22px;height:24px;min-height:0;padding:0;border:0;border-radius:5px;
+  background:none;color:#b6b4ac;cursor:grab;touch-action:none;user-select:none}
+.week-table td.week-grip .week-drag svg{width:15px;height:15px;display:block}
+.week-row:hover .week-table td.week-grip .week-drag,.week-row:hover .week-drag{color:#6f6d66}
+.week-table td.week-grip .week-drag:hover{background:#f0efeb;color:#3d3c38}
+.week-table td.week-grip .week-drag:active{cursor:grabbing;background:#e8e7e2}
 .week-row.is-dragging{opacity:.4}
 .week-row.is-over-top>td{box-shadow:inset 0 2px 0 #4a9be0}
 .week-row.is-over-bottom>td{box-shadow:inset 0 -2px 0 #4a9be0}
