@@ -5158,6 +5158,11 @@ if (mediaPerformance) {
         const mine = phaseRows(name);
         lines.push([name, spanText2(name), mine.length, '', '', '']
           .concat(cells(totalsOf(mine.map((one) => one.row)))).join('\t'));
+        // 그 단계 안의 캠페인별 합도 함께 적는다 (화면과 같은 묶음)
+        byCampaign(mine).forEach((pack) => {
+          lines.push([`  ${name} · ${SOURCES[pack.key].name}`, pack.name, pack.count,
+            pack.row.begin || '', pack.row.end || '', ''].concat(cells(pack.row)).join('\t'));
+        });
       });
       const total = totalsOf(done.reduce((into, name) => into.concat(phaseRows(name).map((one) => one.row)), []));
       lines.push(['총합', done.join(' + '), '', '', '', ''].concat(cells(total)).join('\t'));
@@ -5259,7 +5264,7 @@ if (mediaPerformance) {
         ${crossHead('단계')}
         <tbody>${lines.map((one) => `<tr class="perf-row">
           <td class="perf-name"><span><em class="perf-phase is-${one.i}">${escapeHtml(one.name)}</em>
-            <small>광고그룹 ${count(one.rows.length)}</small></span></td>
+            <small>캠페인 ${count(byCampaign(one.rows).length)} · 광고그룹 ${count(one.rows.length)}</small></span></td>
           <td class="perf-span">${escapeHtml(spanText2(one.name))}</td>
           ${crossCells(totalsOf(one.rows.map((each) => each.row)), true)}
         </tr>`).join('')}
@@ -5281,6 +5286,31 @@ if (mediaPerformance) {
     </div>`;
   };
 
+  // 단계 안에서는 캠페인명으로 묶어 한 줄씩 보여 준다.
+  // 광고비가 큰 캠페인이 위로 온다. 집행일자는 그 캠페인에 든 광고그룹들의 처음~끝이다.
+  const byCampaign = (mine) => {
+    const order = [];
+    const box = {};
+    mine.forEach((one) => {
+      const name = one.row.campaignName || '(캠페인 이름 없음)';
+      const at = `${one.key}|${name}`;
+      if (!box[at]) {
+        box[at] = { key: one.key, name: name, rows: [] };
+        order.push(at);
+      }
+      box[at].rows.push(one.row);
+    });
+    return order.map((at) => {
+      const pack = box[at];
+      const row = totalsOf(pack.rows);
+      const begins = pack.rows.map((one) => one.begin).filter(Boolean).sort();
+      const ends = pack.rows.map((one) => one.end).filter(Boolean).sort();
+      row.begin = begins[0] || '';
+      row.end = ends[ends.length - 1] || '';
+      return { key: pack.key, name: pack.name, count: pack.rows.length, row: row };
+    }).sort((a, b) => b.row.spend - a.row.spend);
+  };
+
   // 단계마다 한 덩어리. 그 기간의 광고그룹과 그 기간의 값만 들어 있다.
   // 합계는 더한 값에서 비율을 다시 계산한다 (줄마다의 CTR 을 평균 내면 틀린다).
   const phaseBlocks = () => {
@@ -5289,23 +5319,28 @@ if (mediaPerformance) {
     const empty = PHASES.filter((name) => (phaseData[name] || {}).status === 'ready' && !phaseRows(name).length);
     if (!done.length && !busy.length && !empty.length) return '';
 
-    const block = (name, i, mine) => `<div class="perf-phase-box is-${i}">
+      const block = (name, i, mine) => {
+      const packs = byCampaign(mine);
+      const sum = totalsOf(mine.map((one) => one.row));
+      return `<div class="perf-phase-box is-${i}">
       <div class="perf-phase-head"><b>${escapeHtml(name)}</b>
-        <small>${escapeHtml(spanText2(name))} · 광고그룹 ${count(mine.length)}
-          · 광고비 ${money(totalsOf(mine.map((one) => one.row)).spend)}</small></div>
+        <small>${escapeHtml(spanText2(name))} · 캠페인 ${count(packs.length)}
+          (광고그룹 ${count(mine.length)}) · 광고비 ${money(sum.spend)}</small></div>
       <div class="tool-table-wrap"><table class="tool-table perf-table">
-        ${crossHead('매체 · 광고그룹')}
-        <tbody>${mine.map((one) => `<tr class="perf-child">
-          <td class="perf-name"><span>${escapeHtml(SOURCES[one.key].name)}<small>${escapeHtml(one.row.name)}</small></span></td>
-          <td class="perf-span">${spanText(one.row) ? escapeHtml(spanText(one.row)) : '<span class="tool-blank">-</span>'}</td>
-          ${crossCells(one.row)}
+        ${crossHead('매체 · 캠페인')}
+        <tbody>${packs.map((pack) => `<tr class="perf-child">
+          <td class="perf-name"><span>${escapeHtml(SOURCES[pack.key].name)}
+            <small>${escapeHtml(pack.name)} · 광고그룹 ${count(pack.count)}</small></span></td>
+          <td class="perf-span">${spanText(pack.row) ? escapeHtml(spanText(pack.row)) : '<span class="tool-blank">-</span>'}</td>
+          ${crossCells(pack.row)}
         </tr>`).join('')}
           <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>${escapeHtml(name)} 합계</b>
-            <small>광고그룹 ${count(mine.length)}</small></span></td><td></td>
-            ${crossCells(totalsOf(mine.map((one) => one.row)), true)}</tr>
+            <small>캠페인 ${count(packs.length)} · 광고그룹 ${count(mine.length)}</small></span></td><td></td>
+            ${crossCells(sum, true)}</tr>
         </tbody>
       </table></div>
     </div>`;
+    };
 
     const waiting = busy.map((name) => `<div class="perf-phase-box is-${PHASES.indexOf(name)}">
       <div class="perf-phase-head"><b>${escapeHtml(name)}</b>
