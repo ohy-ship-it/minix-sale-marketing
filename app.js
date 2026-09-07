@@ -4407,11 +4407,20 @@ if (mediaPerformance) {
   // 단계 나누기. 매체가 알려 주지 않는 값이라 사람이 고르고, 이 브라우저에 남긴다.
   const PHASES = ['사전', '당일', '사후'];
   const PHASE_KEY = 'minix-cross-phase';
-  let phaseOf = {};       // '매체|광고그룹ID' → '사전' · '당일' · '사후'
+  let phaseOf = {};       // '매체|광고그룹ID' → ['사전', '당일'] — 겹쳐 붙일 수 있다
   try { phaseOf = JSON.parse(window.localStorage.getItem(PHASE_KEY) || '{}') || {}; } catch (ignore) { phaseOf = {}; }
+  // 예전에는 단계를 하나만 붙였다 ('사전'). 그때 저장해 둔 값을 목록으로 바꿔 받는다.
+  Object.keys(phaseOf).forEach((key) => {
+    const value = phaseOf[key];
+    const list = PHASES.filter((name) => (Array.isArray(value) ? value : [value]).indexOf(name) >= 0);
+    if (list.length) phaseOf[key] = list;
+    else delete phaseOf[key];
+  });
   let crossPick = [];     // 지금 체크해 둔 줄 (다시 그려도 남게 여기에 둔다)
 
   const phaseKeyOf = (key, row) => `${key}|${row.id}`;
+  const phasesFor = (key, row) => phaseOf[phaseKeyOf(key, row)] || [];
+  const hasPhase = (one, name) => phasesFor(one.key, one.row).indexOf(name) >= 0;
 
   // 매체 · 광고그룹을 한 줄짜리 목록으로 편다 (단계 블록이 이걸 쓴다)
   const crossFlat = () => Object.keys(SOURCES).reduce((into, key) => into.concat(
@@ -5012,7 +5021,7 @@ if (mediaPerformance) {
         const cvr = ratio(row.purchase, row.linkClicks);
         const cpa = ratio(row.spend, row.results);
         lines.push([
-          phaseOf[phaseKeyOf(key, row)] || '',
+          phasesFor(key, row).join(', '),
           SOURCES[key].name, row.name, row.campaignName || '',
           row.begin || '', row.end || '',
           Math.round(row.spend), row.impressions, row.linkClicks,
@@ -5039,8 +5048,7 @@ if (mediaPerformance) {
     const all = crossFlat();
     const out = [];
     PHASES.forEach((phase) => Object.keys(SOURCES).forEach((key) => {
-      const mine = all.filter((one) => one.key === key
-        && phaseOf[phaseKeyOf(one.key, one.row)] === phase);
+      const mine = all.filter((one) => one.key === key && hasPhase(one, phase));
       if (mine.length) out.push({ key: key, phase: phase, rows: mine.map((one) => one.row) });
     }));
     return out;
@@ -5082,6 +5090,42 @@ if (mediaPerformance) {
     </div>`;
   };
 
+  const crossHead = (first) => `<thead><tr><th>${first}</th><th class="perf-span-head">집행일자</th>
+    <th>광고비</th><th>노출</th><th>클릭</th><th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th>
+    <th>CVR<small>구매</small></th><th>CPA</th><th>전환값</th><th>ROAS</th></tr></thead>`;
+
+  // 단계마다의 합을 맨 위에 한 표로 모은다.
+  // 한 광고그룹에 단계가 둘 붙어 있으면 그 단계마다 한 번씩 들어간다. 그래서 줄을 더하면
+  // 겹친 만큼 부풀어 오른다 — 총합은 겹치는 것을 한 번만 세어 따로 구한다.
+  const phaseSum = () => {
+    const all = crossFlat();
+    const lines = PHASES.map((name, i) => ({ name: name, i: i, mine: all.filter((one) => hasPhase(one, name)) }))
+      .filter((one) => one.mine.length);
+    if (!lines.length) return '';
+    const marked = all.filter((one) => phasesFor(one.key, one.row).length);
+    const twice = all.filter((one) => phasesFor(one.key, one.row).length > 1).length;
+    const total = totalsOf(marked.map((one) => one.row));
+    return `<div class="perf-phase-box perf-phase-sum">
+      <div class="perf-phase-head"><b>단계별 합계</b>
+        <small>나눈 광고그룹 ${count(marked.length)} · 광고비 ${money(total.spend)}${
+      twice ? ` · 두 단계에 걸친 것 ${count(twice)}` : ''}</small></div>
+      <div class="tool-table-wrap"><table class="tool-table perf-table">
+        ${crossHead('단계')}
+        <tbody>${lines.map((one) => `<tr class="perf-row">
+          <td class="perf-name"><span><em class="perf-phase is-${one.i}">${escapeHtml(one.name)}</em>
+            <small>광고그룹 ${count(one.mine.length)}</small></span></td><td></td>
+          ${crossCells(totalsOf(one.mine.map((each) => each.row)), true)}
+        </tr>`).join('')}
+          <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>총합</b>
+            <small>${twice ? '겹치는 광고그룹은 한 번만' : `광고그룹 ${count(marked.length)}`}</small></span></td><td></td>
+            ${crossCells(total, true)}</tr>
+        </tbody>
+      </table></div>
+      ${twice ? `<p class="perf-note">단계가 둘 이상 붙은 광고그룹 ${count(twice)}개는 단계마다 한 번씩 들어갑니다 —
+        위 세 줄을 더하면 그만큼 겹칩니다. 총합은 한 번만 셌습니다.</p>` : ''}
+    </div>`;
+  };
+
   // 사전 · 당일 · 사후로 나눠 둔 줄을 단계마다 한 덩어리로 보여 준다.
   // 합계는 더한 값에서 비율을 다시 계산한다 (줄마다의 CTR 을 평균 내면 틀린다).
   const phaseBlocks = () => {
@@ -5093,9 +5137,7 @@ if (mediaPerformance) {
         <div class="perf-phase-head"><b>${escapeHtml(name)}</b>
           <small>광고그룹 ${count(mine.length)} · 광고비 ${money(sum.spend)}</small></div>
         <div class="tool-table-wrap"><table class="tool-table perf-table">
-          <thead><tr><th>매체 · 광고그룹</th><th class="perf-span-head">집행일자</th><th>광고비</th><th>노출</th><th>클릭</th>
-            <th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th><th>CVR<small>구매</small></th><th>CPA</th>
-            <th>전환값</th><th>ROAS</th></tr></thead>
+          ${crossHead('매체 · 광고그룹')}
           <tbody>${mine.map((one) => `<tr class="perf-child">
             <td class="perf-name"><span>${escapeHtml(SOURCES[one.key].name)}<small>${escapeHtml(one.row.name)}</small></span></td>
             <td class="perf-span">${spanText(one.row) ? escapeHtml(spanText(one.row)) : '<span class="tool-blank">-</span>'}</td>
@@ -5110,12 +5152,12 @@ if (mediaPerformance) {
     };
 
     const blocks = PHASES.map((name, i) => block(name, i,
-      all.filter((one) => phaseOf[phaseKeyOf(one.key, one.row)] === name))).filter(Boolean);
+      all.filter((one) => hasPhase(one, name)))).filter(Boolean);
     if (!blocks.length) return '';   // 아무것도 안 나눴으면 위 표와 똑같아진다
 
     // 아직 안 나눈 줄. 세 단계 뒤에 둔다 — 무엇이 남았는지, 그 합이 얼마인지 보인다.
-    const rest = all.filter((one) => !phaseOf[phaseKeyOf(one.key, one.row)]);
-    return `<div class="perf-phases">${blocks.join('')}${block('분류 없음', 3, rest)}</div>${mixCard()}`;
+    const rest = all.filter((one) => !phasesFor(one.key, one.row).length);
+    return `<div class="perf-phases">${phaseSum()}${blocks.join('')}${block('분류 없음', 3, rest)}</div>${mixCard()}`;
   };
 
   const crossCard = () => {
@@ -5148,7 +5190,7 @@ if (mediaPerformance) {
             <input type="checkbox" data-cross="pick" data-key="${escapeHtml(phaseKeyOf(key, row))}"${
       crossPick.indexOf(phaseKeyOf(key, row)) >= 0 ? ' checked' : ''}></label>
           <span>${escapeHtml(row.name)}
-          ${phaseOf[phaseKeyOf(key, row)] ? `<em class="perf-phase is-${PHASES.indexOf(phaseOf[phaseKeyOf(key, row)])}">${escapeHtml(phaseOf[phaseKeyOf(key, row)])}</em>` : ''}
+          ${phasesFor(key, row).map((name) => `<em class="perf-phase is-${PHASES.indexOf(name)}">${escapeHtml(name)}</em>`).join('')}
           ${row.campaignName ? `<small>${escapeHtml(row.campaignName)}</small>` : ''}</span></td>
         <td class="perf-span"${row.begin || row.end ? ` title="${escapeHtml(`${row.begin || '?'} ~ ${row.end || '종료일 없음'}`)}"` : ''}>${spanText(row) ? escapeHtml(spanText(row)) : '<span class="tool-blank">-</span>'}</td>
         ${crossCells(row)}
@@ -5177,9 +5219,11 @@ if (mediaPerformance) {
       ${found ? `<div class="perf-filter perf-phase-pick">
         <span class="perf-phase-label">${crossPick.length
       ? `<b>${count(crossPick.length)}개</b> 골랐습니다 →`
-      : '광고그룹을 체크해서 나눕니다 →'}</span>
-        ${PHASES.map((name, i) => `<button type="button" class="perf-phase-btn is-${i}"
-          data-cross="phase" data-phase="${escapeHtml(name)}"${crossPick.length ? '' : ' disabled'}>${escapeHtml(name)}</button>`).join('')}
+      : '광고그룹을 체크해서 나눕니다 (단계는 겹쳐도 됩니다) →'}</span>
+        ${PHASES.map((name, i) => `<button type="button" class="perf-phase-btn is-${i}${
+      crossPick.length && crossPick.every((key) => (phaseOf[key] || []).indexOf(name) >= 0) ? ' is-on' : ''}"
+          data-cross="phase" data-phase="${escapeHtml(name)}"${crossPick.length ? '' : ' disabled'}
+          title="고른 줄에 붙입니다. 여러 단계를 겹쳐 붙일 수 있고, 다시 누르면 뗍니다.">${escapeHtml(name)}</button>`).join('')}
         <button type="button" class="tool-copy-all" data-cross="unpick"${crossPick.length ? '' : ' disabled'}
           title="체크만 풉니다 (붙어 있는 단계는 그대로)">
           <i data-lucide="x"></i>취소</button>
@@ -5486,11 +5530,19 @@ if (mediaPerformance) {
     const phaseBtn = event.target.closest('[data-cross="phase"]');
     if (phaseBtn) {
       const name = phaseBtn.dataset.phase;
+      // 고른 줄이 이미 다 그 단계면 뗀다. 아니면 붙인다 (다른 단계는 그대로 둔다).
+      const already = Boolean(name) && crossPick.length > 0
+        && crossPick.every((key) => (phaseOf[key] || []).indexOf(name) >= 0);
       crossPick.forEach((key) => {
-        if (name) phaseOf[key] = name;
+        if (!name) { delete phaseOf[key]; return; }
+        const list = (phaseOf[key] || []).filter((one) => one !== name);
+        if (!already) list.push(name);
+        // 늘 같은 차례로 보이게 사전 · 당일 · 사후 순으로 담는다
+        const sorted = PHASES.filter((one) => list.indexOf(one) >= 0);
+        if (sorted.length) phaseOf[key] = sorted;
         else delete phaseOf[key];
       });
-      crossPick = [];
+      // 체크는 풀지 않는다 — 같은 줄에 단계를 하나 더 붙일 수 있어야 한다
       savePhases();
       render();
       return;

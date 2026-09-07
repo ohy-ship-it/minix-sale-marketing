@@ -1005,3 +1005,12 @@ html.embed-mode .content{padding:14px}
 .week-row.is-dragging{opacity:.4}
 .week-row.is-over-top>td{box-shadow:inset 0 2px 0 #4a9be0}
 .week-row.is-over-bottom>td{box-shadow:inset 0 -2px 0 #4a9be0}
+
+/* 단계별 합계 — 사전 · 당일 · 사후 블록 맨 위에 둔다 */
+.perf-phase-box.perf-phase-sum{border-left-color:#8c8c85;background:#fbfbf9}
+.perf-phase-sum .perf-name .perf-phase{margin-left:0}
+.perf-phase-sum .perf-name small{display:block;margin-top:2px}
+.perf-phase-sum .perf-note{margin:8px 2px 0;font-size:11px;color:#8c8c85;line-height:1.55}
+/* 고른 줄에 이미 붙어 있는 단계는 단추에 표시한다 (다시 누르면 뗀다) */
+.perf-phase-btn.is-on{box-shadow:inset 0 0 0 2px rgba(0,0,0,.18)}
+.perf-phase-btn.is-on::after{content:' ✓';font-weight:800}
