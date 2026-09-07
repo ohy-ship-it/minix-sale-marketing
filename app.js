@@ -5422,6 +5422,10 @@ if (mediaPerformance) {
       : phaseDone().length
         ? `${phaseDone().join(' · ')} 받았습니다`
         : '날짜를 적으면 그 기간만 따로 불러옵니다'}</span>
+        ${PHASES.some((name) => phaseSpan[name].since || phaseSpan[name].until) || phaseDone().length
+      ? `<button type="button" class="tool-copy-all" data-cross="phase-clear"
+          title="세 단계의 날짜와 받아 둔 값을 한 번에 지웁니다">
+          <i data-lucide="eraser"></i>단계 날짜 지우기</button>` : ''}
       </div>
       ${spanClash().length ? `<p class="perf-note is-warn">단계 날짜가 겹칩니다 (${escapeHtml(spanClash().join(' / '))}) —
         같은 하루가 두 단계에 들어가서 합계가 그만큼 부풉니다.</p>` : ''}` : ''}
@@ -5711,7 +5715,15 @@ if (mediaPerformance) {
       return;
     }
 
-
+    // 세 단계의 날짜와 받아 둔 값을 한 번에 지운다
+    if (event.target.closest('[data-cross="phase-clear"]')) {
+      PHASES.forEach((name) => { phaseSpan[name] = { since: '', until: '' }; });
+      phaseData = {};
+      phaseFor = '';
+      savePhases();
+      render();
+      return;
+    }
 
     const crossToggle = event.target.closest('[data-cross="toggle"]');
     if (crossToggle) {
