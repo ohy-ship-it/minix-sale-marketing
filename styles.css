@@ -1023,3 +1023,4 @@ html.embed-mode .content{padding:14px}
   padding:0;width:104px;cursor:pointer}
 .perf-phase-tilde{color:#b6b4ac;font-size:11px}
 .perf-note.is-warn{color:#a5622f}
+.perf-phase-state{font-size:11px;color:#8c8c85}

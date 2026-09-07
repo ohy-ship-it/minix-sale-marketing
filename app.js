@@ -4421,6 +4421,7 @@ if (mediaPerformance) {
     });
   } catch (ignore) { /* 거들기다 */ }
   let phaseData = {};     // 단계 → { status, error, rows: [{ key, row }] }
+  let phaseFor = '';      // 단계 값을 받아 둔 검색어 (검색어가 바뀌면 다시 받는다)
 
   const savePhases = () => {
     try { window.localStorage.setItem(PHASE_KEY, JSON.stringify(phaseSpan)); } catch (ignore) { /* 거들기다 */ }
@@ -5006,39 +5007,45 @@ if (mediaPerformance) {
     const wanted = crossText.trim();
     if (!wanted) return;
     const period = currentRange();
+    // 단계 값은 단계 날짜에만 매여 있다. 조회 기간을 바꿔도 그대로 두고,
+    // 찾는 말이 바뀔 때만 버린다.
+    if (wanted !== phaseFor) { phaseData = {}; phaseFor = ''; }
     crossFor = wanted;
     crossOpen = [];
     cross = {};
-    phaseData = {};       // 기간이 바뀌면 단계 값도 다시 받아야 한다
     crossWaitOff = false;
     Object.keys(SOURCES).forEach((key) => { cross[key] = { status: 'loading', rows: [] }; });
     render();
 
     crossHits = {};
-    Object.keys(SOURCES).forEach((key) => {
-      crossAsk(key, period.since, period.until, wanted)
-        .then((got) => {
-          crossHits[key] = got.hits;
-          cross[key] = {
-            status: 'ready',
-            accountName: got.accountName || `계정 ${count(got.tried)}곳`,
-            note: got.note,
-            rows: got.rows,
-          };
-          render();
-        })
-        .catch((reason) => {
-          cross[key] = { status: 'error', error: reason.message, rows: [] };
-          render();
-        });
-    });
+    Promise.all(Object.keys(SOURCES).map((key) => crossAsk(key, period.since, period.until, wanted)
+      .then((got) => {
+        crossHits[key] = got.hits;
+        cross[key] = {
+          status: 'ready',
+          accountName: got.accountName || `계정 ${count(got.tried)}곳`,
+          note: got.note,
+          rows: got.rows,
+        };
+        render();
+      })
+      .catch((reason) => {
+        cross[key] = { status: 'error', error: reason.message, rows: [] };
+        render();
+      })))
+      // 네 매체를 다 훑은 다음에 단계를 받는다 — 어느 계정에 있는지 알고 나서 물어야
+      // 안 걸린 계정을 헛되게 부르지 않는다.
+      .then(() => phaseLoad());
   };
 
   // 단계마다 그 기간만 네 매체에 다시 묻는다.
-  const phaseLoad = () => {
+  // only 를 주면 그 단계만 (날짜를 고쳤을 때). 안 주면 아직 안 받은 단계를 다 받는다.
+  const phaseLoad = (only) => {
     const wanted = (crossFor || crossText).trim();
-    const want = PHASES.filter(spanReady);
+    const want = (only ? [only] : PHASES).filter((name) => spanReady(name)
+      && (only || !phaseData[name]));
     if (!wanted || !want.length) return;
+    phaseFor = wanted;
     want.forEach((name) => { phaseData[name] = { status: 'loading', rows: [] }; });
     render();
 
@@ -5336,12 +5343,11 @@ if (mediaPerformance) {
           <input type="date" data-cross="span" data-phase="${escapeHtml(name)}" data-part="until"
             value="${escapeHtml(phaseSpan[name].until)}" title="${escapeHtml(name)} 종료일">
         </span>`).join('')}
-        <button type="button" class="tool-add" data-cross="phase-go"${
-      PHASES.some(spanReady) && !phaseBusy() ? '' : ' disabled'}
-          title="단계마다 그 기간만 매체에 다시 물어 옵니다">
-          <i data-lucide="calendar-range"></i>${phaseBusy() ? '불러오는 중…' : '단계별로 보기'}</button>
-        ${phaseDone().length ? `<button type="button" class="tool-copy-all" data-cross="phase-reset">
-          <i data-lucide="eraser"></i>지우기</button>` : ''}
+        <span class="perf-phase-state">${phaseBusy()
+      ? '불러오는 중…'
+      : phaseDone().length
+        ? `${phaseDone().join(' · ')} 받았습니다`
+        : '날짜를 적으면 그 기간만 따로 불러옵니다'}</span>
       </div>
       ${spanClash().length ? `<p class="perf-note is-warn">단계 날짜가 겹칩니다 (${escapeHtml(spanClash().join(' / '))}) —
         같은 하루가 두 단계에 들어가서 합계가 그만큼 부풉니다.</p>` : ''}` : ''}
@@ -5519,10 +5525,12 @@ if (mediaPerformance) {
   mediaPerformance.addEventListener('change', (event) => {
     const span = event.target.closest('[data-cross="span"]');
     if (span) {
-      phaseSpan[span.dataset.phase][span.dataset.part] = event.target.value;
+      const name = span.dataset.phase;
+      phaseSpan[name][span.dataset.part] = event.target.value;
       savePhases();
-      // 날짜만 적어 둔 것이므로 값은 아직 그대로다. 단추가 살아나게만 다시 그린다.
-      render();
+      // 날짜를 다 적었으면 그 단계를 바로 받아 온다. 덜 적었으면 받아 둔 값을 치운다.
+      if (spanReady(name)) phaseLoad(name);
+      else { delete phaseData[name]; render(); }
       return;
     }
     const field = event.target.dataset.perf;
@@ -5628,12 +5636,7 @@ if (mediaPerformance) {
       return;
     }
 
-    if (event.target.closest('[data-cross="phase-go"]')) { phaseLoad(); return; }
-    if (event.target.closest('[data-cross="phase-reset"]')) {
-      phaseData = {};
-      render();
-      return;
-    }
+
 
     const crossToggle = event.target.closest('[data-cross="toggle"]');
     if (crossToggle) {
