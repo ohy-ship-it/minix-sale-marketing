@@ -4947,24 +4947,57 @@ if (mediaPerformance) {
       </div>`;
   };
 
-  // 매체 한 곳에 그 기간의 광고그룹을 묻고, 검색어로 걸러 돌려준다.
+  // 매체마다의 계정 목록. 한 번 받아 두고 다시 쓴다.
+  const crossAccounts = {};
+  // 검색에서 실제로 걸린 계정만 기억해 둔다 — 단계별로 볼 때 이 계정만 다시 물으면 된다.
+  let crossHits = {};
+
+  const askAccounts = (key) => {
+    if (crossAccounts[key]) return Promise.resolve(crossAccounts[key]);
+    return ask({ action: `${key}Accounts` }).then((body) => {
+      crossAccounts[key] = (body.accounts || []).filter((one) => one && one.accountId);
+      return crossAccounts[key];
+    });
+  };
+
+  // 그 매체에서 볼 수 있는 계정을 다 훑어 그 기간의 광고그룹을 모으고, 검색어로 걸러 돌려준다.
+  // 계정을 골라 두지 않아도 되게 전부 본다 (행사를 어느 계정에 올렸는지 몰라도 잡힌다).
   // 광고그룹 줄에는 캠페인 id 만 실려 온다 (네이버만 이름까지 온다). 같은 응답의 campaigns 로
   // 이름을 되짚는다 — 이름이 똑같은 광고그룹이 여러 매체 · 여러 캠페인에 걸쳐 있어서다.
-  const crossAsk = (key, since, until, wanted) => {
-    const pickAccount = state.accounts[key]
-      ? Promise.resolve(state.accounts[key])
-      : ask({ action: `${key}Accounts` }).then((body) => ((body.accounts || [])[0] || {}).accountId || '');
-    return pickAccount.then((id) => {
-      if (!id) throw new Error('볼 수 있는 광고 계정이 없습니다.');
-      return ask({ action: `${key}Report`, account: id, since: since, until: until }).then((body) => {
-        const named = {};
-        (body.campaigns || []).forEach((one) => { named[one.id] = one.name; });
-        return {
-          account: id,
-          accountName: (body.account || {}).name || '',
-          rows: (body.adsets || []).filter((row) => perfNameHit(row.name, wanted.toLowerCase(), crossBracket))
-            .map((row) => ({ ...row, campaignName: row.campaignName || named[row.campaignId] || '' })),
-        };
+  // only 를 주면 그 계정만 본다 (검색에서 걸린 계정. 빈 목록이면 아예 묻지 않는다).
+  const crossAsk = (key, since, until, wanted, only) => {
+    if (only && !only.length) return Promise.resolve({ rows: [], note: '', hits: [], accountName: '', tried: 0 });
+    return askAccounts(key).then((list) => {
+      const use = only && only.length ? list.filter((one) => only.indexOf(one.accountId) >= 0) : list;
+      if (!use.length) throw new Error('볼 수 있는 광고 계정이 없습니다.');
+      const trouble = [];
+      return Promise.all(use.map((one) => ask({
+        action: `${key}Report`, account: one.accountId, since: since, until: until,
+      })
+        .then((body) => {
+          const named = {};
+          (body.campaigns || []).forEach((each) => { named[each.id] = each.name; });
+          return (body.adsets || []).filter((row) => perfNameHit(row.name, wanted.toLowerCase(), crossBracket))
+            .map((row) => ({
+              ...row,
+              campaignName: row.campaignName || named[row.campaignId] || '',
+              accountId: one.accountId,
+              accountName: (body.account || {}).name || one.name || one.accountId,
+            }));
+        })
+        .catch((reason) => {
+          trouble.push(`${one.name || one.accountId} — ${reason.message}`);
+          return [];
+        }))).then((packs) => {
+        const rows = packs.reduce((into, each) => into.concat(each), []);
+        // 계정을 다 물어봤는데 다 실패했으면 그건 오류다 (한 곳만 실패한 것은 알려만 준다)
+        if (!rows.length && trouble.length === use.length) throw new Error(trouble.join(' · '));
+        const names = [];
+        rows.forEach((row) => { if (names.indexOf(row.accountName) < 0) names.push(row.accountName); });
+        const hits = [];
+        rows.forEach((row) => { if (hits.indexOf(row.accountId) < 0) hits.push(row.accountId); });
+        return { rows: rows, note: trouble.join(' · '), hits: hits, tried: use.length,
+          accountName: names.join(' · ') };
       });
     });
   };
@@ -4981,10 +5014,17 @@ if (mediaPerformance) {
     Object.keys(SOURCES).forEach((key) => { cross[key] = { status: 'loading', rows: [] }; });
     render();
 
+    crossHits = {};
     Object.keys(SOURCES).forEach((key) => {
       crossAsk(key, period.since, period.until, wanted)
         .then((got) => {
-          cross[key] = { status: 'ready', account: got.account, accountName: got.accountName, rows: got.rows };
+          crossHits[key] = got.hits;
+          cross[key] = {
+            status: 'ready',
+            accountName: got.accountName || `계정 ${count(got.tried)}곳`,
+            note: got.note,
+            rows: got.rows,
+          };
           render();
         })
         .catch((reason) => {
@@ -5005,7 +5045,7 @@ if (mediaPerformance) {
     want.forEach((name) => {
       const span = phaseSpan[name];
       const trouble = [];
-      Promise.all(Object.keys(SOURCES).map((key) => crossAsk(key, span.since, span.until, wanted)
+      Promise.all(Object.keys(SOURCES).map((key) => crossAsk(key, span.since, span.until, wanted, crossHits[key])
         .then((got) => got.rows.map((row) => ({ key: key, row: row })))
         .catch((reason) => {
           trouble.push(`${SOURCES[key].name} — ${reason.message}`);
@@ -5251,7 +5291,8 @@ if (mediaPerformance) {
             <i data-lucide="${open ? 'chevron-down' : 'chevron-right'}"></i></button>
           <span><b>${escapeHtml(SOURCES[key].name)}</b><small>${one.status === 'loading' ? '찾는 중…'
         : one.status === 'error' ? escapeHtml(one.error || '오류')
-          : `광고그룹 ${count(rows.length)}${one.accountName ? ` · ${escapeHtml(one.accountName)}` : ''}`}</small></span>
+          : `광고그룹 ${count(rows.length)}${one.accountName ? ` · ${escapeHtml(one.accountName)}` : ''}${
+        one.note ? ` · 못 읽은 계정: ${escapeHtml(one.note)}` : ''}`}</small></span>
         </td>
         <td></td>
         ${one.status === 'ready' ? crossCells(totals) : '<td></td>'.repeat(CROSS_CELLS)}
