@@ -4978,19 +4978,26 @@ if (mediaPerformance) {
         .then((body) => {
           const named = {};
           (body.campaigns || []).forEach((each) => { named[each.id] = each.name; });
-          return (body.adsets || []).filter((row) => perfNameHit(row.name, wanted.toLowerCase(), crossBracket))
+          const rows = (body.adsets || []).filter((row) => perfNameHit(row.name, wanted.toLowerCase(), crossBracket))
             .map((row) => ({
               ...row,
               campaignName: row.campaignName || named[row.campaignId] || '',
               accountId: one.accountId,
               accountName: (body.account || {}).name || one.name || one.accountId,
             }));
+          // 네이버 GFA 만 적재한 값을 읽는다. 빠진 날이 있으면 그만큼 광고비가 적게 나온다.
+          rows.coverage = body.coverage || null;
+          return rows;
         })
         .catch((reason) => {
           trouble.push(`${one.name || one.accountId} — ${reason.message}`);
           return [];
         }))).then((packs) => {
         const rows = packs.reduce((into, each) => into.concat(each), []);
+        let coverage = null;
+        packs.forEach((each) => {
+          if (each.coverage && (each.coverage.missing || []).length) coverage = each.coverage;
+        });
         // 계정을 다 물어봤는데 다 실패했으면 그건 오류다 (한 곳만 실패한 것은 알려만 준다)
         if (!rows.length && trouble.length === use.length) throw new Error(trouble.join(' · '));
         const names = [];
@@ -4998,7 +5005,7 @@ if (mediaPerformance) {
         const hits = [];
         rows.forEach((row) => { if (hits.indexOf(row.accountId) < 0) hits.push(row.accountId); });
         return { rows: rows, note: trouble.join(' · '), hits: hits, tried: use.length,
-          accountName: names.join(' · ') };
+          coverage: coverage, accountName: names.join(' · ') };
       });
     });
   };
@@ -5025,6 +5032,7 @@ if (mediaPerformance) {
           status: 'ready',
           accountName: got.accountName || `계정 ${count(got.tried)}곳`,
           note: got.note,
+          coverage: got.coverage,
           rows: got.rows,
         };
         render();
@@ -5052,8 +5060,14 @@ if (mediaPerformance) {
     want.forEach((name) => {
       const span = phaseSpan[name];
       const trouble = [];
+      const gaps = [];
       Promise.all(Object.keys(SOURCES).map((key) => crossAsk(key, span.since, span.until, wanted, crossHits[key])
-        .then((got) => got.rows.map((row) => ({ key: key, row: row })))
+        .then((got) => {
+          if (got.coverage && (got.coverage.missing || []).length) {
+            gaps.push(`${SOURCES[key].name} ${gapText(got.coverage)}`);
+          }
+          return got.rows.map((row) => ({ key: key, row: row }));
+        })
         .catch((reason) => {
           trouble.push(`${SOURCES[key].name} — ${reason.message}`);
           return [];
@@ -5062,6 +5076,7 @@ if (mediaPerformance) {
           phaseData[name] = {
             status: 'ready',
             error: trouble.join(' · '),
+            gap: gaps.join(' · '),
             rows: packs.reduce((into, one) => into.concat(one), []),
           };
           render();
@@ -5200,6 +5215,25 @@ if (mediaPerformance) {
     </div>`;
   };
 
+  // 적재가 빠진 날을 짧게 적는다 (네이버 GFA 전용 — 다른 매체는 실시간이라 이런 일이 없다)
+  const gapText = (coverage) => {
+    const missing = (coverage && coverage.missing) || [];
+    if (!missing.length) return '';
+    const shown = missing.slice(0, 4).join(' · ') + (missing.length > 4 ? ` 외 ${missing.length - 4}일` : '');
+    return `${missing.length}일 안 들어옴 (${shown})`;
+  };
+
+  const crossGap = () => {
+    const lines = Object.keys(SOURCES).map((key) => {
+      const text = gapText((cross[key] || {}).coverage);
+      return text ? `${SOURCES[key].name} — ${text}` : '';
+    }).filter(Boolean);
+    if (!lines.length) return '';
+    return `<p class="perf-warn"><b>적재가 안 된 날이 있어 광고비가 그만큼 적게 나옵니다.</b>
+      ${escapeHtml(lines.join(' · '))}<small>GFA 로그인이 되는 PC 에서 <b>gfa_load.bat</b> 을 돌리면 채워집니다.
+      로그인이 풀렸으면 <b>gfa_login.bat</b> 으로 한 번 로그인해 주세요 ('로그인 상태 유지' 체크)</small></p>`;
+  };
+
   const crossHead = (first) => `<thead><tr><th>${first}</th><th class="perf-span-head">집행일자</th>
     <th>광고비</th><th>노출</th><th>클릭</th><th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th>
     <th>CVR<small>구매</small></th><th>CPA</th><th>전환값</th><th>ROAS</th></tr></thead>`;
@@ -5240,6 +5274,9 @@ if (mediaPerformance) {
         : ' — 단계 날짜가 조회 기간을 그대로 덮습니다'}.</p>` : ''}
       ${done.map((name) => ((phaseData[name] || {}).error
       ? `<p class="perf-note is-warn">${escapeHtml(name)} — ${escapeHtml(phaseData[name].error)}</p>` : '')).join('')}
+      ${done.map((name) => ((phaseData[name] || {}).gap
+      ? `<p class="perf-note is-warn">${escapeHtml(name)} 기간에 적재가 안 된 날이 있습니다 —
+        ${escapeHtml(phaseData[name].gap)}. 그만큼 광고비가 적게 나옵니다.</p>` : '')).join('')}
     </div>`;
   };
 
@@ -5351,6 +5388,7 @@ if (mediaPerformance) {
       </div>
       ${spanClash().length ? `<p class="perf-note is-warn">단계 날짜가 겹칩니다 (${escapeHtml(spanClash().join(' / '))}) —
         같은 하루가 두 단계에 들어가서 합계가 그만큼 부풉니다.</p>` : ''}` : ''}
+      ${searched ? crossGap() : ''}
       ${searched ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
         <thead><tr><th>매체 · 광고그룹</th><th class="perf-span-head">집행일자</th><th>광고비</th><th>노출</th><th>클릭</th>
           <th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th><th>CVR<small>구매</small></th><th>CPA</th>
