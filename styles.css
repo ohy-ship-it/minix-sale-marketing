@@ -1024,3 +1024,9 @@ html.embed-mode .content{padding:14px}
 .perf-phase-tilde{color:#b6b4ac;font-size:11px}
 .perf-note.is-warn{color:#a5622f}
 .perf-phase-state{font-size:11px;color:#8c8c85}
+
+/* 하위 메뉴 한 칸 들여쓰기 (행사별 성과 › 프로모션 리스트) */
+.tree-item.is-sub{padding-left:30px;font-size:11.5px}
+.tree-item.is-sub i{width:13px;height:13px}
+.checker-note{margin:8px 2px 0;font-size:11px;color:#8c8c85;line-height:1.55}
+.checker-note b{font-weight:700;color:#6b6b64}

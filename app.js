@@ -859,6 +859,7 @@ const VIEWS = {
   '광고소재 기획': { section: '#creative-board', hash: '#creative-planning' },
   '광고소재 파일명': { section: '#filename-tool', hash: '#filename' },
   '광고소재 검수': { section: '#creative-checker', hash: '#creative-check' },
+  '프로모션 리스트': { section: '#promo-list', hash: '#promo-list' },
   // hash 는 섹션 id 와 달라야 한다. 같으면 브라우저가 그 요소로 스크롤해 버린다.
   '메타 광고 세팅': { section: '#ad-setup', hash: '#meta-ad-setup' },
   '퍼포먼스일정': { section: '#brand-schedule', hash: '#performance-schedule' },
@@ -887,12 +888,14 @@ document.querySelectorAll('[data-view]').forEach((item) => {
   });
 });
 
-// ── 광고소재 검수 ──────────────────────────────────────────────────
-// 검수 사이트(ad-creative-checker)를 이 화면 안에 띄운다. 행사명 · 문구는 그 사이트에서
-// 직접 적는다 — 워크스페이스에서 값을 넘겨 주지 않는다 (넘기는 다리를 걷어냈다).
-const creativeChecker = document.querySelector('#creative-checker');
-if (creativeChecker) {
-  const frame = creativeChecker.querySelector('iframe');
+// ── 다른 곳 화면을 틀로 끌어다 쓰는 메뉴 ───────────────────────────────
+// 광고소재 검수(ad-creative-checker) · 프로모션 리스트(minix-workspace) 두 곳이다.
+// 값이 그쪽 서버에만 있어서 우리가 다시 그리지 않고 그 화면을 그대로 띄운다.
+// 무거운 화면이라 그 메뉴를 처음 열 때 불러온다 (열지 않으면 아예 안 부른다).
+['#creative-checker', '#promo-list'].forEach((pick) => {
+  const box = document.querySelector(pick);
+  const frame = box && box.querySelector('iframe');
+  if (!frame) return;
 
   const loadFrame = () => {
     if (frame.getAttribute('src')) return;
@@ -900,18 +903,20 @@ if (creativeChecker) {
   };
 
   new MutationObserver(() => {
-    if (creativeChecker.hidden) return;
+    if (box.hidden) return;
     loadFrame();
-  }).observe(creativeChecker, { attributes: true, attributeFilter: ['hidden'] });
+  }).observe(box, { attributes: true, attributeFilter: ['hidden'] });
 
-  if (!creativeChecker.hidden) loadFrame();
+  if (!box.hidden) loadFrame();
 
-  creativeChecker.querySelector('.checker-reload').addEventListener('click', () => {
+  box.querySelector('.checker-reload')?.addEventListener('click', () => {
     frame.removeAttribute('src');
     loadFrame();
   });
-  creativeChecker.querySelector('.checker-open').addEventListener('click', () => window.open(frame.dataset.src, '_blank', 'noopener'));
-}
+  box.querySelector('.checker-open')?.addEventListener('click', () => {
+    window.open(frame.dataset.src, '_blank', 'noopener');
+  });
+});
 
 const openedView = Object.entries(VIEWS).find(([, entry]) => window.location.hash.startsWith(entry.hash));
 if (openedView) document.querySelector(`button[data-view='${openedView[0]}']`)?.click();
