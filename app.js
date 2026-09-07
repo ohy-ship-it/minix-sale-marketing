@@ -128,6 +128,44 @@ if (creativeBoard) {
   const currentWeek = () => weeks.find((week) => week.id === currentWeekId) || null;
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
 
+  // 노션 보드에서 옮겨 온 주차. 브라우저마다 한 번만 넣는다 (지운 것이 되살아나지 않게).
+  const SEED_WEEKS = [{
+    stamp: 'notion-2026-09-1',
+    year: '2026년', month: '9월', week: '1주차',
+    rows: [
+    { name: '[당일] 카카오톡딜위크', event: '카카오톡딜위크', status: '진행 중', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-10' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더max'] },
+    { name: '[사후] 카카오톡딜위크', event: '카카오톡딜위크', status: '진행 중', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-11' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더max'] },
+    { name: '[사전] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널', '구글-디맨드젠'], channel: '네이버', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-12', end: '2026-09-15' }, dueDate: { start: '2026-09-10' }, sku: ['더플렌더mini'] },
+    { name: '[당일] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널', '카카오-CRM', '네이버톡톡-CRM'], channel: '네이버', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-16' }, dueDate: { start: '2026-09-14' }, sku: ['더플렌더mini'] },
+    { name: '[사후] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널'], channel: '네이버', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-17', end: '2026-09-18' }, dueDate: { start: '2026-09-15' }, sku: ['더플렌더mini'] },
+    { name: '[당일] 카카오톡딜위크', event: '카카오톡딜위크', status: '진행 중', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '김서영'], eventDate: { start: '2026-09-10' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더mini'] },
+    { name: '[사후] 카카오톡딜위크', event: '카카오톡딜위크', status: '진행 중', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '김서영'], eventDate: { start: '2026-09-10', end: '2026-09-13' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더mini'] },
+    { name: '[사전]  찰스엔터 KOL', event: '', status: '진행 중', media: ['브랜드검색'], channel: '네이버', owners: ['김서영', '김진빈'], eventDate: { start: '2026-09-12' }, dueDate: { start: '2026-09-10' }, sku: ['더 에어드라이'] },
+    { name: '[당일] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널'], channel: '네이버', owners: ['김서영', '김진빈'], eventDate: { start: '2026-09-16' }, dueDate: { start: '2026-09-14' }, sku: ['더 에어드라이'] },
+    { name: '[사후] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널'], channel: '네이버', owners: ['김서영', '김진빈'], eventDate: { start: '2026-09-17', end: '2026-09-18' }, dueDate: { start: '2026-09-15' }, sku: ['더 에어드라이'] },
+    ],
+  }];
+  const SEEDED_KEY = 'minix-creative-seeded';
+
+  const applySeedWeeks = () => {
+    let done = [];
+    try { done = JSON.parse(localStorage.getItem(SEEDED_KEY) || '[]'); } catch { done = []; }
+    if (!Array.isArray(done)) done = [];
+    let added = false;
+    SEED_WEEKS.forEach((seed) => {
+      if (done.includes(seed.stamp)) return;
+      done.push(seed.stamp);
+      const already = weeks.some((week) => week.year === seed.year
+        && week.month === seed.month && week.week === seed.week);
+      if (already) return;
+      weeks.unshift(normalizeWeek(seed));
+      added = true;
+    });
+    try { localStorage.setItem(SEEDED_KEY, JSON.stringify(done)); } catch { /* 거들기다 */ }
+    if (added) save();
+  };
+  applySeedWeeks();
+
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
   const isIsoDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
@@ -620,9 +658,10 @@ if (creativeBoard) {
         ${anyWeekFilter() ? `<div class="filter-summary"><button type="button" class="week-filter-clear">전체 보기</button><span class="filter-count">${filteredWeeks().length}건 표시</span></div>` : ''}
       </div>
       <div class="week-table-wrap"><table class="week-table">
-        <thead><tr><th>년도</th><th>월</th><th>주차</th><th>건수</th><th class="week-spacer"></th><th>수정</th><th>공유</th><th>삭제</th></tr></thead>
+        <thead><tr><th class="week-grip-head"></th><th>년도</th><th>월</th><th>주차</th><th>건수</th><th class="week-spacer"></th><th>수정</th><th>공유</th><th>삭제</th></tr></thead>
         <tbody>${filteredWeeks().map((week) => (week.id === editingWeekId ? `
           <tr class="week-row is-editing" data-week="${week.id}">
+            <td class="week-grip"></td>
             <td><input class="week-input" data-field="year" value="${escapeHtml(week.year)}" placeholder="2026년"></td>
             <td><select class="week-input" data-field="month">${MONTH_CHOICES.map((name) => `<option${name === week.month ? ' selected' : ''}>${name}</option>`).join('')}</select></td>
             <td><select class="week-input" data-field="week">${WEEK_CHOICES.map((name) => `<option${name === week.week ? ' selected' : ''}>${name}</option>`).join('')}</select></td>
@@ -631,6 +670,8 @@ if (creativeBoard) {
             <td colspan="3"><div class="week-edit-actions"><button type="button" class="week-save">저장</button><button type="button" class="week-cancel">취소</button></div></td>
           </tr>` : `
           <tr class="week-row" data-week="${week.id}">
+            <td class="week-grip"><button type="button" class="week-drag"
+              aria-label="순서 변경" title="끌어서 순서 변경"><i data-lucide="grip-vertical"></i></button></td>
             <td class="week-year">${escapeHtml(week.year)}</td>
             <td class="week-month">${escapeHtml(week.month)}</td>
             <td><span class="chip chip-orange">${escapeHtml(week.week)}</span></td>
@@ -639,10 +680,69 @@ if (creativeBoard) {
             <td><button type="button" class="week-edit" aria-label="수정"><i data-lucide="pencil"></i></button></td>
             <td><button type="button" class="week-share" data-link="${escapeHtml(shareLink(week))}"><i data-lucide="link"></i>복사</button></td>
             <td><button type="button" class="week-delete">삭제</button></td>
-          </tr>`)).join('') || '<tr class="week-empty"><td colspan="8">해당하는 주차가 없습니다.</td></tr>'}</tbody>
+          </tr>`)).join('') || '<tr class="week-empty"><td colspan="9">해당하는 주차가 없습니다.</td></tr>'}</tbody>
       </table></div>`;
     lucide.createIcons();
   };
+
+  // 끌어서 순서 바꾸기. 걸러 보는 중이라도 실제 배열에서 옮긴다 (놓은 줄의 옆자리로).
+  let dragWeekId = null;
+  let dragMoved = false;
+
+  const clearWeekMarks = () => weekList.querySelectorAll('.week-row').forEach((one) => {
+    one.classList.remove('is-over-top', 'is-over-bottom');
+  });
+
+  const moveWeek = (fromId, toId, after) => {
+    const from = weeks.findIndex((week) => week.id === fromId);
+    if (from < 0) return;
+    const [moved] = weeks.splice(from, 1);
+    let to = weeks.findIndex((week) => week.id === toId);
+    if (to < 0) to = weeks.length;
+    else if (after) to += 1;
+    weeks.splice(to, 0, moved);
+    save();
+  };
+
+  const dropAfter = (row, event) => {
+    const box = row.getBoundingClientRect();
+    return event.clientY > box.top + (box.height / 2);
+  };
+
+  // 손잡이를 누른 채 옮긴다. 마우스를 놓을 때까지는 다시 그리지 않는다 (그리면 잡고 있던 것이 사라진다).
+  const weekUnder = (x, y) => document.elementFromPoint(x, y)?.closest?.('.week-row') || null;
+
+  weekList.addEventListener('pointerdown', (event) => {
+    const handle = event.target.closest('.week-drag');
+    if (!handle || event.button !== 0) return;
+    const row = handle.closest('.week-row');
+    if (!row) return;
+    event.preventDefault();
+    dragWeekId = row.dataset.week;
+    dragMoved = false;
+    row.classList.add('is-dragging');
+    try { handle.setPointerCapture(event.pointerId); } catch { /* 거들기다 */ }
+  });
+
+  weekList.addEventListener('pointermove', (event) => {
+    if (!dragWeekId) return;
+    dragMoved = true;
+    const row = weekUnder(event.clientX, event.clientY);
+    clearWeekMarks();
+    if (!row || row.dataset.week === dragWeekId) return;
+    row.classList.add(dropAfter(row, event) ? 'is-over-bottom' : 'is-over-top');
+  });
+
+  const endWeekDrag = (event) => {
+    if (!dragWeekId) return;
+    const row = dragMoved ? weekUnder(event.clientX, event.clientY) : null;
+    if (row && row.dataset.week !== dragWeekId) moveWeek(dragWeekId, row.dataset.week, dropAfter(row, event));
+    dragWeekId = null;
+    renderWeekList();
+  };
+
+  weekList.addEventListener('pointerup', endWeekDrag);
+  weekList.addEventListener('pointercancel', endWeekDrag);
 
   const openWeek = (id) => {
     const week = weeks.find((entry) => entry.id === id);
@@ -702,6 +802,7 @@ if (creativeBoard) {
       renderWeekList();
       return;
     }
+    if (event.target.closest('.week-drag')) return;
     const rowElement = event.target.closest('.week-row');
     if (!rowElement) return;
     const week = weeks.find((entry) => entry.id === rowElement.dataset.week);
