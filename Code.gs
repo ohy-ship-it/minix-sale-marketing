@@ -1835,11 +1835,11 @@ function adsCreatives_(payload) {
   return result;
 }
 
-// ── 광고비에서 부가세 빼기 (카카오모먼트 · 네이버 GFA) ────────────────────
-// 이 두 매체의 보고서 광고비는 부가세를 포함한 금액이라, 화면에는 10% 를 뺀 값을 쓴다.
+// ── 광고비에서 부가세 빼기 (네이버 GFA) ──────────────────────────────────
+// 네이버 GFA 의 보고서 광고비는 부가세를 포함한 금액이라, 화면에는 10% 를 뺀 값을 쓴다.
 // **빼는 건 읽을 때만 한다.** 네이버 시트에는 매체가 준 값이 그대로 남아 있어
-// 언제든 네이버 화면과 맞춰 볼 수 있다. (메타 · 구글은 손대지 않는다)
-// 비율만 고치면 네 화면(매체별 성과 · 소재별 결과 · 상세 · 전매체)이 함께 바뀐다.
+// 언제든 네이버 화면과 맞춰 볼 수 있다.
+// 메타 · 구글 · 카카오모먼트는 손대지 않는다 — 매체가 준 값을 그대로 쓴다.
 var SPEND_NET_RATE = 0.9;
 
 function netSpend_(value) {
@@ -2095,7 +2095,8 @@ function kakaoValue_(metrics, window) {
 // 메타 · 구글과 같은 모양으로 맞춘다. 카카오의 클릭은 한 가지라 linkClicks 에 그대로 넣는다.
 function kakaoMetrics_(metrics, base, window) {
   var found = metrics || {};
-  base.spend = netSpend_(found.cost);
+  // 카카오모먼트는 매체가 준 값을 그대로 쓴다 (메타 · 구글과 같게)
+  base.spend = Number(found.cost || 0);
   base.impressions = Number(found.imp || 0);
   base.clicks = Number(found.click || 0);
   // 카카오톡 채널 메시지(CRM) 캠페인은 노출 · 클릭이 없고 열람(msg_open) · 클릭(msg_click) 으로 온다.

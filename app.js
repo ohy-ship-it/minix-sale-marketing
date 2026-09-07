@@ -1070,10 +1070,10 @@ const PERF_SOURCES = {
   },
 };
 
-// 카카오모먼트 · 네이버 GFA 는 보고서 광고비가 부가세를 포함한 금액이라
-// Code.gs 가 10% 를 뺀 값을 내려 준다. 화면에도 그 사실을 적어 둔다 —
-// 매체 화면 숫자와 다르게 보일 때 왜 그런지 알 수 있어야 한다.
-const PERF_NET_SOURCES = ['kakao', 'naver'];
+// 네이버 GFA 는 보고서 광고비가 부가세를 포함한 금액이라 Code.gs 가 10% 를 뺀 값을
+// 내려 준다. 화면에도 그 사실을 적어 둔다 — 매체 화면 숫자와 다르게 보일 때 왜 그런지
+// 알 수 있어야 한다. (메타 · 구글 · 카카오모먼트는 매체가 준 값 그대로다)
+const PERF_NET_SOURCES = ['naver'];
 const PERF_NET_TEXT = '광고비는 부가세 10%를 뺀 금액입니다';
 
 const PERF_OBJECTIVES = {
@@ -5193,8 +5193,8 @@ if (mediaPerformance) {
           <small>${count(one.rows.length)}줄 · ${money(totalsOf(one.rows).spend)}</small></span>
         </button>`).join('')}
       </div>
-      <p class="perf-mix-note">MIX 의 <b>부가세 설정</b>에서 이 매체들은 체크하지 마세요 —
-        여기 광고비는 이미 부가세를 뺀 금액입니다.${late
+      <p class="perf-mix-note">MIX 의 <b>부가세 설정</b>에서 <b>GFA 는 체크하지 마세요</b> (여기 광고비가
+        이미 부가세를 뺀 금액입니다). 메타 · 구글 · 카카오모먼트는 매체가 준 값 그대로라, MIX 쪽 설정을 따르세요.${late
       ? ' 그리고 MIX 에는 <b>사후</b> 칸이 없습니다 — 사후 파일은 <b>상시</b> 나 <b>Phase 미지정</b> 으로 올리세요.'
       : ''}</p>
     </div>`;
@@ -5363,8 +5363,8 @@ if (mediaPerformance) {
         </tbody>
       </table></div>
       ${phaseBlocks()}
-      <p class="perf-note"><em class="perf-net">카카오모먼트 · 네이버 GFA ${PERF_NET_TEXT}
-        (메타 · 구글은 매체가 준 값 그대로입니다)</em></p>
+      <p class="perf-note"><em class="perf-net">네이버 GFA ${PERF_NET_TEXT}
+        (메타 · 구글 · 카카오모먼트는 매체가 준 값 그대로입니다)</em></p>
       ${found ? '' : `<p class="tool-empty">${busy ? '' : `'${escapeHtml(crossFor)}' 가 들어간 광고그룹을 찾지 못했습니다.`}</p>`}`
       : '<p class="tool-empty">검색어를 넣고 찾기를 누르면 메타 · 구글 · 카카오 · 네이버를 한 번에 훑습니다. 기간과 계정은 각 탭에서 고른 것을 씁니다.</p>'}
       ${busy && !crossWaitOff ? crossWait() : ''}
