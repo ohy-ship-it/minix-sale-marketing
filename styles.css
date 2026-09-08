@@ -514,6 +514,8 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .brand-schedule .board-header{margin-bottom:12px}
 /* 시트 상태 한 줄 + 새로고침 (주간 소재요청과 같은 모양) */
 .brand-schedule .board-header .week-note{margin-right:9px}
+/* 팀 메모 — 시트에서 다시 불러오기 */
+.notes-section .section-heading .week-pull{margin-left:9px}
 .cal-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
 .cal-pick{display:inline-flex;align-items:center;gap:6px}
 .cal-pick select{border:1px solid #e9e9e7;border-radius:5px;background:#fff;color:#37352f;font:500 14px inherit;padding:5px 8px;cursor:pointer}

@@ -775,6 +775,55 @@ function phasePut_(payload) {
   }
 }
 
+// ── 팀 메모 (대시보드 홈) ─────────────────────────────────────────────
+// 이름이 '팀 메모' 인데 그 브라우저에만 있었다. 시트에 한 칸으로 담는다.
+// 여러 사람이 같은 순간에 고치면 뒤에 온 것이 이긴다 — 자물쇠로 겹쳐 쓰는 것만 막는다.
+var NOTE_SHEET_NAME = '팀메모';
+var NOTE_HEADERS = ['메모', '수정자', '수정시각'];
+
+function noteSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(NOTE_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(NOTE_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, NOTE_HEADERS.length).setValues([NOTE_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 620);
+    sheet.getRange('A2').setWrap(true);
+  }
+  return sheet;
+}
+
+function noteGet_() {
+  var sheet = noteSheet_();
+  var line = sheet.getRange(2, 1, 1, NOTE_HEADERS.length).getValues()[0];
+  var when = line[2];
+  return {
+    ok: true,
+    text: String(line[0] === null || line[0] === undefined ? '' : line[0]),
+    updatedBy: String(line[1] || ''),
+    updatedAt: when instanceof Date ? when.toISOString() : String(when || ''),
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+function notePut_(payload) {
+  var text = String((payload && payload.text) || '');
+  var who = String((payload && payload.by) || '');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = noteSheet_();
+    var now = new Date();
+    sheet.getRange(2, 1, 1, NOTE_HEADERS.length).setValues([[text, who, now]]);
+    sheet.getRange('A2').setWrap(true);
+    return { ok: true, saved: text.length, savedAt: now.toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function configList_() {
   var config = ensureConfigSheet_(SpreadsheetApp.openById(SHEET_ID));
   return {
@@ -1011,6 +1060,8 @@ function handleAction_(payload) {
     if (payload.action === 'schedulePut') return schedPut_(payload);
     if (payload.action === 'phaseGet') return phaseGet_();
     if (payload.action === 'phasePut') return phasePut_(payload);
+    if (payload.action === 'noteGet') return noteGet_();
+    if (payload.action === 'notePut') return notePut_(payload);
     if (payload.action === 'configList') return configList_();
     if (payload.action === 'configAdd') return configAdd_(payload);
     if (payload.action === 'tndAppend') return tndAppend_(payload);

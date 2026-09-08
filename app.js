@@ -1025,21 +1025,73 @@ document.querySelectorAll('.segmented button').forEach((button) => {
   });
 });
 
+/* 팀 메모. 이름이 '팀 메모' 인데 그 브라우저에만 있으면 팀이 못 본다 — 시트가 원본이고
+   localStorage 는 사본이다 (시트를 못 읽을 때 화면을 바로 띄우려고 남겨 둔다).
+   여러 사람이 같은 순간에 고치면 뒤에 저장한 것이 이긴다. 남이 고친 것은 새로고침으로 받는다. */
 const teamNote = document.querySelector('#team-note');
 const autosaveStatus = document.querySelector('#autosave-status');
-const savedNote = localStorage.getItem('minix-team-note');
-if (savedNote) teamNote.value = savedNote;
+const notePull = document.querySelector('#note-pull');
+const NOTE_KEY = 'minix-team-note';
+let noteTyped = false;          // 이 사람이 이 화면에서 글을 건드렸는가
+let noteSaveWait = null;
+
+const noteTell = (icon, words) => {
+  autosaveStatus.innerHTML = `<i data-lucide="${icon}"></i>${words}`;
+  lucide.createIcons();
+};
+const noteClock = (value) => {
+  const at = value ? new Date(value) : null;
+  if (!at || Number.isNaN(at.getTime())) return '';
+  return at.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+};
+
+try {
+  const kept = localStorage.getItem(NOTE_KEY);
+  if (kept) teamNote.value = kept;
+} catch { /* 거들기다 */ }
+
+const noteLoad = (mine) => {
+  noteTell('cloud-download', '불러오는 중…');
+  return askSheet({ action: 'noteGet' })
+    .then((body) => {
+      const there = String(body.text || '');
+      // 이 사람이 방금 적고 있는 글은 덮지 않는다. 사람이 새로고침을 누른 때는 시트를 따른다.
+      if (!mine && noteTyped) return;
+      // 시트가 비어 있는데 이 브라우저에만 글이 있으면 그 글을 올려 준다 (잃지 않게)
+      if (!there.trim() && teamNote.value.trim() && !mine) {
+        noteTell('cloud-upload', '이 브라우저에만 있던 메모를 시트에 올립니다');
+        noteSave();
+        return;
+      }
+      teamNote.value = there;
+      try { localStorage.setItem(NOTE_KEY, there); } catch { /* 거들기다 */ }
+      const when = noteClock(body.updatedAt);
+      noteTell('cloud-check', there.trim() ? `시트에서 불러옴${when ? ` · ${when}` : ''}` : '시트에 메모가 없습니다');
+    })
+    .catch((reason) => {
+      noteTell('cloud-off', `시트에서 못 읽었습니다 — 이 브라우저 값만 보입니다 (${reason.message})`);
+    });
+};
+
+const noteSave = () => {
+  try { localStorage.setItem(NOTE_KEY, teamNote.value); } catch { /* 거들기다 */ }
+  if (noteSaveWait) window.clearTimeout(noteSaveWait);
+  noteTell('cloud-upload', '저장 중…');
+  noteSaveWait = window.setTimeout(() => {
+    noteSaveWait = null;
+    askSheet({ action: 'notePut', text: teamNote.value, by: '' })
+      .then((body) => { noteTell('cloud-check', `저장됨${noteClock(body.savedAt) ? ` · ${noteClock(body.savedAt)}` : ''}`); })
+      .catch((reason) => { noteTell('cloud-off', `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`); });
+  }, 900);
+};
 
 teamNote.addEventListener('input', () => {
-  autosaveStatus.innerHTML = '<i data-lucide="cloud-upload"></i>저장 중';
-  lucide.createIcons();
-  clearTimeout(teamNote.saveTimer);
-  teamNote.saveTimer = setTimeout(() => {
-    localStorage.setItem('minix-team-note', teamNote.value);
-    autosaveStatus.innerHTML = '<i data-lucide="cloud-check"></i>자동 저장됨';
-    lucide.createIcons();
-  }, 500);
+  noteTyped = true;
+  noteSave();
 });
+if (notePull) notePull.addEventListener('click', () => noteLoad(true));
+// askSheet 는 이 아래에 선언돼 있다. 스크립트를 다 읽은 뒤에 부른다.
+window.setTimeout(() => noteLoad(false), 0);
 
 // 파일명 적재 시트와 그 시트에 배포한 Apps Script 웹 앱. 파일명 · UTM 빌더 두 화면이 함께 쓴다.
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E/edit';
