@@ -146,7 +146,8 @@ if (creativeBoard) {
     if (weekList && !weekList.hidden) renderWeekList();
     weekSaveWait = window.setTimeout(() => {
       weekSaveWait = null;
-      askSheet({ action: 'weeksPut', weeks: weeks, by: '' })
+      // base = 이 화면이 아는 주차 ID. 시트에만 있고 여기에도 없는 주차는 서버가 살려 둔다.
+      askSheet({ action: 'weeksPut', weeks: weeks, base: knownRead(), by: '' })
         .then(() => {
           knownWrite(weeks.map((one) => one.id));   // 시트가 이제 이 주차들을 안다
           weekNote = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
@@ -3330,7 +3331,8 @@ if (utmBuilder) {
       waitSaveWait = null;
       const mine = entries.filter((entry) => !entry.sent);
       const text = JSON.stringify(mine);
-      askSheet({ action: 'utmWaitPut', rows: mine, by: '' })
+      // base = 이 화면이 아는 대기 줄 ID (설명은 주간소재요청 쪽과 같다)
+      askSheet({ action: 'utmWaitPut', rows: mine, base: knownRead(), by: '' })
         .then(() => {
           waitSent = text;
           knownWrite(mine.map((one) => one.id));
@@ -4106,7 +4108,8 @@ if (brandSchedule) {
     schedTell();
     schedSaveWait = window.setTimeout(() => {
       schedSaveWait = null;
-      askSheet({ action: 'schedulePut', rows: rows, by: '' })
+      // base = 이 화면이 아는 일정 ID (설명은 주간소재요청 쪽과 같다)
+      askSheet({ action: 'schedulePut', rows: rows, base: knownRead(), by: '' })
         .then(() => {
           knownWrite(rows.map((one) => one.id));   // 시트가 이제 이 일정들을 안다
           schedNote = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;

@@ -499,6 +499,29 @@ function configRead_(config, column, width) {
 var WEEKS_SHEET_NAME = '주간소재요청';
 var WEEKS_HEADERS = ['차례', 'ID', '년도', '월', '주차', '카드(JSON)', '수정자', '수정시각'];
 
+// 목록 전체를 받아 시트를 맞추는 저장(주간소재요청 · 퍼포먼스일정 · UTM대기)에 함께 쓴다.
+// 화면이 보내온 base(그 화면이 아는 ID) 와 rows(지금 저장할 줄) 를 놓고,
+// 시트에만 있고 둘 다에 없는 줄을 찾아 준다 — 그 화면이 본 적 없는 줄이라 지우면 안 된다.
+//
+// 이걸 안 하면 오래된 화면이 저장할 때마다 그 뒤에 남이 만든 줄이 사라진다.
+// base 를 안 보내는 옛 화면(배포 전 브라우저)은 아무 것도 못 지우게 둔다 — 안전한 쪽이다.
+function keepUnseen_(sheet, width, idColumn, rows, base) {
+  var last = sheet.getLastRow();
+  if (last < 2) return [];
+  var known = {};
+  (base || []).forEach(function (id) { known[String(id)] = true; });
+  (rows || []).forEach(function (one) { known[String(one && one.id)] = true; });
+
+  var grid = sheet.getRange(2, 1, last - 1, width).getValues();
+  var kept = [];
+  grid.forEach(function (line) {
+    var id = String(line[idColumn - 1] || '').trim();
+    if (!id || known[id]) return;
+    kept.push(line);
+  });
+  return kept;
+}
+
 function weeksSheet_() {
   var book = SpreadsheetApp.openById(SHEET_ID);
   var sheet = book.getSheetByName(WEEKS_SHEET_NAME);
@@ -555,6 +578,8 @@ function weeksPut_(payload) {
   lock.waitLock(20000);
   try {
     var sheet = weeksSheet_();
+    // 이 화면이 본 적 없는 주차는 지우지 않고 뒤에 살려 둔다
+    var kept = keepUnseen_(sheet, WEEKS_HEADERS.length, 2, weeks, payload && payload.base);
     var last = sheet.getLastRow();
     if (last > 1) sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).clearContent();
     if (weeks.length) {
@@ -573,7 +598,10 @@ function weeksPut_(payload) {
       });
       sheet.getRange(2, 1, lines.length, WEEKS_HEADERS.length).setValues(lines);
     }
-    return { ok: true, saved: weeks.length, savedAt: new Date().toISOString() };
+    if (kept.length) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, kept.length, WEEKS_HEADERS.length).setValues(kept);
+    }
+    return { ok: true, saved: weeks.length, kept: kept.length, savedAt: new Date().toISOString() };
   } finally {
     lock.releaseLock();
   }
@@ -651,6 +679,8 @@ function schedPut_(payload) {
   lock.waitLock(20000);
   try {
     var sheet = schedSheet_();
+    // 이 화면이 본 적 없는 일정은 지우지 않고 뒤에 살려 둔다
+    var kept = keepUnseen_(sheet, SCHED_HEADERS.length, 2, rows, payload && payload.base);
     var last = sheet.getLastRow();
     if (last > 1) sheet.getRange(2, 1, last - 1, SCHED_HEADERS.length).clearContent();
     if (rows.length) {
@@ -673,7 +703,10 @@ function schedPut_(payload) {
       });
       sheet.getRange(2, 1, lines.length, SCHED_HEADERS.length).setValues(lines);
     }
-    return { ok: true, saved: rows.length, savedAt: new Date().toISOString() };
+    if (kept.length) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, kept.length, SCHED_HEADERS.length).setValues(kept);
+    }
+    return { ok: true, saved: rows.length, kept: kept.length, savedAt: new Date().toISOString() };
   } finally {
     lock.releaseLock();
   }
@@ -878,6 +911,8 @@ function utmWaitPut_(payload) {
   lock.waitLock(20000);
   try {
     var sheet = utmWaitSheet_();
+    // 이 화면이 본 적 없는 대기 줄은 지우지 않고 뒤에 살려 둔다
+    var kept = keepUnseen_(sheet, UTM_WAIT_HEADERS.length, 2, rows, payload && payload.base);
     var last = sheet.getLastRow();
     if (last > 1) sheet.getRange(2, 1, last - 1, UTM_WAIT_HEADERS.length).clearContent();
     if (rows.length) {
@@ -897,7 +932,10 @@ function utmWaitPut_(payload) {
       });
       sheet.getRange(2, 1, lines.length, UTM_WAIT_HEADERS.length).setValues(lines);
     }
-    return { ok: true, saved: rows.length, savedAt: new Date().toISOString() };
+    if (kept.length) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, kept.length, UTM_WAIT_HEADERS.length).setValues(kept);
+    }
+    return { ok: true, saved: rows.length, kept: kept.length, savedAt: new Date().toISOString() };
   } finally {
     lock.releaseLock();
   }
