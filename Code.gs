@@ -493,6 +493,92 @@ function configRead_(config, column, width) {
   return out;
 }
 
+// ── 주간 소재요청 (광고소재 기획) ─────────────────────────────────────────
+// 브라우저마다 따로 갖고 있으면 다른 PC 에서 안 보인다. 그래서 시트에 담는다.
+// 주차마다 한 줄 · 카드는 한 칸에 JSON (한 칸에 5만 자까지 들어간다).
+var WEEKS_SHEET_NAME = '주간소재요청';
+var WEEKS_HEADERS = ['차례', 'ID', '년도', '월', '주차', '카드(JSON)', '수정자', '수정시각'];
+
+function weeksSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(WEEKS_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(WEEKS_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, WEEKS_HEADERS.length).setValues([WEEKS_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 50);
+    sheet.setColumnWidth(2, 240);
+    sheet.setColumnWidth(6, 520);
+  }
+  return sheet;
+}
+
+function weeksGet_() {
+  var sheet = weeksSheet_();
+  var grid = sheet.getDataRange().getValues();
+  var weeks = [];
+  for (var at = 1; at < grid.length; at++) {
+    var line = grid[at];
+    var id = String(line[1] || '').trim();
+    if (!id) continue;
+    var rows = [];
+    try { rows = JSON.parse(String(line[5] || '[]')) || []; } catch (error) { rows = []; }
+    weeks.push({
+      order: Number(line[0] || at),
+      id: id,
+      year: String(line[2] || ''),
+      month: String(line[3] || ''),
+      week: String(line[4] || ''),
+      rows: rows,
+      updatedBy: String(line[6] || ''),
+      updatedAt: line[7] instanceof Date ? line[7].toISOString() : String(line[7] || '')
+    });
+  }
+  weeks.sort(function (a, b) { return a.order - b.order; });
+  return {
+    ok: true,
+    weeks: weeks,
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+// 화면이 가진 목록 전체를 그대로 받아 시트를 그 모양으로 맞춘다 (차례까지 그대로).
+// 여러 사람이 같은 순간에 저장하면 뒤에 온 것이 이긴다 — 자물쇠로 겹쳐 쓰는 것만 막는다.
+function weeksPut_(payload) {
+  var weeks = (payload && payload.weeks) || [];
+  if (!weeks.length && !(payload && payload.allowEmpty)) {
+    throw new Error('빈 목록으로는 덮어쓰지 않습니다 (실수로 다 지우는 것을 막습니다).');
+  }
+  var who = String((payload && payload.by) || '');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = weeksSheet_();
+    var last = sheet.getLastRow();
+    if (last > 1) sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).clearContent();
+    if (weeks.length) {
+      var now = new Date();
+      var lines = weeks.map(function (one, at) {
+        return [
+          at + 1,
+          String(one.id || ''),
+          String(one.year || ''),
+          String(one.month || ''),
+          String(one.week || ''),
+          JSON.stringify(one.rows || []),
+          who,
+          now
+        ];
+      });
+      sheet.getRange(2, 1, lines.length, WEEKS_HEADERS.length).setValues(lines);
+    }
+    return { ok: true, saved: weeks.length, savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function configList_() {
   var config = ensureConfigSheet_(SpreadsheetApp.openById(SHEET_ID));
   return {
@@ -692,6 +778,8 @@ function handleAction_(payload) {
     if (payload.action === 'budgetPlan') return budgetPlan_(payload);
     if (payload.action === 'promoCalendar') return promoCalendar_(payload);
     if (payload.action === 'kolLive') return kolLive_(payload);
+    if (payload.action === 'weeksGet') return weeksGet_();
+    if (payload.action === 'weeksPut') return weeksPut_(payload);
     if (payload.action === 'configList') return configList_();
     if (payload.action === 'configAdd') return configAdd_(payload);
     if (payload.action === 'tndAppend') return tndAppend_(payload);

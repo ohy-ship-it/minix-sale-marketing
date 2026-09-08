@@ -126,7 +126,61 @@ if (creativeBoard) {
   let currentWeekId = null;
   let rows = [];
   const currentWeek = () => weeks.find((week) => week.id === currentWeekId) || null;
-  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
+  /* 시트가 원본이다. localStorage 는 사본 — 화면을 바로 띄우고, 시트를 못 읽을 때 버틴다.
+     저장은 한 박자 모아 한 번만 보낸다 (칸마다 두드릴 때마다 보내면 느리다). */
+  let weekSaveWait = null;
+  let weekNote = '';                 // 화면 위에 적어 주는 상태 (불러오는 중 · 저장됨 · 실패)
+  const weekCache = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks)); } catch { /* 거들기다 */ } };
+
+  const save = () => {
+    weekCache();
+    if (weekSaveWait) window.clearTimeout(weekSaveWait);
+    weekNote = '저장 중…';
+    if (weekList && !weekList.hidden) renderWeekList();
+    weekSaveWait = window.setTimeout(() => {
+      weekSaveWait = null;
+      askSheet({ action: 'weeksPut', weeks: weeks, by: '' })
+        .then(() => { weekNote = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`; })
+        .catch((reason) => { weekNote = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
+        .then(() => { if (weekList && !weekList.hidden) renderWeekList(); });
+    }, 700);
+  };
+
+  /* 시트에서 받아 온다.
+     처음 받을 때는 이 브라우저에만 있던 주차를 **버리지 않고 합친다** — 시트에 담기 전에
+     만들어 둔 주차(다른 PC 에서 안 보이던 그것)를 잃지 않게, 그리고 시트로 올려 준다.
+     사람이 새로고침을 누른 때는 시트를 그대로 따른다 — 남이 지운 주차가 되살아나면 안 된다. */
+  let weekPulled = false;
+  const pullWeeks = (mine) => askSheet({ action: 'weeksGet' })
+    .then((body) => {
+      const got = (body.weeks || []).map(normalizeWeek);
+      const first = !weekPulled;
+      weekPulled = true;
+      let push = false;
+      if (first && !mine) {
+        const sameWeek = (a, b) => a.year === b.year && a.month === b.month && a.week === b.week;
+        const onlyHere = weeks.filter((one) => !got.some((there) => there.id === one.id || sameWeek(there, one)));
+        weeks = got.concat(onlyHere);
+        push = onlyHere.length > 0;
+        if (push) weekNote = `이 브라우저에만 있던 ${onlyHere.length}개를 시트에 올립니다`;
+      } else {
+        weeks = got;
+      }
+      weekCache();
+      if (!push) weekNote = weeks.length ? '' : '시트에 주차가 없습니다';
+      applySeedWeeks();               // 노션에서 옮겨 온 주차는 시트에도 한 번만 넣는다
+      if (push) save();               // 올려 준다 (save 가 알림도 갈아 준다)
+      if (weekList && !weekList.hidden) renderWeekList();
+      if (currentWeekId) {
+        const still = weeks.find((one) => one.id === currentWeekId);
+        if (still) { rows = still.rows; renderBoard(); }
+        else backToList();
+      }
+    })
+    .catch((reason) => {
+      weekNote = `시트를 못 읽었습니다 — ${reason.message} (이 브라우저에 있던 것으로 보여 줍니다)`;
+      if (weekList && !weekList.hidden) renderWeekList();
+    });
 
   // 노션 보드에서 옮겨 온 주차. 브라우저마다 한 번만 넣는다 (지운 것이 되살아나지 않게).
   const SEED_WEEKS = [{
@@ -147,6 +201,8 @@ if (creativeBoard) {
   }];
   const SEEDED_KEY = 'minix-creative-seeded';
 
+  // 노션에서 옮겨 온 주차. 시트에 같은 주차가 없을 때만 한 번 넣는다.
+  // 표시는 이 브라우저에 남긴다 — 지운 뒤 다시 살아나지 않게.
   const applySeedWeeks = () => {
     let done = [];
     try { done = JSON.parse(localStorage.getItem(SEEDED_KEY) || '[]'); } catch { done = []; }
@@ -164,7 +220,6 @@ if (creativeBoard) {
     try { localStorage.setItem(SEEDED_KEY, JSON.stringify(done)); } catch { /* 거들기다 */ }
     if (added) save();
   };
-  applySeedWeeks();
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -648,6 +703,8 @@ if (creativeBoard) {
     weekList.innerHTML = `
       <div class="week-head">
         <h2>주간 소재요청</h2>
+        <span class="week-note">${escapeHtml(weekNote)}</span>
+        <button type="button" class="week-pull" title="시트에서 다시 불러옵니다"><i data-lucide="refresh-cw"></i>새로고침</button>
         <button type="button" class="week-add"><i data-lucide="plus"></i>주간 소재요청 추가</button>
       </div>
       <div class="week-filters">
@@ -768,6 +825,12 @@ if (creativeBoard) {
   };
 
   weekList.addEventListener('click', (event) => {
+    if (event.target.closest('.week-pull')) {
+      weekNote = '시트에서 불러오는 중…';
+      renderWeekList();
+      pullWeeks(true);      // 누른 것은 '시트 그대로' 다 (합치지 않는다)
+      return;
+    }
     if (event.target.closest('.week-add')) {
       const week = normalizeWeek({ year: yearFor(new Date()), month: monthFor(new Date()), week: weekNoFor(new Date()) });
       weeks.unshift(week);
@@ -840,6 +903,12 @@ if (creativeBoard) {
   boardView.querySelector('.back-to-list').addEventListener('click', backToList);
 
   renderWeekList();
+
+  // 사본으로 먼저 그려 두고, 시트에서 받아 오면 그것으로 바꿔 그린다.
+  // 부르는 것은 스크립트가 다 읽힌 뒤에 — askSheet 가 이 아래에 선언돼 있다.
+  weekNote = '시트에서 불러오는 중…';
+  renderWeekList();
+  window.setTimeout(pullWeeks, 0);
 
   const linkedId = window.location.hash.startsWith('#creative-planning/') ? window.location.hash.slice('#creative-planning/'.length) : '';
   if (linkedId && weeks.some((week) => week.id === linkedId)) openWeek(linkedId);

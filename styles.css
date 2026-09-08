@@ -1024,3 +1024,10 @@ html.embed-mode .content{padding:14px}
 .perf-phase-tilde{color:#b6b4ac;font-size:11px}
 .perf-note.is-warn{color:#a5622f}
 .perf-phase-state{font-size:11px;color:#8c8c85}
+
+/* 주간 소재요청 — 시트에서 불러온 상태 · 다시 불러오기 */
+.week-note{margin-left:auto;font-size:11px;color:#8c8c85;white-space:nowrap}
+.week-pull{display:inline-flex;align-items:center;gap:5px;border:1px solid #e3e2dc;border-radius:7px;
+  background:#fff;color:#555;font:600 11px inherit;padding:5px 9px;cursor:pointer}
+.week-pull:hover{background:#f4f4f1}
+.week-pull svg{width:12px}
