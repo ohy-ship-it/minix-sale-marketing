@@ -899,6 +899,7 @@ document.querySelectorAll('.tree-group').forEach((group) => {
 
 // 전용 화면을 가진 메뉴 (그 외에는 대시보드를 보여준다)
 const VIEWS = {
+  '콘텐츠 일정': { section: '#content-schedule', hash: '#content-cal' },
   '광고소재 기획': { section: '#creative-board', hash: '#creative-planning' },
   '광고소재 파일명': { section: '#filename-tool', hash: '#filename' },
   '광고소재 검수': { section: '#creative-checker', hash: '#creative-check' },
@@ -2289,6 +2290,199 @@ if (filenameTool) {
   if (syncEvent()) save();
   render();
   pullSeq();          // 시트의 마지막 번호를 미리 받아 둔다 (발번을 기다리지 않게)
+}
+
+
+// ── 콘텐츠 일정 ────────────────────────────────────────────────────
+// 콘텐츠 일정을 담고 있는 자료는 **주간 소재요청**(시트 '주간소재요청') 뿐이다.
+// 그래서 새 자료를 만들지 않고 그 카드를 달력으로 다시 그린다 (읽기만 한다).
+//   막대는 행사일자에 놓는다. 행사일자가 없으면 마감일 하루에 놓는다.
+//   카드를 누르면 그 주차 보드로 넘어간다 (거기서 고친다).
+// 퍼포먼스일정과 같은 달력 모양(.cal-*)을 그대로 쓴다.
+const contentSchedule = document.querySelector('#content-schedule');
+if (contentSchedule) {
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+  const pad = (n) => String(n).padStart(2, '0');
+  const iso = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const dayOf = (value) => new Date(`${value}T00:00:00`);
+  const addDays = (date, count) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + count);
+  const today = iso(new Date());
+
+  let cards = [];            // { id, weekId, weekName, name, event, status, media[], sku[], owners[], from, to, due }
+  let cursor = today.slice(0, 7);
+  let note = '';
+  let pulled = false;
+
+  const dayText = (value) => (value ? `${Number(value.slice(5, 7))}/${Number(value.slice(8, 10))}` : '');
+
+  // 주차 카드를 달력에 놓을 모양으로 편다
+  const flatten = (weeks) => {
+    const out = [];
+    (weeks || []).forEach((week) => {
+      const weekName = `${week.year} ${week.month} ${week.week}`;
+      (week.rows || []).forEach((row) => {
+        const start = row.eventDate?.start || row.dueDate?.start || '';
+        if (!start) return;                     // 날짜가 없는 카드는 달력에 놓을 자리가 없다
+        out.push({
+          id: row.id, weekId: week.id, weekName,
+          name: row.name || '제목 없음',
+          event: row.event || '',
+          status: row.status || '',
+          media: Array.isArray(row.media) ? row.media : [],
+          sku: Array.isArray(row.sku) ? row.sku : [],
+          owners: Array.isArray(row.owners) ? row.owners : [],
+          from: start,
+          to: row.eventDate?.end || start,
+          due: row.dueDate?.start || '',
+        });
+      });
+    });
+    return out;
+  };
+
+  // 한 주에 걸친 막대를 골라 겹치지 않게 층을 나눈다 (퍼포먼스일정과 같은 방식)
+  const weekSegments = (weekStart) => {
+    const weekEnd = addDays(weekStart, 6);
+    const segments = cards
+      .map((card) => ({ card, from: dayOf(card.from), to: dayOf(card.to) }))
+      .filter((one) => one.to >= weekStart && one.from <= weekEnd)
+      .map((one) => ({
+        card: one.card,
+        start: Math.max(0, Math.round((one.from - weekStart) / 86400000)),
+        end: Math.min(6, Math.round((one.to - weekStart) / 86400000)),
+      }))
+      .sort((a, b) => (a.start - b.start) || ((b.end - b.start) - (a.end - a.start)));
+
+    const lanes = [];
+    segments.forEach((segment) => {
+      let lane = lanes.findIndex((taken) => taken <= segment.start);
+      if (lane < 0) { lanes.push(0); lane = lanes.length - 1; }
+      lanes[lane] = segment.end + 1;
+      segment.lane = lane;
+    });
+    return segments;
+  };
+
+  const years = () => {
+    const now = new Date().getFullYear();
+    const found = cards.map((card) => Number(card.from.slice(0, 4))).filter(Boolean);
+    const from = Math.min(now - 1, ...found);
+    const to = Math.max(now + 1, ...found);
+    return Array.from({ length: to - from + 1 }, (unused, i) => from + i);
+  };
+
+  const render = () => {
+    const [year, month] = cursor.split('-').map(Number);
+    const first = new Date(year, month - 1, 1);
+    const gridStart = addDays(first, -first.getDay());
+    const last = new Date(year, month, 0);
+    const weekCount = Math.ceil((last.getDate() + first.getDay()) / 7);
+
+    const weeks = [];
+    for (let w = 0; w < weekCount; w += 1) {
+      const weekStart = addDays(gridStart, w * 7);
+      const cells = [];
+      const heads = [];
+      for (let d = 0; d < 7; d += 1) {
+        const date = addDays(weekStart, d);
+        const value = iso(date);
+        const outside = date.getMonth() !== month - 1;
+        cells.push(`<div class="cal-cell" data-day="${value}"></div>`);
+        const label = date.getDate() === 1 ? `${date.getMonth() + 1}월 1일` : String(date.getDate());
+        heads.push(`<span class="cal-head-cell" style="grid-column:${d + 1};grid-row:1">
+          <span class="cal-num${outside ? ' is-out' : ''}${value === today ? ' is-today' : ''}">${escapeHtml(label)}</span>
+        </span>`);
+      }
+      weeks.push(`<div class="cal-week">
+        <div class="cal-cells">${cells.join('')}</div>
+        <div class="cal-content">
+          ${heads.join('')}
+          ${weekSegments(weekStart).map((segment) => {
+            const card = segment.card;
+            return `<button type="button" class="cal-card"
+              style="grid-column:${segment.start + 1}/span ${segment.end - segment.start + 1};grid-row:${segment.lane + 2}"
+              data-week="${escapeHtml(card.weekId)}" title="${escapeHtml(card.weekName)} · 눌러서 그 주차 보드로">
+              <span class="cal-card-title">${escapeHtml(card.name)}</span>
+              ${card.sku.length ? `<span class="cal-card-line">${card.sku.map((one) => `<span class="chip chip-blue">${escapeHtml(one)}</span>`).join('')}</span>` : ''}
+              <span class="cal-card-line cal-card-date">${escapeHtml(dayText(card.from))}${card.to !== card.from ? ` ~ ${escapeHtml(dayText(card.to))}` : ''}${card.due ? ` · 마감 ${escapeHtml(dayText(card.due))}` : ''}</span>
+              ${card.media.length ? `<span class="cal-card-line">${card.media.map((one) => `<span class="chip chip-gray">${escapeHtml(one)}</span>`).join('')}</span>` : ''}
+              ${card.owners.length ? `<span class="cal-card-line cal-card-date">${escapeHtml(card.owners.join(' · '))}</span>` : ''}
+            </button>`;
+          }).join('')}
+        </div>
+      </div>`);
+    }
+
+    contentSchedule.innerHTML = `
+      <div class="board-header">
+        <div>
+          <div class="eyebrow">일정관리</div>
+          <h2>콘텐츠 일정</h2>
+        </div>
+        <span class="week-note">${escapeHtml(note)}</span>
+        <button type="button" class="week-pull" title="시트에서 다시 불러옵니다"><i data-lucide="refresh-cw"></i>새로고침</button>
+      </div>
+      <div class="cal-head">
+        <div class="cal-pick">
+          <select class="cal-year" data-jump="year" aria-label="년도">
+            ${years().map((value) => `<option value="${value}"${String(value) === cursor.slice(0, 4) ? ' selected' : ''}>${value}년</option>`).join('')}
+          </select>
+          <select class="cal-month" data-jump="month" aria-label="월">
+            ${Array.from({ length: 12 }, (unused, i) => i + 1).map((value) => `<option value="${value}"${value === month ? ' selected' : ''}>${value}월</option>`).join('')}
+          </select>
+        </div>
+        <p class="tool-hint">주간 소재요청 카드를 달력으로 봅니다. 카드를 누르면 그 주차 보드로 넘어갑니다 — 고치는 것은 거기서 합니다.</p>
+      </div>
+      <div class="cal-grid">
+        <div class="cal-weekdays">${WEEKDAYS.map((one) => `<span>${one}</span>`).join('')}</div>
+        ${weeks.join('')}
+      </div>`;
+    lucide.createIcons();
+  };
+
+  const pull = () => {
+    note = '시트에서 불러오는 중…';
+    render();
+    return askSheet({ action: 'weeksGet' })
+      .then((body) => {
+        cards = flatten((body.weeks || []));
+        pulled = true;
+        note = cards.length ? `소재요청 ${cards.length}건` : '주간 소재요청에 날짜가 있는 카드가 없습니다';
+        render();
+      })
+      .catch((reason) => {
+        note = `시트에서 못 읽었습니다 — ${reason.message}`;
+        render();
+      });
+  };
+
+  contentSchedule.addEventListener('click', (event) => {
+    if (event.target.closest('.week-pull')) { pull(); return; }
+    const card = event.target.closest('[data-week]');
+    if (!card) return;
+    // 그 주차 보드로 넘어간다 (광고소재 기획 화면이 해시를 읽어 그 주차를 연다)
+    window.location.hash = `#creative-planning/${card.dataset.week}`;
+    document.querySelector("button[data-view='광고소재 기획']")?.click();
+  });
+
+  contentSchedule.addEventListener('change', (event) => {
+    const jump = event.target.closest('[data-jump]');
+    if (!jump) return;
+    const [year, month] = cursor.split('-');
+    cursor = jump.dataset.jump === 'year'
+      ? `${jump.value}-${month}`
+      : `${year}-${pad(Number(jump.value))}`;
+    render();
+  });
+
+  // 화면을 열 때 한 번만 받아 온다 (안 보는 사람은 부르지 않는다)
+  new MutationObserver(() => {
+    if (contentSchedule.hidden || pulled) return;
+    pull();
+  }).observe(contentSchedule, { attributes: true, attributeFilter: ['hidden'] });
+  render();
+  if (!contentSchedule.hidden) pull();
 }
 
 // ── 광고자동 세팅 · 메타 광고 세팅 ──────────────────────────────────
