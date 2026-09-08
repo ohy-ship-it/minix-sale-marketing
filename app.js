@@ -916,6 +916,16 @@ if (creativeChecker) {
 const openedView = Object.entries(VIEWS).find(([, entry]) => window.location.hash.startsWith(entry.hash));
 if (openedView) document.querySelector(`button[data-view='${openedView[0]}']`)?.click();
 
+// 다른 워크스페이스가 이 화면을 틀(iframe)로 끌어다 쓸 때는, 부모가 주소의 해시만 바꿔
+// 화면을 옮긴다 (같은 문서라 다시 읽히지 않는다). 그래서 해시가 바뀌면 그 화면으로 옮겨 준다.
+// 메뉴를 눌러 바뀌는 해시는 replaceState 라 이 일이 안 일어나므로 서로 부딪히지 않는다.
+window.addEventListener('hashchange', () => {
+  const want = Object.entries(VIEWS).find(([, entry]) => window.location.hash.startsWith(entry.hash));
+  if (!want) return;
+  const button = document.querySelector(`button[data-view='${want[0]}']`);
+  if (button && !button.classList.contains('is-active')) button.click();
+});
+
 document.querySelectorAll('.week-button').forEach((button) => {
   button.addEventListener('click', () => {
     document.querySelectorAll('.week-button').forEach((entry) => entry.classList.remove('active'));
