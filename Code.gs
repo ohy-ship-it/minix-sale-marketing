@@ -631,6 +631,37 @@ function configAdd_(payload) {
 // 파일명 화면이 적재해 둔 이 시트가 팀이 함께 보는 기준이므로 여기서 행사명 · 매체를 읽는다.
 var RECENT_LIMIT = 80;
 
+// ── 파일명 순번 ────────────────────────────────────────────────────
+// 발번은 브라우저에서 하지만, 다음 번호를 그 브라우저 기록으로만 세면 PC 마다 같은 번호가
+// 나온다. 적재 시트가 원본이다 — 파트 탭들의 '파일명' 칸을 훑어 코드마다 가장 큰 번호를
+// 알려 주고, 화면은 그 위에서 이어 쓴다.
+//
+// 파일명은 `코드-순번` 이고 코드 안에도 붙임표가 있다 (promotion-2, 1miniute-secondaryUse).
+// 그래서 앞은 길게 먹고 맨 뒤의 `-숫자` 만 순번으로 본다. 뒤에 (세로) 가 붙어 있어도 된다.
+var SEQ_RULE = /^([A-Za-z0-9][A-Za-z0-9_-]*)-(\d+)/;
+
+function filenameSeq_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var top = {};
+  var read = 0;
+  PART_SHEETS.forEach(function (name) {
+    var sheet = book.getSheetByName(name);
+    if (!sheet) return;
+    var last = sheet.getLastRow();
+    if (last < 2) return;
+    var at = headerMap_(sheet)['파일명'];
+    if (!at) return;
+    sheet.getRange(2, at, last - 1, 1).getValues().forEach(function (line) {
+      var found = SEQ_RULE.exec(String(line[0]).trim());
+      if (!found) return;
+      read += 1;
+      var code = found[1];
+      top[code] = Math.max(top[code] || 0, Number(found[2]));
+    });
+  });
+  return { ok: true, top: top, read: read };
+}
+
 function filenameRecent_(payload) {
   var book = SpreadsheetApp.openById(SHEET_ID);
   var want = String((payload && payload.sheet) || '').trim();
@@ -786,6 +817,7 @@ function handleAction_(payload) {
     if (payload.action === 'tndTop') return tndTop_(payload);
     if (payload.action === 'tndFilenames') return tndFilenames_(payload);
     if (payload.action === 'filenameRecent') return filenameRecent_(payload);
+    if (payload.action === 'filenameSeq') return filenameSeq_();
     return { ok: false, error: '모르는 요청입니다: ' + payload.action };
   } catch (error) {
     return { ok: false, error: String(error && error.message ? error.message : error) };

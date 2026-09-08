@@ -1669,11 +1669,45 @@ if (filenameTool) {
     return [stamp, state.product, state.channel, state.event.trim()].filter(Boolean).join('_');
   };
 
+  /* 시트에 이미 나간 마지막 번호. 이 브라우저 기록만 세면 다른 PC 에서 발번한 번호와
+     겹친다 — 적재 시트가 원본이다. 받아 두고 그 위에서 이어 쓴다. */
+  let sheetTop = {};          // 코드 → 시트에 있는 가장 큰 번호
+  let seqState = 'idle';      // idle · loading · done · fail
+  let seqNote = '';
+  let seqWait = null;         // 받아 오는 중인 약속 (발번을 여기에 매단다)
+
+  const pullSeq = () => {
+    if (seqWait) return seqWait;
+    seqState = 'loading';
+    seqWait = window.fetch(SHEET_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'filenameSeq' }),
+    })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
+      .then((data) => {
+        if (!data || !data.ok) throw new Error((data && data.error) || '순번을 읽지 못했습니다');
+        sheetTop = data.top || {};
+        seqState = 'done';
+        seqNote = '';
+      })
+      .catch((error) => {
+        // 못 읽어도 발번은 막지 않는다. 대신 번호가 이 브라우저 기준이라고 알린다.
+        seqState = 'fail';
+        seqNote = `시트에서 마지막 번호를 못 읽었습니다 — 이 브라우저 기록으로 번호를 붙입니다 (${error.message})`;
+      })
+      .then(() => {
+        seqWait = null;
+        if (!filenameTool.hidden && !modal.open && !typeOpen) render();
+      });
+    return seqWait;
+  };
+
   // 파일명 = 메시지코드-순번 (시트의 마지막 번호에서 이어서)
   const nextSequence = (code) => {
     const base = (SEQ_BASE.find(([c]) => c === code) || [, 0])[1];
     const mine = issued.filter((entry) => entry.code === code).map((entry) => entry.seq);
-    return Math.max(base, watermark[code] || 0, ...mine, 0) + 1;
+    return Math.max(base, sheetTop[code] || 0, watermark[code] || 0, ...mine, 0) + 1;
   };
 
   const scrollToList = () => {
@@ -1682,9 +1716,21 @@ if (filenameTool) {
     try { head.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch { /* 스크롤 미지원 환경 */ }
   };
 
+  /* 시트를 아직 못 읽었으면 기다린 뒤에 붙인다. 겹친 번호를 내주지 않게.
+     못 읽는 것으로 끝난 때(fail)는 막지 않고 이 브라우저 기록으로 붙인다. */
   const issueOne = () => {
     const code = codeOf(state.type);
     if (!code) return;
+    if (seqState === 'idle' || seqState === 'loading') {
+      seqNote = '시트에서 마지막 번호를 확인하는 중…';
+      render();
+      pullSeq().then(() => issueNumber(code));
+      return;
+    }
+    issueNumber(code);
+  };
+
+  const issueNumber = (code) => {
     const seq = nextSequence(code);
     issued = [{
       id: newId(),
@@ -1785,6 +1831,7 @@ if (filenameTool) {
       .then(() => {
         // UTM 시트는 끝났다. T&D 쪽이 실패해도 발번은 이미 적재된 것이라 되돌리지 않는다.
         markSent(list);
+        pullSeq();          // 방금 넣은 줄까지 시트 기준으로 다시 받아 둔다
         return sendToTnd(list)
           .then((answers) => {
             // 매체 계열마다 탭이 하나씩이라 여러 탭에 나뉘어 들어간다
@@ -1949,7 +1996,8 @@ if (filenameTool) {
   const render = () => {
     const code = codeOf(state.type);
     const seq = code ? nextSequence(code) : 0;
-    const preview = code ? `${code}-${seq}` : '';
+    // 시트를 아직 안 읽었으면 번호를 미리 못 보여 준다 (옛 번호를 띄우면 오해한다)
+    const preview = code ? (seqState === 'idle' || seqState === 'loading' ? `${code}-…` : `${code}-${seq}`) : '';
     filenameTool.innerHTML = `
       <div class="tool-head">
         <h2>광고소재 파일명</h2>
@@ -2017,6 +2065,7 @@ if (filenameTool) {
           <i data-lucide="external-link"></i>적재확인(T&amp;D)</button>
         <small>입력값과 발번 목록을 모두 비웁니다. 이미 나간 번호는 다시 쓰지 않습니다.</small>
       </div>
+      ${seqNote ? `<p class="tool-seq-note${seqState === 'fail' ? ' is-warn' : ''}">${escapeHtml(seqNote)}</p>` : ''}
       ${tndNote ? `<p class="tool-tnd-note">${escapeHtml(tndNote)}</p>` : ''}`;
     lucide.createIcons();
   };
@@ -2213,6 +2262,7 @@ if (filenameTool) {
   // 처음 열 때도 행사명을 채워 둔다 (날짜는 오늘, 채널은 목록 첫 값이 들어가 있다)
   if (syncEvent()) save();
   render();
+  pullSeq();          // 시트의 마지막 번호를 미리 받아 둔다 (발번을 기다리지 않게)
 }
 
 // ── 광고자동 세팅 · 메타 광고 세팅 ──────────────────────────────────

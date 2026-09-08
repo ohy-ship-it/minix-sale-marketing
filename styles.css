@@ -916,6 +916,11 @@ body:has(#budget-plan:not([hidden])) .content-tabs,body:has(#kol-live:not([hidde
 .tool-tnd-note{margin:8px 2px 0;padding:8px 11px;border-radius:8px;background:#f3f8f4;
   border:1px solid #dfeade;font-size:11.5px;color:#3b6b47}
 
+/* 시트에서 마지막 번호를 받아 오는 중 · 못 받았을 때 */
+.tool-seq-note{margin:8px 2px 0;padding:8px 11px;border-radius:8px;background:#f4f6fa;
+  border:1px solid #dde3ec;font-size:11.5px;color:#4a5769}
+.tool-seq-note.is-warn{background:#fdf6ee;border-color:#f0dfc8;color:#8a5a1f}
+
 /* 입력 칸 + 복사 단추 (행사명) */
 .tool-with-copy{display:flex;align-items:stretch;gap:6px}
 .tool-with-copy input{flex:1;min-width:0}
