@@ -941,6 +941,111 @@ function utmWaitPut_(payload) {
   }
 }
 
+// ── 소재 수급 일정 (일정관리 · 콘텐츠 일정) ────────────────────────────
+// 노션 '[콘마] 소재 수급 일정' 의 '행사 광고 일정' 표를 그대로 옮긴 것이다.
+// 칸 이름도 노션과 같게 둔다 — 옮겨 적을 때 헷갈리지 않게.
+//   이름 · SKU · 전달 일자 · 수급 일자 · 광고 매체 · 참고사항 · 담당자
+// 달력은 **전달 일자**에 놓고 카드에는 수급 일자를 적는다 (노션 보기와 같다).
+// 아이콘 · 색은 노션 카드에 보이던 것이라 함께 담는다.
+var SUPPLY_SHEET_NAME = '소재수급일정';
+var SUPPLY_HEADERS = ['차례', 'ID', '아이콘', '이름', 'SKU', '전달 일자', '수급 일자',
+  '광고 매체', '참고사항', '담당자', '색', '수정자', '수정시각'];
+
+function supplySheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(SUPPLY_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(SUPPLY_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, SUPPLY_HEADERS.length).setValues([SUPPLY_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 50);
+    sheet.setColumnWidth(2, 240);
+    sheet.setColumnWidth(3, 60);
+    sheet.setColumnWidth(4, 300);
+    sheet.setColumnWidth(5, 200);
+    sheet.setColumnWidth(8, 200);
+    sheet.setColumnWidth(9, 260);
+  }
+  return sheet;
+}
+
+function supplyGet_() {
+  var sheet = supplySheet_();
+  var grid = sheet.getDataRange().getValues();
+  var rows = [];
+  for (var at = 1; at < grid.length; at++) {
+    var line = grid[at];
+    var id = String(line[1] || '').trim();
+    if (!id) continue;
+    rows.push({
+      order: Number(line[0] || at),
+      id: id,
+      icon: String(line[2] || ''),
+      name: String(line[3] || ''),
+      sku: schedList_(line[4]),
+      hand: naverDay_(line[5]),       // 전달 일자 (달력에 놓는 날)
+      take: naverDay_(line[6]),       // 수급 일자 (카드에 적는 날)
+      media: schedList_(line[7]),
+      note: String(line[8] || ''),
+      owners: schedList_(line[9]),
+      color: String(line[10] || ''),
+      updatedBy: String(line[11] || ''),
+      updatedAt: line[12] instanceof Date ? line[12].toISOString() : String(line[12] || '')
+    });
+  }
+  rows.sort(function (a, b) { return a.order - b.order; });
+  return {
+    ok: true,
+    rows: rows,
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+// 화면이 가진 목록 전체를 그대로 받아 맞춘다. 본 적 없는 줄은 지우지 않는다 (keepUnseen_).
+function supplyPut_(payload) {
+  var rows = (payload && payload.rows) || [];
+  if (!rows.length && !(payload && payload.allowEmpty)) {
+    throw new Error('빈 목록으로는 덮어쓰지 않습니다 (실수로 다 지우는 것을 막습니다).');
+  }
+  var who = String((payload && payload.by) || '');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = supplySheet_();
+    var kept = keepUnseen_(sheet, SUPPLY_HEADERS.length, 2, rows, payload && payload.base);
+    var last = sheet.getLastRow();
+    if (last > 1) sheet.getRange(2, 1, last - 1, SUPPLY_HEADERS.length).clearContent();
+    if (rows.length) {
+      var now = new Date();
+      var lines = rows.map(function (one, at) {
+        return [
+          at + 1,
+          String(one.id || ''),
+          String(one.icon || ''),
+          String(one.name || ''),
+          (one.sku || []).join(', '),
+          String(one.hand || ''),
+          String(one.take || ''),
+          (one.media || []).join(', '),
+          String(one.note || ''),
+          (one.owners || []).join(', '),
+          String(one.color || ''),
+          who,
+          now
+        ];
+      });
+      sheet.getRange(2, 1, lines.length, SUPPLY_HEADERS.length).setValues(lines);
+    }
+    if (kept.length) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, kept.length, SUPPLY_HEADERS.length).setValues(kept);
+    }
+    return { ok: true, saved: rows.length, kept: kept.length, savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function configList_() {
   var config = ensureConfigSheet_(SpreadsheetApp.openById(SHEET_ID));
   return {
@@ -1181,6 +1286,8 @@ function handleAction_(payload) {
     if (payload.action === 'notePut') return notePut_(payload);
     if (payload.action === 'utmWaitGet') return utmWaitGet_();
     if (payload.action === 'utmWaitPut') return utmWaitPut_(payload);
+    if (payload.action === 'supplyGet') return supplyGet_();
+    if (payload.action === 'supplyPut') return supplyPut_(payload);
     if (payload.action === 'configList') return configList_();
     if (payload.action === 'configAdd') return configAdd_(payload);
     if (payload.action === 'tndAppend') return tndAppend_(payload);

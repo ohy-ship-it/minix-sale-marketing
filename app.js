@@ -2293,12 +2293,12 @@ if (filenameTool) {
 }
 
 
-// ── 콘텐츠 일정 ────────────────────────────────────────────────────
-// 콘텐츠 일정을 담고 있는 자료는 **주간 소재요청**(시트 '주간소재요청') 뿐이다.
-// 그래서 새 자료를 만들지 않고 그 카드를 달력으로 다시 그린다 (읽기만 한다).
-//   막대는 행사일자에 놓는다. 행사일자가 없으면 마감일 하루에 놓는다.
-//   카드를 누르면 그 주차 보드로 넘어간다 (거기서 고친다).
-// 퍼포먼스일정과 같은 달력 모양(.cal-*)을 그대로 쓴다.
+// ── 콘텐츠 일정 · [콘마] 소재 수급 일정 ─────────────────────────────────
+// 노션 '[콘마] 소재 수급 일정' 페이지를 그대로 옮긴 화면이다.
+//   https://cherry-geometry-59b.notion.site/39c6f442e191806c9d21f146f1e99703
+// 칸 이름도 노션과 같다: 이름 · SKU · 전달 일자 · 수급 일자 · 광고 매체 · 참고사항 · 담당자
+//   달력은 **전달 일자**에 놓고, 카드에는 수급 일자를 적는다 (노션 보기와 같은 규칙).
+//   보기는 둘이다 — 캘린더 보기(읽기) · 표(고치기). 값은 시트 '소재수급일정' 에 있다.
 const contentSchedule = document.querySelector('#content-schedule');
 if (contentSchedule) {
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -2308,71 +2308,117 @@ if (contentSchedule) {
   const dayOf = (value) => new Date(`${value}T00:00:00`);
   const addDays = (date, count) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + count);
   const today = iso(new Date());
+  const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const listOf = (value) => (Array.isArray(value) ? value : String(value || '').split(','))
+    .map((one) => String(one).trim()).filter(Boolean);
 
-  let cards = [];            // { id, weekId, weekName, name, event, status, media[], sku[], owners[], from, to, due }
+  // 노션에서 쓰던 칩 색. SKU · 담당자는 정해진 색이 있고, 나머지는 회색이다.
+  const SKU_COLOR = [['MAX', 'red'], ['mini', 'brown'], ['에어드라이', 'purple'],
+    ['시프트', 'green'], ['슬림', 'blue']];
+  const OWNER_COLOR = [['이정민', 'blue'], ['김서영', 'purple'], ['오해영', 'orange'], ['김진빈', 'green']];
+  const colorOf = (table, name) => (table.find(([mark]) => String(name).indexOf(mark) >= 0) || [, 'gray'])[1];
+  const chip = (name, tone) => `<span class="sup-chip is-${tone}">${escapeHtml(name)}</span>`;
+
+  const KEY = 'minix-supply-v1';               // 사본 (시트를 못 읽을 때 화면을 띄운다)
+  const KNOWN_KEY = 'minix-supply-known';
+  const knownRead = () => {
+    try {
+      const kept = JSON.parse(localStorage.getItem(KNOWN_KEY) || '[]');
+      return Array.isArray(kept) ? kept : [];
+    } catch { return []; }
+  };
+  const knownWrite = (ids) => { try { localStorage.setItem(KNOWN_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ } };
+
+  const normalize = (row = {}) => ({
+    id: row.id || newId(),
+    icon: row.icon || '',
+    name: row.name || '',
+    sku: listOf(row.sku),
+    hand: /^\d{4}-\d{2}-\d{2}$/.test(row.hand || '') ? row.hand : '',
+    take: /^\d{4}-\d{2}-\d{2}$/.test(row.take || '') ? row.take : '',
+    media: listOf(row.media),
+    note: row.note || '',
+    owners: listOf(row.owners),
+    color: row.color || '',
+  });
+
+  let rows = [];
+  try {
+    const kept = JSON.parse(localStorage.getItem(KEY) || 'null');
+    rows = Array.isArray(kept) ? kept.map(normalize) : [];
+  } catch { rows = []; }
+
+  let view = 'cal';                            // cal | table
   let cursor = today.slice(0, 7);
   let note = '';
   let pulled = false;
+  let saveWait = null;
 
-  const dayText = (value) => (value ? `${Number(value.slice(5, 7))}/${Number(value.slice(8, 10))}` : '');
+  const cache = () => { try { localStorage.setItem(KEY, JSON.stringify(rows)); } catch { /* 거들기다 */ } };
 
-  // 주차 카드를 달력에 놓을 모양으로 편다
-  const flatten = (weeks) => {
-    const out = [];
-    (weeks || []).forEach((week) => {
-      const weekName = `${week.year} ${week.month} ${week.week}`;
-      (week.rows || []).forEach((row) => {
-        const start = row.eventDate?.start || row.dueDate?.start || '';
-        if (!start) return;                     // 날짜가 없는 카드는 달력에 놓을 자리가 없다
-        out.push({
-          id: row.id, weekId: week.id, weekName,
-          name: row.name || '제목 없음',
-          event: row.event || '',
-          status: row.status || '',
-          media: Array.isArray(row.media) ? row.media : [],
-          sku: Array.isArray(row.sku) ? row.sku : [],
-          owners: Array.isArray(row.owners) ? row.owners : [],
-          from: start,
-          to: row.eventDate?.end || start,
-          due: row.dueDate?.start || '',
-        });
-      });
+  const save = () => {
+    cache();
+    if (saveWait) window.clearTimeout(saveWait);
+    note = '저장 중…';
+    tell();
+    saveWait = window.setTimeout(() => {
+      saveWait = null;
+      askSheet({ action: 'supplyPut', rows: rows, base: knownRead(), by: '' })
+        .then(() => {
+          knownWrite(rows.map((one) => one.id));
+          note = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
+        })
+        .catch((reason) => { note = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
+        .then(tell);
+    }, 700);
+  };
+
+  const tell = () => {
+    const box = contentSchedule.querySelector('.week-note');
+    if (box) box.textContent = note;
+  };
+
+  const pull = (mine) => askSheet({ action: 'supplyGet' })
+    .then((body) => {
+      const got = (body.rows || []).map(normalize);
+      const first = !pulled;
+      pulled = true;
+      let push = false;
+      if (first && !mine) {
+        const known = knownRead();
+        const onlyHere = rows.filter((one) => !known.includes(one.id) && !got.some((there) => there.id === one.id));
+        rows = got.concat(onlyHere);
+        push = onlyHere.length > 0;
+      } else {
+        rows = got;
+      }
+      cache();
+      knownWrite(got.map((one) => one.id));
+      if (!push) note = rows.length ? '' : '시트에 일정이 없습니다';
+      render();
+      if (push) save();
+    })
+    .catch((reason) => {
+      note = `시트에서 못 읽었습니다 — ${reason.message} (이 브라우저 값만 보입니다)`;
+      render();
     });
-    return out;
-  };
 
-  // 한 주에 걸친 막대를 골라 겹치지 않게 층을 나눈다 (퍼포먼스일정과 같은 방식)
-  const weekSegments = (weekStart) => {
-    const weekEnd = addDays(weekStart, 6);
-    const segments = cards
-      .map((card) => ({ card, from: dayOf(card.from), to: dayOf(card.to) }))
-      .filter((one) => one.to >= weekStart && one.from <= weekEnd)
-      .map((one) => ({
-        card: one.card,
-        start: Math.max(0, Math.round((one.from - weekStart) / 86400000)),
-        end: Math.min(6, Math.round((one.to - weekStart) / 86400000)),
-      }))
-      .sort((a, b) => (a.start - b.start) || ((b.end - b.start) - (a.end - a.start)));
+  // ── 달력 ──────────────────────────────────────────────────────
+  const dayText = (value) => (value
+    ? `${Number(value.slice(0, 4))}년 ${Number(value.slice(5, 7))}월 ${Number(value.slice(8, 10))}일`
+    : '');
 
-    const lanes = [];
-    segments.forEach((segment) => {
-      let lane = lanes.findIndex((taken) => taken <= segment.start);
-      if (lane < 0) { lanes.push(0); lane = lanes.length - 1; }
-      lanes[lane] = segment.end + 1;
-      segment.lane = lane;
-    });
-    return segments;
-  };
+  const cardsOn = (value) => rows.filter((row) => row.hand === value);
 
-  const years = () => {
-    const now = new Date().getFullYear();
-    const found = cards.map((card) => Number(card.from.slice(0, 4))).filter(Boolean);
-    const from = Math.min(now - 1, ...found);
-    const to = Math.max(now + 1, ...found);
-    return Array.from({ length: to - from + 1 }, (unused, i) => from + i);
-  };
+  const cardHtml = (row) => `<button type="button" class="sup-card${row.color === '주황' ? ' is-warm' : ''}" data-open="${escapeHtml(row.id)}">
+    <span class="sup-card-name">${row.icon ? `<em class="sup-icon">${escapeHtml(row.icon)}</em>` : ''}${escapeHtml(row.name) || '제목 없음'}</span>
+    ${row.sku.length ? `<span class="sup-line">${row.sku.map((one) => chip(one, colorOf(SKU_COLOR, one))).join('')}</span>` : ''}
+    ${row.take ? `<span class="sup-date">${escapeHtml(dayText(row.take))}</span>` : ''}
+    ${row.note ? `<span class="sup-note">${escapeHtml(row.note)}</span>` : ''}
+    ${row.owners.length ? `<span class="sup-line">${row.owners.map((one) => chip(one, colorOf(OWNER_COLOR, one))).join('')}</span>` : ''}
+  </button>`;
 
-  const render = () => {
+  const calendar = () => {
     const [year, month] = cursor.split('-').map(Number);
     const first = new Date(year, month - 1, 1);
     const gridStart = addDays(first, -first.getDay());
@@ -2381,108 +2427,166 @@ if (contentSchedule) {
 
     const weeks = [];
     for (let w = 0; w < weekCount; w += 1) {
-      const weekStart = addDays(gridStart, w * 7);
       const cells = [];
-      const heads = [];
       for (let d = 0; d < 7; d += 1) {
-        const date = addDays(weekStart, d);
+        const date = addDays(gridStart, w * 7 + d);
         const value = iso(date);
         const outside = date.getMonth() !== month - 1;
-        cells.push(`<div class="cal-cell" data-day="${value}"></div>`);
+        const weekend = d === 0 || d === 6;
         const label = date.getDate() === 1 ? `${date.getMonth() + 1}월 1일` : String(date.getDate());
-        heads.push(`<span class="cal-head-cell" style="grid-column:${d + 1};grid-row:1">
-          <span class="cal-num${outside ? ' is-out' : ''}${value === today ? ' is-today' : ''}">${escapeHtml(label)}</span>
-        </span>`);
+        cells.push(`<div class="sup-cell${outside ? ' is-out' : ''}${weekend ? ' is-weekend' : ''}">
+          <span class="sup-day${value === today ? ' is-today' : ''}">${escapeHtml(label)}</span>
+          ${cardsOn(value).map(cardHtml).join('')}
+        </div>`);
       }
-      weeks.push(`<div class="cal-week">
-        <div class="cal-cells">${cells.join('')}</div>
-        <div class="cal-content">
-          ${heads.join('')}
-          ${weekSegments(weekStart).map((segment) => {
-            const card = segment.card;
-            return `<button type="button" class="cal-card"
-              style="grid-column:${segment.start + 1}/span ${segment.end - segment.start + 1};grid-row:${segment.lane + 2}"
-              data-week="${escapeHtml(card.weekId)}" title="${escapeHtml(card.weekName)} · 눌러서 그 주차 보드로">
-              <span class="cal-card-title">${escapeHtml(card.name)}</span>
-              ${card.sku.length ? `<span class="cal-card-line">${card.sku.map((one) => `<span class="chip chip-blue">${escapeHtml(one)}</span>`).join('')}</span>` : ''}
-              <span class="cal-card-line cal-card-date">${escapeHtml(dayText(card.from))}${card.to !== card.from ? ` ~ ${escapeHtml(dayText(card.to))}` : ''}${card.due ? ` · 마감 ${escapeHtml(dayText(card.due))}` : ''}</span>
-              ${card.media.length ? `<span class="cal-card-line">${card.media.map((one) => `<span class="chip chip-gray">${escapeHtml(one)}</span>`).join('')}</span>` : ''}
-              ${card.owners.length ? `<span class="cal-card-line cal-card-date">${escapeHtml(card.owners.join(' · '))}</span>` : ''}
-            </button>`;
-          }).join('')}
-        </div>
-      </div>`);
+      weeks.push(`<div class="sup-week">${cells.join('')}</div>`);
     }
 
-    contentSchedule.innerHTML = `
-      <div class="board-header">
-        <div>
-          <div class="eyebrow">일정관리</div>
-          <h2>콘텐츠 일정</h2>
-        </div>
-        <span class="week-note">${escapeHtml(note)}</span>
-        <button type="button" class="week-pull" title="시트에서 다시 불러옵니다"><i data-lucide="refresh-cw"></i>새로고침</button>
+    return `<div class="sup-cal-head">
+        <b>${year}년 ${month}월</b>
+        <span class="sup-nav">
+          <button type="button" class="sup-arrow" data-move="-1" aria-label="지난 달"><i data-lucide="chevron-left"></i></button>
+          <button type="button" class="sup-today" data-move="0">오늘</button>
+          <button type="button" class="sup-arrow" data-move="1" aria-label="다음 달"><i data-lucide="chevron-right"></i></button>
+        </span>
       </div>
-      <div class="cal-head">
-        <div class="cal-pick">
-          <select class="cal-year" data-jump="year" aria-label="년도">
-            ${years().map((value) => `<option value="${value}"${String(value) === cursor.slice(0, 4) ? ' selected' : ''}>${value}년</option>`).join('')}
-          </select>
-          <select class="cal-month" data-jump="month" aria-label="월">
-            ${Array.from({ length: 12 }, (unused, i) => i + 1).map((value) => `<option value="${value}"${value === month ? ' selected' : ''}>${value}월</option>`).join('')}
-          </select>
-        </div>
-        <p class="tool-hint">주간 소재요청 카드를 달력으로 봅니다. 카드를 누르면 그 주차 보드로 넘어갑니다 — 고치는 것은 거기서 합니다.</p>
-      </div>
-      <div class="cal-grid">
-        <div class="cal-weekdays">${WEEKDAYS.map((one) => `<span>${one}</span>`).join('')}</div>
+      <div class="sup-grid">
+        <div class="sup-weekdays">${WEEKDAYS.map((one) => `<span>${one}</span>`).join('')}</div>
         ${weeks.join('')}
+      </div>`;
+  };
+
+  // ── 표 ────────────────────────────────────────────────────────
+  const COLUMNS = [
+    ['icon', '아이콘', 'text'],
+    ['name', '이름', 'text'],
+    ['sku', 'SKU', 'list'],
+    ['hand', '전달 일자', 'date'],
+    ['take', '수급 일자', 'date'],
+    ['media', '광고 매체', 'list'],
+    ['note', '참고사항', 'text'],
+    ['owners', '담당자', 'list'],
+  ];
+
+  const table = () => `<div class="tool-table-wrap">
+      <table class="tool-table sup-table">
+        <thead><tr>${COLUMNS.map(([, label]) => `<th>${label}</th>`).join('')}<th>색</th><th></th></tr></thead>
+        <tbody>${rows.map((row) => `<tr data-id="${escapeHtml(row.id)}">
+          ${COLUMNS.map(([key, , kind]) => `<td>${kind === 'date'
+            ? `<input type="date" data-cell="${key}" value="${escapeHtml(row[key])}">`
+            : `<input type="text" data-cell="${key}" value="${escapeHtml(kind === 'list' ? row[key].join(', ') : row[key])}"${kind === 'list' ? ' placeholder="쉼표로 여러 개"' : ''}>`}</td>`).join('')}
+          <td><select data-cell="color"><option value=""${row.color ? '' : ' selected'}>기본</option><option value="주황"${row.color === '주황' ? ' selected' : ''}>주황</option></select></td>
+          <td><button type="button" class="tool-row-drop" data-drop="${escapeHtml(row.id)}" title="줄 지우기"><i data-lucide="trash-2"></i></button></td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div class="sup-table-foot">
+      <button type="button" class="tool-add" data-add="row"><i data-lucide="plus"></i>새 일정</button>
+      <small>달력은 <b>전달 일자</b>에 놓입니다. 카드에는 수급 일자가 적힙니다.</small>
+    </div>`;
+
+  const render = () => {
+    contentSchedule.innerHTML = `
+      <div class="sup-page">
+        <div class="sup-title"><span class="sup-title-icon">⏰</span><h1>[콘마] 소재 수급 일정</h1></div>
+        <p class="sup-sub">T&amp;D 검수 링크</p>
+        <p class="sup-link"><i data-lucide="link"></i><a href="https://ad-creative-checker.onrender.com/" target="_blank" rel="noopener">Ad Review</a></p>
+
+        <div class="sup-db-head">
+          <h2>행사 광고 일정</h2>
+          <span class="week-note">${escapeHtml(note)}</span>
+          <button type="button" class="week-pull" title="시트에서 다시 불러옵니다"><i data-lucide="refresh-cw"></i>새로고침</button>
+        </div>
+        <div class="sup-tabs">
+          <button type="button" class="sup-tab${view === 'cal' ? ' is-on' : ''}" data-view="cal"><i data-lucide="calendar"></i>캘린더 보기</button>
+          <button type="button" class="sup-tab${view === 'table' ? ' is-on' : ''}" data-view="table"><i data-lucide="table"></i>표</button>
+        </div>
+        ${view === 'cal' ? calendar() : table()}
       </div>`;
     lucide.createIcons();
   };
 
-  const pull = () => {
-    note = '시트에서 불러오는 중…';
-    render();
-    return askSheet({ action: 'weeksGet' })
-      .then((body) => {
-        cards = flatten((body.weeks || []));
-        pulled = true;
-        note = cards.length ? `소재요청 ${cards.length}건` : '주간 소재요청에 날짜가 있는 카드가 없습니다';
-        render();
-      })
-      .catch((reason) => {
-        note = `시트에서 못 읽었습니다 — ${reason.message}`;
-        render();
-      });
+  // ── 손대기 ────────────────────────────────────────────────────
+  contentSchedule.addEventListener('click', (event) => {
+    if (event.target.closest('.week-pull')) { note = '시트에서 불러오는 중…'; render(); pull(true); return; }
+
+    const tab = event.target.closest('[data-view]');
+    if (tab) { view = tab.dataset.view; render(); return; }
+
+    const move = event.target.closest('[data-move]');
+    if (move) {
+      const step = Number(move.dataset.move);
+      if (!step) cursor = today.slice(0, 7);
+      else {
+        const [year, month] = cursor.split('-').map(Number);
+        const at = new Date(year, month - 1 + step, 1);
+        cursor = `${at.getFullYear()}-${pad(at.getMonth() + 1)}`;
+      }
+      render();
+      return;
+    }
+
+    if (event.target.closest('[data-add]')) {
+      rows = [...rows, normalize({ hand: today, take: today })];
+      save();
+      render();
+      contentSchedule.querySelector('tbody tr:last-child [data-cell="name"]')?.focus();
+      return;
+    }
+
+    const drop = event.target.closest('[data-drop]');
+    if (drop) {
+      rows = rows.filter((row) => row.id !== drop.dataset.drop);
+      save();
+      render();
+      return;
+    }
+
+    // 달력에서 카드를 누르면 표로 넘어가 그 줄을 보여 준다 (고치는 자리는 표다)
+    const open = event.target.closest('[data-open]');
+    if (open) {
+      view = 'table';
+      render();
+      const line = contentSchedule.querySelector(`tr[data-id="${open.dataset.open}"]`);
+      if (line) {
+        line.classList.add('is-picked');
+        line.scrollIntoView({ block: 'center' });
+        line.querySelector('[data-cell="name"]')?.focus();
+      }
+    }
+  });
+
+  // 표에서 고친 값을 담는다. 글자 칸은 input, 날짜 · 색은 change 로 온다.
+  const takeCell = (target) => {
+    const cell = target.closest('[data-cell]');
+    const line = target.closest('tr[data-id]');
+    if (!cell || !line) return false;
+    const row = rows.find((one) => one.id === line.dataset.id);
+    if (!row) return false;
+    const key = cell.dataset.cell;
+    const kind = (COLUMNS.find(([name]) => name === key) || [, , 'text'])[2];
+    row[key] = kind === 'list' ? listOf(cell.value) : cell.value;
+    save();
+    return true;
   };
 
-  contentSchedule.addEventListener('click', (event) => {
-    if (event.target.closest('.week-pull')) { pull(); return; }
-    const card = event.target.closest('[data-week]');
-    if (!card) return;
-    // 그 주차 보드로 넘어간다 (광고소재 기획 화면이 해시를 읽어 그 주차를 연다)
-    window.location.hash = `#creative-planning/${card.dataset.week}`;
-    document.querySelector("button[data-view='광고소재 기획']")?.click();
+  contentSchedule.addEventListener('input', (event) => {
+    if (event.target.type === 'date') return;    // 날짜는 change 에서 받는다
+    takeCell(event.target);
   });
-
   contentSchedule.addEventListener('change', (event) => {
-    const jump = event.target.closest('[data-jump]');
-    if (!jump) return;
-    const [year, month] = cursor.split('-');
-    cursor = jump.dataset.jump === 'year'
-      ? `${jump.value}-${month}`
-      : `${year}-${pad(Number(jump.value))}`;
-    render();
+    if (takeCell(event.target) && event.target.dataset.cell === 'color') render();
   });
 
-  // 화면을 열 때 한 번만 받아 온다 (안 보는 사람은 부르지 않는다)
+  // 화면을 열 때 한 번만 받아 온다
   new MutationObserver(() => {
     if (contentSchedule.hidden || pulled) return;
-    pull();
+    note = '시트에서 불러오는 중…';
+    render();
+    pull(false);
   }).observe(contentSchedule, { attributes: true, attributeFilter: ['hidden'] });
   render();
-  if (!contentSchedule.hidden) pull();
+  if (!contentSchedule.hidden) pull(false);
 }
 
 // ── 광고자동 세팅 · 메타 광고 세팅 ──────────────────────────────────
