@@ -19,6 +19,8 @@ body:has(#creative-board:not([hidden])) .content-tabs,body:has(#filename-tool:no
 .chip-red{background:#ffe2dd;color:#d44c47}
 
 /* 카드 피크(상세) 패널 */
+/* font 단축 규칙의 'inherit' 은 브라우저가 버린다 — 입력칸이 기본 글꼴로 떨어지지 않게 따로 준다 */
+.peek-title,.peek-input,.peek-body,.peek-date input,.peek-date select,.peek-picker{font-family:inherit}
 .peek{display:none}
 .peek.is-open{display:block}
 .peek-backdrop{position:fixed;inset:0;background:#20211e26;z-index:20}
@@ -1042,7 +1044,8 @@ html.embed-mode .content{padding:14px}
 .week-pull svg{width:12px}
 
 /* ── 콘텐츠 일정 · [콘마] 소재 수급 일정 (노션 페이지를 그대로 옮긴 것) ── */
-.sup-page{max-width:1180px}
+.sup-page{max-width:none}
+.sup-title,.sup-sub,.sup-link,.sup-hint{max-width:1180px}
 .sup-title{display:flex;align-items:center;gap:10px}
 .sup-title-icon{font-size:34px;line-height:1}
 .sup-page h1{margin:0;font:700 32px/1.2 inherit;color:#2c2c2b;letter-spacing:-.4px}
@@ -1067,21 +1070,18 @@ html.embed-mode .content{padding:14px}
 .sup-arrow svg{width:14px;display:block}
 .sup-arrow:hover,.sup-today:hover{background:#f1f1ef}
 
-.sup-grid{border-top:1px solid #e9e9e7;border-left:1px solid #e9e9e7}
-.sup-weekdays{display:grid;grid-template-columns:repeat(7,1fr)}
-.sup-weekdays span{padding:5px 8px;text-align:center;font:400 12px inherit;color:#9b9a97;
-  border-right:1px solid #e9e9e7;border-bottom:1px solid #e9e9e7}
-.sup-week{display:grid;grid-template-columns:repeat(7,1fr)}
-.sup-cell{min-height:118px;padding:4px 4px 8px;border-right:1px solid #e9e9e7;border-bottom:1px solid #e9e9e7;background:#fff}
-.sup-cell.is-weekend,.sup-cell.is-out{background:#f9f8f7}
-.sup-day{display:block;text-align:right;padding:2px 4px 6px;font:400 16px inherit;color:#2c2c2b}
-.sup-cell.is-out .sup-day{color:#c7c6c3}
-.sup-day.is-today{display:inline-flex;float:right;align-items:center;justify-content:center;
-  width:24px;height:24px;margin:0 0 6px;padding:0;border-radius:50%;background:#e56458;color:#fff;font-size:13px}
+/* 달력 칸은 퍼포먼스일정 달력과 같은 것(cal-*)을 쓴다 — 비율을 맞추려고. */
+#content-schedule .cal-cell.is-weekend,#content-schedule .cal-cell.is-out{background:#f9f8f7}
+#content-schedule .cal-num{font-size:13px}
+#content-schedule .cal-num.is-today{background:#e56458}
 
-.sup-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:calc(100% - 2px);
-  margin:0 1px 4px;padding:5px 7px 6px;border:1px solid #e9e9e7;border-radius:4px;background:#fff;
-  font:inherit;text-align:left;cursor:pointer;box-shadow:0 1px 2px rgba(15,15,15,.04);overflow:hidden}
+.sup-card{position:relative;pointer-events:auto;display:flex;flex-direction:column;align-items:flex-start;gap:3px;
+  margin:0 4px;padding:5px 7px 6px;border:1px solid #e9e9e7;border-radius:4px;background:#fff;
+  font:inherit;text-align:left;cursor:grab;box-shadow:0 1px 2px rgba(15,15,15,.04);overflow:hidden}
+body.is-dragging-card .sup-card{cursor:grabbing}
+.sup-hint{margin:9px 0 0;font-size:11px;line-height:1.6;color:#9b9a97}
+.sup-hint b{color:#787774}
+.sup-peek .peek-date select{border:0;border-radius:5px;padding:4px 6px;font:400 12px inherit;color:#20211e;background:#f4f4f1;cursor:pointer}
 .sup-card:hover{background:#f7f7f5}
 .sup-card.is-warm,.sup-card.is-warm:hover{background:#fbebde;border-color:#f4dcc9}
 .sup-card-name{display:flex;align-items:center;gap:4px;font:600 12px inherit;color:#2c2c2b;

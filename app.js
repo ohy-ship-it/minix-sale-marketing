@@ -2441,13 +2441,28 @@ if (contentSchedule) {
 
   const cardsOn = (value) => rows.filter((row) => row.hand === value);
 
-  const cardHtml = (row) => `<button type="button" class="sup-card${row.color === '주황' ? ' is-warm' : ''}" data-open="${escapeHtml(row.id)}">
+  const cardHtml = (row, place) => `<button type="button" class="sup-card${row.color === '주황' ? ' is-warm' : ''}"
+    style="grid-column:${place.column + 1};grid-row:${place.lane + 2}" data-open="${escapeHtml(row.id)}">
     <span class="sup-card-name">${row.icon ? `<em class="sup-icon">${escapeHtml(row.icon)}</em>` : ''}${escapeHtml(row.name) || '제목 없음'}</span>
     ${row.sku.length ? `<span class="sup-line">${row.sku.map((one) => chip(one, colorOf(SKU_COLOR, one))).join('')}</span>` : ''}
     ${row.take ? `<span class="sup-date">${escapeHtml(dayText(row.take))}</span>` : ''}
     ${row.note ? `<span class="sup-note">${escapeHtml(row.note)}</span>` : ''}
     ${row.owners.length ? `<span class="sup-line">${row.owners.map((one) => chip(one, colorOf(OWNER_COLOR, one))).join('')}</span>` : ''}
   </button>`;
+
+  // 한 주 안에서 같은 날에 여러 장이면 줄(lane)을 나눠 쌓는다.
+  // 퍼포먼스일정 달력과 같은 두 층 짜임새라 칸 비율(cal-*)이 그대로 맞는다.
+  const weekCards = (weekStart) => {
+    const taken = [0, 0, 0, 0, 0, 0, 0];
+    const cards = [];
+    for (let d = 0; d < 7; d += 1) {
+      cardsOn(iso(addDays(weekStart, d))).forEach((row) => {
+        cards.push({ row: row, column: d, lane: taken[d] });
+        taken[d] += 1;
+      });
+    }
+    return cards;
+  };
 
   const calendar = () => {
     const [year, month] = cursor.split('-').map(Number);
@@ -2458,19 +2473,28 @@ if (contentSchedule) {
 
     const weeks = [];
     for (let w = 0; w < weekCount; w += 1) {
+      const weekStart = addDays(gridStart, w * 7);
       const cells = [];
+      const heads = [];
       for (let d = 0; d < 7; d += 1) {
-        const date = addDays(gridStart, w * 7 + d);
+        const date = addDays(weekStart, d);
         const value = iso(date);
         const outside = date.getMonth() !== month - 1;
         const weekend = d === 0 || d === 6;
         const label = date.getDate() === 1 ? `${date.getMonth() + 1}월 1일` : String(date.getDate());
-        cells.push(`<div class="sup-cell${outside ? ' is-out' : ''}${weekend ? ' is-weekend' : ''}">
-          <span class="sup-day${value === today ? ' is-today' : ''}">${escapeHtml(label)}</span>
-          ${cardsOn(value).map(cardHtml).join('')}
-        </div>`);
+        cells.push(`<div class="cal-cell${outside ? ' is-out' : ''}${weekend ? ' is-weekend' : ''}" data-day="${value}"></div>`);
+        heads.push(`<span class="cal-head-cell" data-day="${value}" style="grid-column:${d + 1};grid-row:1">
+          <button type="button" class="cal-add" data-day="${value}" aria-label="일정 추가"><i data-lucide="plus"></i></button>
+          <span class="cal-num${outside ? ' is-out' : ''}${value === today ? ' is-today' : ''}">${escapeHtml(label)}</span>
+        </span>`);
       }
-      weeks.push(`<div class="sup-week">${cells.join('')}</div>`);
+      weeks.push(`<div class="cal-week" data-start="${iso(weekStart)}">
+        <div class="cal-cells">${cells.join('')}</div>
+        <div class="cal-content">
+          ${heads.join('')}
+          ${weekCards(weekStart).map((place) => cardHtml(place.row, place)).join('')}
+        </div>
+      </div>`);
     }
 
     return `<div class="sup-cal-head">
@@ -2481,10 +2505,12 @@ if (contentSchedule) {
           <button type="button" class="sup-arrow" data-move="1" aria-label="다음 달"><i data-lucide="chevron-right"></i></button>
         </span>
       </div>
-      <div class="sup-grid">
-        <div class="sup-weekdays">${WEEKDAYS.map((one) => `<span>${one}</span>`).join('')}</div>
+      <div class="cal-grid">
+        <div class="cal-weekdays">${WEEKDAYS.map((one) => `<span>${one}</span>`).join('')}</div>
         ${weeks.join('')}
-      </div>`;
+      </div>
+      <p class="sup-hint">빈 칸을 누르면 그 날짜로 <b>새 일정</b>을 적을 수 있습니다.
+        카드를 끌어 옮기면 <b>전달·수급 일자가 함께</b> 움직입니다 (Shift 를 누른 채 끌면 전달 일자만).</p>`;
   };
 
   // ── 표 ────────────────────────────────────────────────────────
@@ -2557,13 +2583,7 @@ if (contentSchedule) {
       return;
     }
 
-    if (event.target.closest('[data-add]')) {
-      rows = [...rows, normalize({ hand: today, take: today })];
-      save();
-      render();
-      contentSchedule.querySelector('tbody tr:last-child [data-cell="name"]')?.focus();
-      return;
-    }
+    if (event.target.closest('[data-add]')) return addRow(today);
 
     const drop = event.target.closest('[data-drop]');
     if (drop) {
@@ -2573,18 +2593,13 @@ if (contentSchedule) {
       return;
     }
 
-    // 달력에서 카드를 누르면 표로 넘어가 그 줄을 보여 준다 (고치는 자리는 표다)
+    // 달력에서 카드를 누르면 옆칸에서 바로 고친다. 빈 칸을 누르면 그 날짜로 새로 적는다.
     const open = event.target.closest('[data-open]');
-    if (open) {
-      view = 'table';
-      render();
-      const line = contentSchedule.querySelector(`tr[data-id="${open.dataset.open}"]`);
-      if (line) {
-        line.classList.add('is-picked');
-        line.scrollIntoView({ block: 'center' });
-        line.querySelector('[data-cell="name"]')?.focus();
-      }
-    }
+    if (open) return dragged ? undefined : openPeek(open.dataset.open);
+    const plus = event.target.closest('.cal-add');
+    if (plus) return addRow(plus.dataset.day);
+    const cell = event.target.closest('.cal-cell') || event.target.closest('.cal-head-cell');
+    if (cell) return addRow(cell.dataset.day);
   });
 
   // 표에서 고친 값을 담는다. 글자 칸은 input, 날짜 · 색은 change 로 온다.
@@ -2609,9 +2624,210 @@ if (contentSchedule) {
     if (takeCell(event.target) && event.target.dataset.cell === 'color') render();
   });
 
+  // ── 옆칸 · 일정 적기 ──────────────────────────────────────────
+  // 달력 빈 칸을 누르면 그 날짜로 줄을 하나 만들고 여기서 바로 적는다.
+  // 아무것도 적지 않고 닫으면 만들었던 줄을 되돌린다 (빈 줄이 쌓이지 않게).
+  const peek = document.createElement('div');
+  peek.className = 'peek sup-peek';            // 퍼포먼스일정 옆칸과 구별한다
+  document.body.appendChild(peek);
+
+  let openId = null;
+  let freshId = null;                          // 방금 만든 줄
+  let pushed = false;                           // 그 줄을 시트로 이미 보냈는가
+
+  const blank = (row) => !row.name.trim() && !row.icon.trim() && !row.note.trim()
+    && !row.sku.length && !row.media.length && !row.owners.length;
+
+  const FIELDS = [
+    ['icon', '아이콘', 'smile', 'text'],
+    ['sku', 'SKU', 'package', 'list'],
+    ['hand', '전달 일자', 'calendar', 'date'],
+    ['take', '수급 일자', 'calendar-check', 'date'],
+    ['media', '광고 매체', 'megaphone', 'list'],
+    ['owners', '담당자', 'user', 'list'],
+    ['color', '색', 'palette', 'color'],
+  ];
+
+  const fieldBox = (row, field) => {
+    const [key, , , kind] = field;
+    if (kind === 'date') return `<span class="peek-date"><input type="date" data-edit="${key}" value="${escapeHtml(row[key])}"></span>`;
+    if (kind === 'color') {
+      return `<span class="peek-date"><select data-edit="color">
+        <option value=""${row.color ? '' : ' selected'}>기본</option>
+        <option value="주황"${row.color === '주황' ? ' selected' : ''}>주황</option>
+      </select></span>`;
+    }
+    return `<input class="peek-input" data-edit="${key}" value="${escapeHtml(kind === 'list' ? row[key].join(', ') : row[key])}" placeholder="${kind === 'list' ? '쉼표로 여러 개' : '비어 있음'}">`;
+  };
+
+  const renderPeek = () => {
+    const row = rows.find((one) => one.id === openId);
+    if (!row) return closePeek();
+    peek.innerHTML = `
+      <div class="peek-backdrop"></div>
+      <aside class="peek-panel" role="dialog" aria-label="일정 적기">
+        <header class="peek-head">
+          <button type="button" class="peek-close" aria-label="닫기"><i data-lucide="x"></i></button>
+          <button type="button" class="peek-delete"><i data-lucide="trash-2"></i>삭제</button>
+        </header>
+        <textarea class="peek-title" rows="1" data-edit="name" placeholder="제목 없음">${escapeHtml(row.name)}</textarea>
+        <div class="peek-props">
+          ${FIELDS.map((field) => `<div class="peek-row">
+            <span class="peek-label"><i data-lucide="${field[2]}"></i>${field[1]}</span>
+            <div class="peek-value">${fieldBox(row, field)}</div>
+          </div>`).join('')}
+        </div>
+        <textarea class="peek-body" data-edit="note" rows="4" spellcheck="false" placeholder="참고사항을 적습니다. (예: D-3 검수 필요)">${escapeHtml(row.note)}</textarea>
+        <footer class="peek-footer">
+          <p class="peek-warning" hidden>이름을 적어 주세요.</p>
+          <button type="button" class="peek-done">다 적었습니다</button>
+        </footer>
+      </aside>`;
+    peek.classList.add('is-open');
+    lucide.createIcons();
+  };
+
+  const shutPeek = () => {
+    openId = null;
+    freshId = null;
+    pushed = false;
+    peek.innerHTML = '';
+    peek.classList.remove('is-open');
+  };
+
+  const closePeek = () => {
+    const row = rows.find((one) => one.id === openId);
+    if (row && row.id === freshId && blank(row)) {
+      rows = rows.filter((one) => one.id !== row.id);
+      const send = pushed;
+      shutPeek();
+      if (send) save();
+      render();
+      return;
+    }
+    shutPeek();
+  };
+
+  const openPeek = (id) => {
+    openId = id;
+    renderPeek();
+    peek.querySelector('.peek-title')?.focus();
+  };
+
+  const addRow = (day) => {
+    const value = /^\d{4}-\d{2}-\d{2}$/.test(day || '') ? day : today;
+    const row = normalize({ hand: value, take: value });
+    rows = [...rows, row];
+    freshId = row.id;
+    pushed = false;
+    render();
+    openPeek(row.id);
+  };
+
+  const takePeek = (target) => {
+    const field = target.closest('[data-edit]');
+    const row = rows.find((one) => one.id === openId);
+    if (!field || !row) return false;
+    const key = field.dataset.edit;
+    const kind = (FIELDS.find((one) => one[0] === key) || [, , , 'text'])[3];
+    row[key] = kind === 'list' ? listOf(field.value) : field.value;
+    pushed = true;
+    save();
+    render();                                   // 달력·표도 같이 새로 그린다 (옆칸은 그대로 둔다)
+    return true;
+  };
+
+  peek.addEventListener('input', (event) => { takePeek(event.target); });
+  peek.addEventListener('change', (event) => { takePeek(event.target); });
+
+  peek.addEventListener('click', (event) => {
+    if (event.target.closest('.peek-backdrop') || event.target.closest('.peek-close')) return closePeek();
+    if (event.target.closest('.peek-delete')) {
+      const id = openId;
+      shutPeek();
+      rows = rows.filter((one) => one.id !== id);
+      save();
+      render();
+      return;
+    }
+    if (event.target.closest('.peek-done')) {
+      const row = rows.find((one) => one.id === openId);
+      if (row && !row.name.trim()) {
+        peek.querySelector('.peek-warning').hidden = false;
+        peek.querySelector('.peek-title').focus();
+        return;
+      }
+      freshId = null;                           // 적었으니 되돌리지 않는다
+      closePeek();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && openId) closePeek();
+  });
+
+  // ── 카드 끌어 옮기기 ──────────────────────────────────────────
+  // 다른 칸에 끌어 놓으면 전달·수급 일자가 같은 날수만큼 함께 움직인다.
+  // Shift 를 누른 채 끌면 전달 일자만 움직인다 (수급 일자는 그대로).
+  let drag = null;
+  let dragged = false;
+
+  const dayFromPoint = (x, y) => {
+    const weeks = [...contentSchedule.querySelectorAll('.cal-week')];
+    if (!weeks.length) return null;
+    let week = weeks.find((one) => {
+      const box = one.getBoundingClientRect();
+      return y >= box.top && y <= box.bottom;
+    });
+    if (!week) week = y < weeks[0].getBoundingClientRect().top ? weeks[0] : weeks[weeks.length - 1];
+    const box = week.getBoundingClientRect();
+    const column = Math.max(0, Math.min(6, Math.floor(((x - box.left) / box.width) * 7)));
+    return iso(addDays(dayOf(week.dataset.start), column));
+  };
+
+  contentSchedule.addEventListener('mousedown', (event) => {
+    dragged = false;                            // 새로 누르면 앞선 끌기 표시를 지운다
+    if (event.button !== 0) return;
+    const card = event.target.closest('.sup-card');
+    if (!card) return;
+    const row = rows.find((one) => one.id === card.dataset.open);
+    if (!row || !row.hand) return;
+    drag = { id: row.id, from: dayFromPoint(event.clientX, event.clientY),
+      hand: row.hand, take: row.take, alone: event.shiftKey };
+    document.body.classList.add('is-dragging-card');
+    event.preventDefault();
+  });
+
+  window.addEventListener('mousemove', (event) => {
+    if (!drag) return;
+    const row = rows.find((one) => one.id === drag.id);
+    if (!row) { drag = null; return; }
+    const at = dayFromPoint(event.clientX, event.clientY);
+    if (!at) return;
+    const shift = Math.round((dayOf(at) - dayOf(drag.from)) / 86400000);
+    const hand = iso(addDays(dayOf(drag.hand), shift));
+    const take = (drag.alone || !drag.take) ? drag.take : iso(addDays(dayOf(drag.take), shift));
+    if (row.hand === hand && row.take === take) return;
+    row.hand = hand;
+    row.take = take;
+    dragged = true;
+    render();
+  });
+
+  window.addEventListener('mouseup', () => {
+    document.body.classList.remove('is-dragging-card');
+    if (!drag) return;
+    drag = null;
+    if (!dragged) return;
+    save();
+    render();
+    if (openId) renderPeek();
+  });
+
   // 화면을 열 때 한 번만 받아 온다
   new MutationObserver(() => {
-    if (contentSchedule.hidden || pulled) return;
+    if (contentSchedule.hidden) { closePeek(); return; }
+    if (pulled) return;
     note = '시트에서 불러오는 중…';
     render();
     pull(false);
