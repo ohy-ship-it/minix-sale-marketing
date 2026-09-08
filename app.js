@@ -4646,22 +4646,86 @@ if (mediaPerformance) {
   // 그 기간만 매체에 따로 물어 온다 (매체가 그 날짜 범위만 합쳐서 준다). 하루가 한 단계에만
   // 들어가므로 사전 + 당일 + 사후가 조회 합계와 그대로 맞는다.
   const PHASES = ['사전', '당일', '사후'];
-  const PHASE_KEY = 'minix-cross-phase-days';
   const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
-  let phaseSpan = {};     // 단계 → { since, until }
-  PHASES.forEach((name) => { phaseSpan[name] = { since: '', until: '' }; });
+  const blankSpans = () => {
+    const out = {};
+    PHASES.forEach((name) => { out[name] = { since: '', until: '' }; });
+    return out;
+  };
+  const cleanSpans = (kept) => {
+    const out = blankSpans();
+    PHASES.forEach((name) => {
+      const one = (kept || {})[name] || {};
+      out[name] = { since: isDay(one.since) ? one.since : '', until: isDay(one.until) ? one.until : '' };
+    });
+    return out;
+  };
+
+  /* 시트가 원본이다. 이 날짜로 광고비 · 결과가 갈리므로, 브라우저마다 따로 두면
+     같은 행사인데 사람마다 숫자가 달라진다. **검색어(행사)를 열쇠로** 담는다 —
+     날짜는 그 행사의 것이라 하나로 뭉치면 다른 행사를 보는 사람과 서로 덮어쓴다.
+     localStorage 는 사본이다 (시트를 못 읽을 때 버틴다). */
+  const PHASE_KEY = 'minix-cross-phase-book';
+  let phaseBook = {};        // 검색어(소문자) → 단계별 { since, until }
+  let phaseSpanFor = '';     // 지금 화면의 날짜가 어느 검색어 것인가
+  let phaseTouched = false;  // 이 검색어에서 사람이 날짜를 건드렸는가
+  let phaseSaveWait = null;
+  let phaseNote = '';
   try {
     const kept = JSON.parse(window.localStorage.getItem(PHASE_KEY) || '{}') || {};
-    PHASES.forEach((name) => {
-      const one = kept[name] || {};
-      phaseSpan[name] = { since: isDay(one.since) ? one.since : '', until: isDay(one.until) ? one.until : '' };
-    });
+    Object.keys(kept).forEach((word) => { phaseBook[word] = cleanSpans(kept[word]); });
   } catch (ignore) { /* 거들기다 */ }
+  const phaseCache = () => {
+    try { window.localStorage.setItem(PHASE_KEY, JSON.stringify(phaseBook)); } catch (ignore) { /* 거들기다 */ }
+  };
+  const phaseWord = () => String(crossFor || crossText || '').trim();
+  let phaseSpan = blankSpans();     // 지금 보고 있는 검색어의 날짜
+
+  const phasePull = () => askSheet({ action: 'phaseGet' })
+    .then((body) => {
+      phaseBook = {};        // 시트가 원본이다 — 지워진 줄은 여기서도 없앤다
+      (body.rows || []).forEach((row) => {
+        phaseBook[String(row.word || '').trim().toLowerCase()] = cleanSpans(row.spans);
+      });
+      phaseCache();
+    })
+    .catch((reason) => { phaseNote = `단계 날짜를 시트에서 못 읽었습니다 — ${reason.message}`; });
+
+  /* 지금 검색어의 날짜를 담긴 값으로 맞춘다. 없으면 빈 칸으로 시작한다 —
+     앞서 본 행사의 날짜를 물려주면 엉뚱한 기간으로 숫자가 갈린다.
+     fromSheet 는 늦게 도착한 시트 응답이다. 그 사이에 사람이 날짜를 적었으면 덮지 않는다. */
+  const phaseAdopt = (fromSheet) => {
+    const word = phaseWord();
+    if (fromSheet && phaseSpanFor === word && phaseTouched) return;
+    const kept = phaseBook[word.toLowerCase()];
+    const before = JSON.stringify(phaseSpan);
+    phaseSpan = kept ? cleanSpans(kept) : blankSpans();
+    phaseSpanFor = word;
+    if (!fromSheet) phaseTouched = false;
+    if (JSON.stringify(phaseSpan) === before) return;
+    phaseData = {};
+    render();
+    PHASES.forEach((name) => { if (spanReady(name)) phaseLoad(name); });
+  };
   let phaseData = {};     // 단계 → { status, error, rows: [{ key, row }] }
   let phaseFor = '';      // 단계 값을 받아 둔 검색어 (검색어가 바뀌면 다시 받는다)
 
   const savePhases = () => {
-    try { window.localStorage.setItem(PHASE_KEY, JSON.stringify(phaseSpan)); } catch (ignore) { /* 거들기다 */ }
+    const word = phaseWord();
+    if (!word) return;                    // 찾기 전에는 담을 자리가 없다
+    phaseTouched = true;
+    phaseSpanFor = word;
+    phaseBook[word.toLowerCase()] = cleanSpans(phaseSpan);
+    phaseCache();
+    if (phaseSaveWait) window.clearTimeout(phaseSaveWait);
+    phaseNote = '단계 날짜 저장 중…';
+    phaseSaveWait = window.setTimeout(() => {
+      phaseSaveWait = null;
+      askSheet({ action: 'phasePut', word: word, spans: phaseSpan, by: '' })
+        .then(() => { phaseNote = ''; })
+        .catch((reason) => { phaseNote = `단계 날짜를 시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
+        .then(() => render());
+    }, 700);
   };
   const spanReady = (name) => Boolean(phaseSpan[name].since && phaseSpan[name].until
     && phaseSpan[name].since <= phaseSpan[name].until);
@@ -5255,6 +5319,10 @@ if (mediaPerformance) {
     // 찾는 말이 바뀔 때만 버린다.
     if (wanted !== phaseFor) { phaseData = {}; phaseFor = ''; }
     crossFor = wanted;
+    /* 이 행사의 단계 날짜는 시트에 있다. 사본으로 먼저 맞춰 두고, 찾을 때마다 시트를
+       다시 읽어 남이 고친 값을 따라간다 (그동안 내가 적은 것은 덮지 않는다). */
+    phaseAdopt(false);
+    phasePull().then(() => phaseAdopt(true));
     crossOpen = [];
     cross = {};
     crossWaitOff = false;
@@ -5717,11 +5785,11 @@ if (mediaPerformance) {
           <input type="date" data-cross="span" data-phase="${escapeHtml(name)}" data-part="until"
             value="${escapeHtml(phaseSpan[name].until)}" title="${escapeHtml(name)} 종료일">
         </span>`).join('')}
-        <span class="perf-phase-state">${phaseBusy()
+        <span class="perf-phase-state">${phaseNote ? escapeHtml(phaseNote) : (phaseBusy()
       ? '불러오는 중…'
       : phaseDone().length
         ? `${phaseDone().join(' · ')} 받았습니다`
-        : '날짜를 적으면 그 기간만 따로 불러옵니다'}</span>
+        : '날짜를 적으면 그 기간만 따로 불러옵니다 · 시트에 함께 담깁니다')}</span>
         ${PHASES.some((name) => phaseSpan[name].since || phaseSpan[name].until) || phaseDone().length
       ? `<button type="button" class="tool-copy-all" data-cross="phase-clear"
           title="세 단계의 날짜와 받아 둔 값을 한 번에 지웁니다">

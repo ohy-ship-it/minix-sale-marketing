@@ -679,6 +679,102 @@ function schedPut_(payload) {
   }
 }
 
+// ── 단계 날짜 (매체별 성과 · 전매체 찾기) ──────────────────────────────
+// 사전 · 당일 · 사후를 가르는 날짜다. 이 날짜로 광고비와 결과가 갈리므로 사람마다
+// 다르면 같은 행사인데 숫자가 달라진다. 그래서 시트에 담아 함께 쓴다.
+// 열쇠는 **검색어(행사)** 다 — 날짜는 그 행사의 것이라 하나로 뭉치면 서로 덮어쓴다.
+// 줄마다 따로 고치므로(끼워넣기) 다른 행사 줄은 건드리지 않는다.
+var PHASE_SHEET_NAME = '단계날짜';
+var PHASE_NAMES = ['사전', '당일', '사후'];
+var PHASE_HEADERS = ['검색어', '사전 시작', '사전 종료', '당일 시작', '당일 종료',
+  '사후 시작', '사후 종료', '수정자', '수정시각'];
+
+function phaseSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(PHASE_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(PHASE_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, PHASE_HEADERS.length).setValues([PHASE_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 260);
+  }
+  return sheet;
+}
+
+function phaseRow_(line) {
+  var spans = {};
+  PHASE_NAMES.forEach(function (name, i) {
+    spans[name] = { since: naverDay_(line[1 + i * 2]), until: naverDay_(line[2 + i * 2]) };
+  });
+  return {
+    word: String(line[0] || ''),
+    spans: spans,
+    updatedBy: String(line[7] || ''),
+    updatedAt: line[8] instanceof Date ? line[8].toISOString() : String(line[8] || '')
+  };
+}
+
+function phaseGet_() {
+  var sheet = phaseSheet_();
+  var grid = sheet.getDataRange().getValues();
+  var rows = [];
+  for (var at = 1; at < grid.length; at++) {
+    if (!String(grid[at][0] || '').trim()) continue;
+    rows.push(phaseRow_(grid[at]));
+  }
+  return {
+    ok: true,
+    rows: rows,
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+// 한 검색어의 날짜만 고친다. 날짜가 모두 비면 그 줄을 지운다.
+// 날짜는 글자로 넣는다 (시트가 날짜로 바꿔 두어도 naverDay_ 가 다시 펴 준다).
+function phasePut_(payload) {
+  var word = String((payload && payload.word) || '').trim();
+  if (!word) throw new Error('검색어가 비어 있습니다.');
+  var spans = (payload && payload.spans) || {};
+  var who = String((payload && payload.by) || '');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = phaseSheet_();
+    var last = sheet.getLastRow();
+    var at = 0;
+    if (last > 1) {
+      var have = sheet.getRange(2, 1, last - 1, 1).getValues();
+      for (var i = 0; i < have.length; i++) {
+        if (String(have[i][0]).trim().toLowerCase() === word.toLowerCase()) { at = i + 2; break; }
+      }
+    }
+
+    var line = [word];
+    var any = false;
+    PHASE_NAMES.forEach(function (name) {
+      var one = spans[name] || {};
+      var since = String(one.since || '').slice(0, 10);
+      var until = String(one.until || '').slice(0, 10);
+      if (since || until) any = true;
+      line.push(since, until);
+    });
+    line.push(who, new Date());
+
+    if (!any) {
+      // 날짜를 다 지운 것이다. 줄도 없앤다 (모두에게 지워진다).
+      if (at) sheet.deleteRow(at);
+      return { ok: true, word: word, removed: !!at };
+    }
+    if (!at) at = sheet.getLastRow() + 1;
+    sheet.getRange(at, 1, 1, PHASE_HEADERS.length).setValues([line]);
+    return { ok: true, word: word, savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function configList_() {
   var config = ensureConfigSheet_(SpreadsheetApp.openById(SHEET_ID));
   return {
@@ -913,6 +1009,8 @@ function handleAction_(payload) {
     if (payload.action === 'weeksPut') return weeksPut_(payload);
     if (payload.action === 'scheduleGet') return schedGet_();
     if (payload.action === 'schedulePut') return schedPut_(payload);
+    if (payload.action === 'phaseGet') return phaseGet_();
+    if (payload.action === 'phasePut') return phasePut_(payload);
     if (payload.action === 'configList') return configList_();
     if (payload.action === 'configAdd') return configAdd_(payload);
     if (payload.action === 'tndAppend') return tndAppend_(payload);
