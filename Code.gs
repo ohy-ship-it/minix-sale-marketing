@@ -824,6 +824,85 @@ function notePut_(payload) {
   }
 }
 
+// ── UTM 대기 줄 (UTM 빌더에서 아직 적재하지 않은 줄) ─────────────────────
+// 적재를 누르기 전의 줄이 그 브라우저에만 있었다. 그 PC 를 안 켜면 아무도 모르고,
+// 브라우저를 비우면 잃는다. 그래서 여기에 담는다. **적재된 줄은 담지 않는다** —
+// 그건 이미 파트 탭에 들어가 있다.
+// 한 줄이 대기 한 건이고 값은 한 칸에 JSON 으로 둔다 (칸이 늘어도 시트를 안 고치게).
+var UTM_WAIT_SHEET_NAME = 'UTM대기';
+var UTM_WAIT_HEADERS = ['차례', 'ID', '파트', '파일명', '행사명', '담당자', '내용(JSON)', '수정자', '수정시각'];
+
+function utmWaitSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(UTM_WAIT_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(UTM_WAIT_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, UTM_WAIT_HEADERS.length).setValues([UTM_WAIT_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 50);
+    sheet.setColumnWidth(2, 240);
+    sheet.setColumnWidth(7, 520);
+  }
+  return sheet;
+}
+
+function utmWaitGet_() {
+  var sheet = utmWaitSheet_();
+  var grid = sheet.getDataRange().getValues();
+  var rows = [];
+  for (var at = 1; at < grid.length; at++) {
+    var line = grid[at];
+    var id = String(line[1] || '').trim();
+    if (!id) continue;
+    var one = null;
+    try { one = JSON.parse(String(line[6] || 'null')); } catch (error) { one = null; }
+    if (!one || typeof one !== 'object') continue;
+    one.id = id;
+    one.sent = false;              // 대기 탭에는 안 보낸 줄만 담는다
+    rows.push(one);
+  }
+  return {
+    ok: true,
+    rows: rows,
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+// 화면이 가진 대기 목록 그대로 시트를 맞춘다.
+// 여기는 **빈 목록도 받는다** — 적재하거나 비우면 대기 줄이 없어지는 것이 정상이다.
+function utmWaitPut_(payload) {
+  var rows = (payload && payload.rows) || [];
+  var who = String((payload && payload.by) || '');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = utmWaitSheet_();
+    var last = sheet.getLastRow();
+    if (last > 1) sheet.getRange(2, 1, last - 1, UTM_WAIT_HEADERS.length).clearContent();
+    if (rows.length) {
+      var now = new Date();
+      var lines = rows.map(function (one, at) {
+        return [
+          at + 1,
+          String(one.id || ''),
+          String(one.part || ''),
+          String(one.filename || ''),
+          String(one.event || ''),
+          String(one.owner || ''),
+          JSON.stringify(one),
+          who,
+          now
+        ];
+      });
+      sheet.getRange(2, 1, lines.length, UTM_WAIT_HEADERS.length).setValues(lines);
+    }
+    return { ok: true, saved: rows.length, savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function configList_() {
   var config = ensureConfigSheet_(SpreadsheetApp.openById(SHEET_ID));
   return {
@@ -1062,6 +1141,8 @@ function handleAction_(payload) {
     if (payload.action === 'phasePut') return phasePut_(payload);
     if (payload.action === 'noteGet') return noteGet_();
     if (payload.action === 'notePut') return notePut_(payload);
+    if (payload.action === 'utmWaitGet') return utmWaitGet_();
+    if (payload.action === 'utmWaitPut') return utmWaitPut_(payload);
     if (payload.action === 'configList') return configList_();
     if (payload.action === 'configAdd') return configAdd_(payload);
     if (payload.action === 'tndAppend') return tndAppend_(payload);

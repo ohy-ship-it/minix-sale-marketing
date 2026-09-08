@@ -54,13 +54,6 @@ if (creativeBoard) {
     '홀딩/리터치': 'hold-column',
   };
 
-  const SEED = [
-    { name: '[당일/사후] 카카오톡딜위크', event: '카카오톡딜위크', status: '요청', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-10', end: '2026-09-13' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더mini'] },
-    { name: '[상시/오프-온라인] 하이마트 미니 런칭기념 행사', event: '하이마트 미니 런칭기념 행사', status: '진행 중', media: ['메타'], channel: '하이마트', owners: ['김서영', '김진빈'], eventDate: { start: '2026-09-06', end: '2026-09-08' }, dueDate: { start: '2026-09-03' }, sku: ['더플렌더mini'] },
-    { name: '[당일/상시] 브티나는 생활 MLC', event: '브티나는 생활 MLC', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-스마트채널', 'GFA-피드'], channel: 'CJ', owners: ['이정민', '오해영'], eventDate: { start: '2026-09-02', end: '2026-09-04' }, dueDate: { start: '2026-08-31' }, sku: ['더플렌더mini', '더플렌더max'] },
-    { name: '[당일] 오늘의집 라이브', event: '오늘의집 라이브', status: '진행 중', media: ['브랜드검색', '메타'], channel: '오늘의집', owners: ['오해영', '김서영'], eventDate: { start: '2026-09-09' }, dueDate: { start: '2026-09-07' }, sku: ['더플렌더mini'] },
-    { name: '[당일] 현대홈쇼핑 MLC', event: '현대홈쇼핑 MLC', status: '전달 완료', media: ['메타', '브랜드검색'], channel: '현대홈쇼핑', owners: ['김진빈', '이정민'], eventDate: { start: '2026-08-31' }, dueDate: { start: '2026-08-27' }, sku: ['더 에어드라이'] },
-  ];
 
   const NOTE_TEMPLATE = '소재 소구 : ';
   const STORAGE_KEY = 'minix-creative-weeks-v1';
@@ -108,11 +101,15 @@ if (creativeBoard) {
   const skuCount = (week) => week.rows.reduce((sum, row) => sum + Math.max(row.sku.length, 1), 0);
   const shareLink = (week) => `${window.location.origin}${window.location.pathname}#creative-planning/${week.id}`;
 
+  /* 처음 여는 브라우저는 **빈 목록**으로 시작한다 — 시트가 원본이다.
+     예전에 만들어 두던 보기용 주차를 여기서 만들면, 새 브라우저마다 그 주차가 생겨
+     시트로 올라간다 (지운 사람은 되살아난 것으로 본다).
+     예전 구조(minix-creative-requests-v2)가 남아 있으면 그것만 한 주차로 옮겨 준다. */
   const firstWeek = () => {
     let legacy = null;
     try { legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null'); } catch { legacy = null; }
-    const seedRows = Array.isArray(legacy) && legacy.length ? legacy : SEED;
-    return [normalizeWeek({ year: '2026년', month: '8월', week: '4주차', rows: seedRows })];
+    if (!Array.isArray(legacy) || !legacy.length) return [];
+    return [normalizeWeek({ year: '2026년', month: '8월', week: '4주차', rows: legacy })];
   };
 
   let weeks;
@@ -184,7 +181,6 @@ if (creativeBoard) {
       weekCache();
       knownWrite(got.map((one) => one.id));
       if (!push) weekNote = weeks.length ? '' : '시트에 주차가 없습니다';
-      applySeedWeeks();               // 노션에서 옮겨 온 주차는 시트에도 한 번만 넣는다
       if (push) save();               // 올려 준다 (save 가 알림도 갈아 준다)
       if (weekList && !weekList.hidden) renderWeekList();
       if (currentWeekId) {
@@ -197,45 +193,6 @@ if (creativeBoard) {
       weekNote = `시트를 못 읽었습니다 — ${reason.message} (이 브라우저에 있던 것으로 보여 줍니다)`;
       if (weekList && !weekList.hidden) renderWeekList();
     });
-
-  // 노션 보드에서 옮겨 온 주차. 브라우저마다 한 번만 넣는다 (지운 것이 되살아나지 않게).
-  const SEED_WEEKS = [{
-    stamp: 'notion-2026-09-1',
-    year: '2026년', month: '9월', week: '1주차',
-    rows: [
-    { name: '[당일] 카카오톡딜위크', event: '카카오톡딜위크', status: '진행 중', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-10' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더max'] },
-    { name: '[사후] 카카오톡딜위크', event: '카카오톡딜위크', status: '진행 중', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-11' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더max'] },
-    { name: '[사전] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널', '구글-디맨드젠'], channel: '네이버', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-12', end: '2026-09-15' }, dueDate: { start: '2026-09-10' }, sku: ['더플렌더mini'] },
-    { name: '[당일] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널', '카카오-CRM', '네이버톡톡-CRM'], channel: '네이버', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-16' }, dueDate: { start: '2026-09-14' }, sku: ['더플렌더mini'] },
-    { name: '[사후] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널'], channel: '네이버', owners: ['오해영', '이정민'], eventDate: { start: '2026-09-17', end: '2026-09-18' }, dueDate: { start: '2026-09-15' }, sku: ['더플렌더mini'] },
-    { name: '[당일] 카카오톡딜위크', event: '카카오톡딜위크', status: '진행 중', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '김서영'], eventDate: { start: '2026-09-10' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더mini'] },
-    { name: '[사후] 카카오톡딜위크', event: '카카오톡딜위크', status: '진행 중', media: ['브랜드검색', '메타', '카카오-비즈보드'], channel: '카카오', owners: ['오해영', '김서영'], eventDate: { start: '2026-09-10', end: '2026-09-13' }, dueDate: { start: '2026-09-08' }, sku: ['더플렌더mini'] },
-    { name: '[사전]  찰스엔터 KOL', event: '', status: '진행 중', media: ['브랜드검색'], channel: '네이버', owners: ['김서영', '김진빈'], eventDate: { start: '2026-09-12' }, dueDate: { start: '2026-09-10' }, sku: ['더 에어드라이'] },
-    { name: '[당일] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널'], channel: '네이버', owners: ['김서영', '김진빈'], eventDate: { start: '2026-09-16' }, dueDate: { start: '2026-09-14' }, sku: ['더 에어드라이'] },
-    { name: '[사후] 찰스엔터 KOL', event: '찰스엔터 KOL', status: '진행 중', media: ['브랜드검색', '메타', 'GFA-피드', 'GFA-스마트채널'], channel: '네이버', owners: ['김서영', '김진빈'], eventDate: { start: '2026-09-17', end: '2026-09-18' }, dueDate: { start: '2026-09-15' }, sku: ['더 에어드라이'] },
-    ],
-  }];
-  const SEEDED_KEY = 'minix-creative-seeded';
-
-  // 노션에서 옮겨 온 주차. 시트에 같은 주차가 없을 때만 한 번 넣는다.
-  // 표시는 이 브라우저에 남긴다 — 지운 뒤 다시 살아나지 않게.
-  const applySeedWeeks = () => {
-    let done = [];
-    try { done = JSON.parse(localStorage.getItem(SEEDED_KEY) || '[]'); } catch { done = []; }
-    if (!Array.isArray(done)) done = [];
-    let added = false;
-    SEED_WEEKS.forEach((seed) => {
-      if (done.includes(seed.stamp)) return;
-      done.push(seed.stamp);
-      const already = weeks.some((week) => week.year === seed.year
-        && week.month === seed.month && week.week === seed.week);
-      if (already) return;
-      weeks.unshift(normalizeWeek(seed));
-      added = true;
-    });
-    try { localStorage.setItem(SEEDED_KEY, JSON.stringify(done)); } catch { /* 거들기다 */ }
-    if (added) save();
-  };
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -3341,7 +3298,84 @@ if (utmBuilder) {
     .filter((entry) => entry && entry.name && entry.code);
   state.customMedia = (Array.isArray(state.customMedia) ? state.customMedia : [])
     .filter((entry) => entry && entry.name && entry.source);
-  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify({ state, entries }));
+  /* 아직 적재하지 않은 줄은 시트에 함께 담는다. 그 PC 를 안 켜면 아무도 모르고,
+     브라우저를 비우면 잃는다. **적재된 줄은 올리지 않는다** — 이미 파트 탭에 있다.
+     그 줄은 이 브라우저에만 영수증처럼 남는다. localStorage 는 사본이다. */
+  const KNOWN_KEY = 'minix-utm-wait-known';
+  const knownRead = () => {
+    try {
+      const kept = JSON.parse(localStorage.getItem(KNOWN_KEY) || '[]');
+      return Array.isArray(kept) ? kept : [];
+    } catch { return []; }
+  };
+  const knownWrite = (ids) => { try { localStorage.setItem(KNOWN_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ } };
+
+  let waitNote = '';
+  let waitSaveWait = null;
+  let waitSent = '';        // 시트에 마지막으로 올린 대기 목록 (그대로면 다시 안 보낸다)
+  const waitTell = () => {
+    const box = utmBuilder.querySelector('.week-note');
+    if (box) box.textContent = waitNote;
+  };
+  const utmCache = () => localStorage.setItem(STORAGE_KEY, JSON.stringify({ state, entries }));
+
+  const save = () => {
+    utmCache();
+    // 폼 칸을 고칠 때도 save 가 불린다. 대기 줄이 그대로면 시트를 두드리지 않는다.
+    if (JSON.stringify(entries.filter((entry) => !entry.sent)) === waitSent) return;
+    if (waitSaveWait) window.clearTimeout(waitSaveWait);
+    waitNote = '대기 줄 저장 중…';
+    waitTell();
+    waitSaveWait = window.setTimeout(() => {
+      waitSaveWait = null;
+      const mine = entries.filter((entry) => !entry.sent);
+      const text = JSON.stringify(mine);
+      askSheet({ action: 'utmWaitPut', rows: mine, by: '' })
+        .then(() => {
+          waitSent = text;
+          knownWrite(mine.map((one) => one.id));
+          waitNote = mine.length
+            ? `대기 ${mine.length}건 저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`
+            : '대기 줄 없음';
+        })
+        .catch((reason) => { waitNote = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
+        .then(waitTell);
+    }, 700);
+  };
+
+  /* 시트에서 받아 온다. 적재된 줄(영수증)은 이 브라우저 것을 그대로 두고, 대기 줄만 갈아 준다.
+     처음 받을 때는 이 브라우저에만 있던 대기 줄을 버리지 않고 합쳐 올린다.
+     시트가 한 번이라도 갖고 있던 ID 가 사라졌으면 남이 적재하거나 지운 것이라 되살리지 않는다. */
+  let waitPulled = false;
+  const pullWait = (mine) => askSheet({ action: 'utmWaitGet' })
+    .then((body) => {
+      const got = (body.rows || []).filter((one) => one && one.id);
+      const sent = entries.filter((entry) => entry.sent);
+      const first = !waitPulled;
+      waitPulled = true;
+      let push = false;
+      if (first && !mine) {
+        const known = knownRead();
+        const onlyHere = entries.filter((one) => !one.sent && !known.includes(one.id)
+          && !got.some((there) => there.id === one.id));
+        entries = got.concat(onlyHere, sent);
+        push = onlyHere.length > 0;
+        if (push) waitNote = `이 브라우저에만 있던 대기 ${onlyHere.length}건을 시트에 올립니다`;
+      } else {
+        entries = got.concat(sent);
+      }
+      utmCache();
+      knownWrite(got.map((one) => one.id));
+      if (!push) waitSent = JSON.stringify(entries.filter((entry) => !entry.sent));
+      if (!push) waitNote = got.length ? `시트의 대기 ${got.length}건` : '대기 줄 없음';
+      render();
+      if (push) save();
+      else waitTell();
+    })
+    .catch((reason) => {
+      waitNote = `시트에서 못 읽었습니다 — ${reason.message} (이 브라우저 값만 보입니다)`;
+      waitTell();
+    });
 
   // 광고소재 파일명 화면에서 발번한 목록 (세로형은 뺀다)
   const issuedFilenames = () => {
@@ -3667,6 +3701,8 @@ if (utmBuilder) {
       <section class="tool-card">
         <div class="tool-list-head">
           <h3>UTM 일괄다운로드 <small>${entries.length}건</small></h3>
+          <span class="week-note">${escapeHtml(waitNote)}</span>
+          <button type="button" class="week-pull" title="시트에서 대기 줄을 다시 불러옵니다"><i data-lucide="refresh-cw"></i>새로고침</button>
           <div class="tool-list-actions">
             <button type="button" class="utm-excel"${entries.length ? '' : ' disabled'}><i data-lucide="download"></i>엑셀 다운로드</button>
             <button type="button" class="tool-copy-all"${entries.length ? '' : ' disabled'}><i data-lucide="clipboard-list"></i>표로 복사</button>
@@ -3846,6 +3882,16 @@ if (utmBuilder) {
   };
 
   // 텍스트 칸은 input 에서만 반영한다. change 로 다시 그리면 blur 직후의 클릭이 삼켜진다.
+  utmBuilder.addEventListener('click', (event) => {
+    if (!event.target.closest('.week-pull')) return;
+    waitNote = '시트에서 불러오는 중…';
+    waitTell();
+    pullWait(true);      // 누른 것은 '시트 그대로' 다 (합치지 않는다)
+  });
+
+  // askSheet 는 이 화면보다 위에 있다. 그려 둔 다음에 받아 온다.
+  window.setTimeout(() => { waitNote = '시트에서 불러오는 중…'; waitTell(); pullWait(false); }, 0);
+
   utmBuilder.addEventListener('input', (event) => {
     const newField = event.target.closest('[data-new]');
     if (newField) {
@@ -4026,22 +4072,6 @@ if (brandSchedule) {
     date: row.date?.start ? { start: row.date.start, end: row.date.end || '' } : null,
   });
 
-  // 노션에서 옮겨 온 26년 9월 일정. [이름, 시작, 종료, SKU, 판매채널, 매체, 세팅완료]
-  const SEED = [
-    ['[당일/사후] CJ온스타일 - 브티나는생활 MLC', '2026-09-02', '2026-09-04', '더플렌더 MAX,더플렌더 mini', 'CJ', '브검,페이드', 0],
-    ['[상시] 하이마트 런칭', '2026-09-06', '2026-09-08', '더플렌더 mini', '하이마트', '페이드', 0],
-    ['[당일] 오늘의집 라이브', '2026-09-09', '', '더플렌더 mini,더시프트', '', '브검,페이드', 0],
-    ['[당일/상시] 카카오 - 톡딜위크', '2026-09-10', '2026-09-11', '더플렌더 mini,더시프트,에어드라이', '카톡딜', '브검,페이드', 0],
-    ['[사전] 찰스엔터 KOL 라이브', '2026-09-12', '2026-09-15', '더플렌더 mini', '네이버', '브검,페이드', 0],
-    ['[당일] 찰스엔터 KOL 라이브', '2026-09-16', '', '더플렌더 mini', '', '브검,페이드,CRM', 0],
-    ['[사후] 찰스엔터 KOL 라이브', '2026-09-17', '2026-09-18', '더플렌더 mini', '네이버', '브검,페이드', 0],
-    ['[당일] G마켓 - 한가위 빅세일 라이브', '2026-09-19', '2026-09-21', '더플렌더 mini,에어드라이', '지마켓', '브검,페이드', 0],
-    ['[당일] 네이버 - 브랜드데이', '2026-09-27', '', '더플렌더 mini,에어드라이,더시프트', '', '브검,페이드,CRM', 0],
-  ];
-  const fromSeed = ([name, start, end, sku, channel, media, done]) => normalize({
-    name, sku, channel, media, done, date: { start, end },
-  });
-
   /* 시트가 원본이다. localStorage 는 사본 — 화면을 바로 띄우고, 시트를 못 읽을 때 버틴다.
      (주간소재요청과 같은 방식이다) */
   let rows;
@@ -4086,21 +4116,6 @@ if (brandSchedule) {
     }, 700);
   };
 
-  // 노션에서 옮겨 온 9월 일정은 시트에 같은 일정이 없을 때만 한 번 넣는다.
-  // 표시는 이 브라우저에 남긴다 — 지운 뒤 다시 살아나지 않게.
-  const SEEDED_KEY = 'minix-brand-schedule-seeded';
-  const applySeed = () => {
-    let done = false;
-    try { done = localStorage.getItem(SEEDED_KEY) === 'on'; } catch { done = false; }
-    if (done) return false;
-    try { localStorage.setItem(SEEDED_KEY, 'on'); } catch { /* 거들기다 */ }
-    const same = (a, b) => a.name === b.name && (a.date?.start || '') === (b.date?.start || '');
-    const missing = SEED.map(fromSeed).filter((seed) => !rows.some((one) => same(one, seed)));
-    if (!missing.length) return false;
-    rows = rows.concat(missing);
-    return true;
-  };
-
   /* 시트에서 받아 온다.
      처음 받을 때는 이 브라우저에만 있던 일정을 **버리지 않고 합친다** — 시트에 담기 전에
      짜 둔 일정(다른 PC 에서 안 보이던 그것)을 잃지 않게, 그리고 시트로 올려 준다.
@@ -4126,7 +4141,6 @@ if (brandSchedule) {
       schedCache();
       knownWrite(got.map((one) => one.id));
       if (!push) schedNote = rows.length ? '' : '시트에 일정이 없습니다';
-      if (applySeed()) push = true;   // 노션에서 옮겨 온 일정도 시트에 한 번만 넣는다
       renderView();
       if (openId) renderPeek();
       if (push) save();               // 올려 준다 (save 가 알림도 갈아 준다)
