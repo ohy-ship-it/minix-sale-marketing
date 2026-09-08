@@ -1116,3 +1116,13 @@ html.embed-mode .content{padding:14px}
 .sup-table td:nth-child(2) input{min-width:230px}
 .sup-table td:nth-child(3) input,.sup-table td:nth-child(6) input{min-width:150px}
 .sup-table td:nth-child(7) input,.sup-table td:nth-child(8) input{min-width:120px}
+
+/* ── 행사별 성과 (미닉스 워크스페이스 화면을 끌어다 붙인 자리) ── */
+.event-result{background:#fff}
+.event-result .board-header .week-pull{margin-left:6px}
+.event-result .board-header .week-pull:first-of-type{margin-left:auto}
+.event-note{margin:0 0 12px;padding:8px 11px;border:1px solid #eee6d8;border-radius:8px;
+  background:#fdf8ef;font-size:11.5px;color:#7a6647}
+.event-note code{background:#f1ece1;border-radius:3px;padding:1px 4px;font-size:11px}
+.event-frame{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fbfbf8}
+.event-frame iframe{display:block;width:100%;height:calc(100vh - 260px);min-height:620px;border:0}

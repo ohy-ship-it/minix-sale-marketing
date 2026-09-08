@@ -899,6 +899,7 @@ document.querySelectorAll('.tree-group').forEach((group) => {
 
 // 전용 화면을 가진 메뉴 (그 외에는 대시보드를 보여준다)
 const VIEWS = {
+  '행사별 성과': { section: '#event-result', hash: '#event' },
   '콘텐츠 일정': { section: '#content-schedule', hash: '#content-cal' },
   '광고소재 기획': { section: '#creative-board', hash: '#creative-planning' },
   '광고소재 파일명': { section: '#filename-tool', hash: '#filename' },
@@ -911,7 +912,6 @@ const VIEWS = {
   '소재별 결과': { section: '#creative-performance', hash: '#creative-result' },
   '페이지 결과': { section: '#page-performance', hash: '#page-result' },
   '월별 예산': { section: '#budget-plan', hash: '#budget' },
-  '프로모션': { section: '#promotion', hash: '#promo-plan' },
   'KOL라이브': { section: '#kol-live', hash: '#kol' },
 };
 const DASHBOARD_PARTS = ['.content-tabs', '.target-section', '.channel-section', '.notes-section'];
@@ -930,6 +930,37 @@ document.querySelectorAll('[data-view]').forEach((item) => {
     history.replaceState(null, '', view ? (keepDetail ? location.hash : view.hash) : '#dashboard');
   });
 });
+
+
+// ── 행사별 성과 ────────────────────────────────────────────────────
+// 미닉스 워크스페이스(my-pages)의 '행사별 결과' 화면을 그대로 끌어다 붙인다.
+// 그쪽 껍데기까지 들어오지 않게 **그 화면 파일만** 부른다.
+//
+// 로그인은 그쪽 쿠키를 쓴다. 그 쿠키가 sameSite=lax 라 **iframe 에는 안 실려 간다** —
+// 그래서 로그인 안 된 것처럼 보일 수 있다. 그때는 [새 탭에서 열기] 로 열어 보면 된다.
+// (고치려면 my-pages 의 세션 쿠키를 sameSite=none 으로 바꿔야 한다)
+const eventResult = document.querySelector('#event-result');
+if (eventResult) {
+  const frame = eventResult.querySelector('iframe');
+  const load = () => {
+    if (frame.getAttribute('src')) return;
+    frame.src = frame.dataset.src;
+  };
+  new MutationObserver(() => {
+    if (eventResult.hidden) return;
+    load();
+  }).observe(eventResult, { attributes: true, attributeFilter: ['hidden'] });
+  if (!eventResult.hidden) load();
+
+  eventResult.addEventListener('click', (event) => {
+    if (event.target.closest('.event-reload')) {
+      frame.removeAttribute('src');
+      load();
+      return;
+    }
+    if (event.target.closest('.event-open')) window.open(frame.dataset.src, '_blank', 'noopener');
+  });
+}
 
 // ── 광고소재 검수 ──────────────────────────────────────────────────
 // 검수 사이트(ad-creative-checker)를 이 화면 안에 띄운다. 행사명 · 문구는 그 사이트에서
