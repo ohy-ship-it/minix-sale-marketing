@@ -130,6 +130,16 @@ if (creativeBoard) {
      저장은 한 박자 모아 한 번만 보낸다 (칸마다 두드릴 때마다 보내면 느리다). */
   let weekSaveWait = null;
   let weekNote = '';                 // 화면 위에 적어 주는 상태 (불러오는 중 · 저장됨 · 실패)
+  /* 시트가 한 번이라도 갖고 있던 주차 ID. 이 목록에 있던 주차가 시트에서 사라졌으면
+     **남이 지운 것**이라 되살리지 않는다. */
+  const KNOWN_KEY = 'minix-creative-weeks-known';
+  const knownRead = () => {
+    try {
+      const kept = JSON.parse(localStorage.getItem(KNOWN_KEY) || '[]');
+      return Array.isArray(kept) ? kept : [];
+    } catch { return []; }
+  };
+  const knownWrite = (ids) => { try { localStorage.setItem(KNOWN_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ } };
   const weekCache = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks)); } catch { /* 거들기다 */ } };
 
   const save = () => {
@@ -140,7 +150,10 @@ if (creativeBoard) {
     weekSaveWait = window.setTimeout(() => {
       weekSaveWait = null;
       askSheet({ action: 'weeksPut', weeks: weeks, by: '' })
-        .then(() => { weekNote = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`; })
+        .then(() => {
+          knownWrite(weeks.map((one) => one.id));   // 시트가 이제 이 주차들을 안다
+          weekNote = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
+        })
         .catch((reason) => { weekNote = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
         .then(() => { if (weekList && !weekList.hidden) renderWeekList(); });
     }, 700);
@@ -159,7 +172,9 @@ if (creativeBoard) {
       let push = false;
       if (first && !mine) {
         const sameWeek = (a, b) => a.year === b.year && a.month === b.month && a.week === b.week;
-        const onlyHere = weeks.filter((one) => !got.some((there) => there.id === one.id || sameWeek(there, one)));
+        const known = knownRead();
+        const onlyHere = weeks.filter((one) => !known.includes(one.id)
+          && !got.some((there) => there.id === one.id || sameWeek(there, one)));
         weeks = got.concat(onlyHere);
         push = onlyHere.length > 0;
         if (push) weekNote = `이 브라우저에만 있던 ${onlyHere.length}개를 시트에 올립니다`;
@@ -167,6 +182,7 @@ if (creativeBoard) {
         weeks = got;
       }
       weekCache();
+      knownWrite(got.map((one) => one.id));
       if (!push) weekNote = weeks.length ? '' : '시트에 주차가 없습니다';
       applySeedWeeks();               // 노션에서 옮겨 온 주차는 시트에도 한 번만 넣는다
       if (push) save();               // 올려 준다 (save 가 알림도 갈아 준다)
@@ -3974,19 +3990,100 @@ if (brandSchedule) {
     name, sku, channel, media, done, date: { start, end },
   });
 
+  /* 시트가 원본이다. localStorage 는 사본 — 화면을 바로 띄우고, 시트를 못 읽을 때 버틴다.
+     (주간소재요청과 같은 방식이다) */
   let rows;
-  let seeded = false;
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-    if (Array.isArray(saved)) rows = saved.map(normalize);
-    else { rows = SEED.map(fromSeed); seeded = true; }
+    rows = Array.isArray(saved) ? saved.map(normalize) : [];
   } catch {
-    rows = SEED.map(fromSeed);
-    seeded = true;
+    rows = [];
   }
-  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
-  // 처음 한 번만 넣는다. 지운 일정이 새로고침 때 되살아나지 않게.
-  if (seeded) save();
+
+  /* 시트가 한 번이라도 갖고 있던 ID. 이 목록에 있던 일정이 시트에서 사라졌으면
+     **남이 지운 것**이라 되살리지 않는다. 목록에 없던 것만 아직 못 올린 일정으로 본다. */
+  const KNOWN_KEY = 'minix-brand-schedule-known';
+  const knownRead = () => {
+    try {
+      const kept = JSON.parse(localStorage.getItem(KNOWN_KEY) || '[]');
+      return Array.isArray(kept) ? kept : [];
+    } catch { return []; }
+  };
+  const knownWrite = (ids) => { try { localStorage.setItem(KNOWN_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ } };
+
+  let schedNote = '';                // 화면 위에 적어 주는 상태 (불러오는 중 · 저장됨 · 실패)
+  let schedSaveWait = null;
+  const schedCache = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch { /* 거들기다 */ } };
+  const schedTell = () => { const box = brandSchedule.querySelector('.week-note'); if (box) box.textContent = schedNote; };
+
+  // 저장은 한 박자 모아 한 번만 보낸다 (칸마다 두드릴 때마다 보내면 느리다)
+  const save = () => {
+    schedCache();
+    if (schedSaveWait) window.clearTimeout(schedSaveWait);
+    schedNote = '저장 중…';
+    schedTell();
+    schedSaveWait = window.setTimeout(() => {
+      schedSaveWait = null;
+      askSheet({ action: 'schedulePut', rows: rows, by: '' })
+        .then(() => {
+          knownWrite(rows.map((one) => one.id));   // 시트가 이제 이 일정들을 안다
+          schedNote = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
+        })
+        .catch((reason) => { schedNote = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
+        .then(schedTell);
+    }, 700);
+  };
+
+  // 노션에서 옮겨 온 9월 일정은 시트에 같은 일정이 없을 때만 한 번 넣는다.
+  // 표시는 이 브라우저에 남긴다 — 지운 뒤 다시 살아나지 않게.
+  const SEEDED_KEY = 'minix-brand-schedule-seeded';
+  const applySeed = () => {
+    let done = false;
+    try { done = localStorage.getItem(SEEDED_KEY) === 'on'; } catch { done = false; }
+    if (done) return false;
+    try { localStorage.setItem(SEEDED_KEY, 'on'); } catch { /* 거들기다 */ }
+    const same = (a, b) => a.name === b.name && (a.date?.start || '') === (b.date?.start || '');
+    const missing = SEED.map(fromSeed).filter((seed) => !rows.some((one) => same(one, seed)));
+    if (!missing.length) return false;
+    rows = rows.concat(missing);
+    return true;
+  };
+
+  /* 시트에서 받아 온다.
+     처음 받을 때는 이 브라우저에만 있던 일정을 **버리지 않고 합친다** — 시트에 담기 전에
+     짜 둔 일정(다른 PC 에서 안 보이던 그것)을 잃지 않게, 그리고 시트로 올려 준다.
+     사람이 새로고침을 누른 때는 시트를 그대로 따른다 — 남이 지운 일정이 되살아나면 안 된다. */
+  let schedPulled = false;
+  const pullSchedule = (mine) => askSheet({ action: 'scheduleGet' })
+    .then((body) => {
+      const got = (body.rows || []).map(normalize);
+      const first = !schedPulled;
+      schedPulled = true;
+      let push = false;
+      if (first && !mine) {
+        const same = (a, b) => a.name === b.name && (a.date?.start || '') === (b.date?.start || '');
+        const known = knownRead();
+        const onlyHere = rows.filter((one) => !known.includes(one.id)
+          && !got.some((there) => there.id === one.id || same(there, one)));
+        rows = got.concat(onlyHere);
+        push = onlyHere.length > 0;
+        if (push) schedNote = `이 브라우저에만 있던 ${onlyHere.length}개를 시트에 올립니다`;
+      } else {
+        rows = got;
+      }
+      schedCache();
+      knownWrite(got.map((one) => one.id));
+      if (!push) schedNote = rows.length ? '' : '시트에 일정이 없습니다';
+      if (applySeed()) push = true;   // 노션에서 옮겨 온 일정도 시트에 한 번만 넣는다
+      renderView();
+      if (openId) renderPeek();
+      if (push) save();               // 올려 준다 (save 가 알림도 갈아 준다)
+      else schedTell();
+    })
+    .catch((reason) => {
+      schedNote = `시트에서 불러오지 못했습니다 — ${reason.message} (이 브라우저에 있던 것만 보여 줍니다)`;
+      schedTell();
+    });
 
   // ── 날짜 ──────────────────────────────────────────────────────
   const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -4225,7 +4322,15 @@ if (brandSchedule) {
   head.innerHTML = `<div>
       <div class="eyebrow">마케팅팀</div>
       <h2>퍼포먼스일정</h2>
-    </div>`;
+    </div>
+    <span class="week-note"></span>
+    <button type="button" class="week-pull" title="시트에서 다시 불러옵니다"><i data-lucide="refresh-cw"></i>새로고침</button>`;
+  head.addEventListener('click', (event) => {
+    if (!event.target.closest('.week-pull')) return;
+    schedNote = '시트에서 불러오는 중…';
+    schedTell();
+    pullSchedule(true);      // 누른 것은 '시트 그대로' 다 (합치지 않는다)
+  });
   const view = document.createElement('div');
   view.className = 'cal-view';
   const peek = document.createElement('div');
@@ -4238,6 +4343,9 @@ if (brandSchedule) {
     view.innerHTML = renderCalendar();
     lucide.createIcons();
   };
+
+  schedNote = '시트에서 불러오는 중…';
+  window.setTimeout(() => { schedTell(); pullSchedule(); }, 0);
   const commit = ({ redrawPeek = true } = {}) => {
     save();
     renderView();

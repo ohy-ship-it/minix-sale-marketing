@@ -579,6 +579,106 @@ function weeksPut_(payload) {
   }
 }
 
+// ── 퍼포먼스일정 (마케팅팀 일정표) ────────────────────────────────────
+// 주간소재요청과 같은 이유로 시트에 담는다 — 브라우저마다 따로 갖고 있으면 다른 PC 에서
+// 안 보인다. 일정 하나가 한 줄이고, 칸을 그대로 펼쳐 둔다 (사람이 시트에서도 읽게).
+var SCHED_SHEET_NAME = '퍼포먼스일정';
+var SCHED_HEADERS = ['차례', 'ID', '일정명', '시작일', '종료일', 'SKU', '판매채널', '매체',
+  '세팅완료', '수정자', '수정시각'];
+
+function schedSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(SCHED_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(SCHED_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, SCHED_HEADERS.length).setValues([SCHED_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 50);
+    sheet.setColumnWidth(2, 240);
+    sheet.setColumnWidth(3, 320);
+  }
+  return sheet;
+}
+
+// 목록 칸(SKU · 판매채널 · 매체)은 쉼표로 이어 적는다. 읽을 때 다시 나눈다.
+function schedList_(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .split(',')
+    .map(function (one) { return String(one).trim(); })
+    .filter(function (one) { return one !== ''; });
+}
+
+function schedGet_() {
+  var sheet = schedSheet_();
+  var grid = sheet.getDataRange().getValues();
+  var rows = [];
+  for (var at = 1; at < grid.length; at++) {
+    var line = grid[at];
+    var id = String(line[1] || '').trim();
+    if (!id) continue;
+    var start = naverDay_(line[3]);
+    rows.push({
+      order: Number(line[0] || at),
+      id: id,
+      name: String(line[2] || ''),
+      date: start ? { start: start, end: naverDay_(line[4]) } : null,
+      sku: schedList_(line[5]),
+      channel: schedList_(line[6]),
+      media: schedList_(line[7]),
+      done: line[8] === true || String(line[8]).trim() === 'TRUE' || String(line[8]).trim() === 'O',
+      updatedBy: String(line[9] || ''),
+      updatedAt: line[10] instanceof Date ? line[10].toISOString() : String(line[10] || '')
+    });
+  }
+  rows.sort(function (a, b) { return a.order - b.order; });
+  return {
+    ok: true,
+    rows: rows,
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+// 화면이 가진 목록 전체를 그대로 받아 시트를 그 모양으로 맞춘다 (차례까지 그대로).
+// 날짜는 글자로 넣는다 — 시트가 날짜로 바꿔 두면 읽을 때 naverDay_ 가 다시 펴 준다.
+function schedPut_(payload) {
+  var rows = (payload && payload.rows) || [];
+  if (!rows.length && !(payload && payload.allowEmpty)) {
+    throw new Error('빈 목록으로는 덮어쓰지 않습니다 (실수로 다 지우는 것을 막습니다).');
+  }
+  var who = String((payload && payload.by) || '');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = schedSheet_();
+    var last = sheet.getLastRow();
+    if (last > 1) sheet.getRange(2, 1, last - 1, SCHED_HEADERS.length).clearContent();
+    if (rows.length) {
+      var now = new Date();
+      var lines = rows.map(function (one, at) {
+        var date = one.date || {};
+        return [
+          at + 1,
+          String(one.id || ''),
+          String(one.name || ''),
+          String(date.start || ''),
+          String(date.end || ''),
+          (one.sku || []).join(', '),
+          (one.channel || []).join(', '),
+          (one.media || []).join(', '),
+          one.done ? true : false,
+          who,
+          now
+        ];
+      });
+      sheet.getRange(2, 1, lines.length, SCHED_HEADERS.length).setValues(lines);
+    }
+    return { ok: true, saved: rows.length, savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function configList_() {
   var config = ensureConfigSheet_(SpreadsheetApp.openById(SHEET_ID));
   return {
@@ -811,6 +911,8 @@ function handleAction_(payload) {
     if (payload.action === 'kolLive') return kolLive_(payload);
     if (payload.action === 'weeksGet') return weeksGet_();
     if (payload.action === 'weeksPut') return weeksPut_(payload);
+    if (payload.action === 'scheduleGet') return schedGet_();
+    if (payload.action === 'schedulePut') return schedPut_(payload);
     if (payload.action === 'configList') return configList_();
     if (payload.action === 'configAdd') return configAdd_(payload);
     if (payload.action === 'tndAppend') return tndAppend_(payload);
