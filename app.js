@@ -5188,7 +5188,7 @@ if (brandSchedule) {
   const head = document.createElement('div');
   head.className = 'board-header';
   head.innerHTML = `<div>
-      <div class="eyebrow">마케팅팀</div>
+      <div class="eyebrow">일정관리</div>
       <h2>퍼포먼스일정</h2>
     </div>
     <span class="week-note"></span>
