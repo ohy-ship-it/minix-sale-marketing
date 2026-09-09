@@ -908,6 +908,7 @@ const VIEWS = {
   '메타 광고 세팅': { section: '#ad-setup', hash: '#meta-ad-setup' },
   '퍼포먼스일정': { section: '#brand-schedule', hash: '#performance-schedule' },
   '주간미팅 작성': { section: '#weekly-write', hash: '#weekly' },
+  '온보딩 자료': { section: '#onboarding', hash: '#onboarding-docs' },
   'UTM 빌더': { section: '#utm-builder', hash: '#utm' },
   '매체별 성과': { section: '#media-performance', hash: '#media-report' },
   '소재별 결과': { section: '#creative-performance', hash: '#creative-result' },
@@ -3396,6 +3397,87 @@ if (weeklyWrite) {
   }).observe(weeklyWrite, { attributes: true, attributeFilter: ['hidden'] });
   render();
   if (!weeklyWrite.hidden) pull();
+}
+
+// ── 온보딩 자료 ────────────────────────────────────────────────────
+// 문서 네 개를 탭으로 두고 틀(iframe)로 띄운다. 고른 탭만 읽어 온다 (안 보는 문서는 안 부른다).
+//   미닉스본부 온보딩  받은 HTML 파일. file:// 은 https 화면의 틀에 못 띄우므로 우리 호스팅에 둔다.
+//                     (docs/ 는 이 저장소가 공개라 git 에 담지 않는다 — 호스팅에만 있다)
+//   나머지 세 개       미닉스 워크스페이스(my-pages)의 그 화면 파일. 그쪽 껍데기는 부르지 않는다.
+//                     로그인은 그쪽 쿠키를 쓰는데 sameSite=lax 라 틀에는 안 실려 간다 —
+//                     'not logged in' 이 보이면 [새 탭에서 열기] 로 한 번 열어 두면 된다.
+const onboarding = document.querySelector('#onboarding');
+if (onboarding) {
+  const MINE = 'https://minix-workspace.onrender.com/';
+  const DOCS = [
+    { key: 'minix', name: '미닉스본부 온보딩', src: 'docs/minix-onboarding.html' },
+    { key: 'sales', name: '세일즈 팀 온보딩', src: MINE + 'minix/minix_onboarding/minix_salesteam_onboarding.html', away: true },
+    { key: 'slack', name: '슬랙 태깅 규칙', src: MINE + 'minix/minix_onboarding/minix_slack_tagging_rules.html', away: true },
+    { key: 'rr', name: '세일즈 팀 R&R', src: MINE + 'minix/minix_salesteam_r&r/rr.html', away: true },
+  ];
+  const KEY = 'minix-onboarding-tab';
+
+  const tabs = onboarding.querySelector('.onboard-tabs');
+  const frames = onboarding.querySelector('.onboard-frames');
+  const note = onboarding.querySelector('.onboard-note');
+
+  let picked = DOCS[0].key;
+  try {
+    const kept = localStorage.getItem(KEY);
+    if (kept && DOCS.some((one) => one.key === kept)) picked = kept;
+  } catch { /* 거들기다 */ }
+
+  const docOf = (key) => DOCS.find((one) => one.key === key) || DOCS[0];
+
+  const renderTabs = () => {
+    tabs.innerHTML = DOCS.map((one) => `<button type="button" class="onboard-tab${one.key === picked ? ' is-on' : ''}"
+      data-doc="${one.key}">${one.name}${one.away ? '<em>미닉스 워크스페이스</em>' : ''}</button>`).join('');
+    const one = docOf(picked);
+    note.innerHTML = one.away
+      ? '미닉스 워크스페이스에 로그인돼 있어야 보입니다. 빈 화면이나 <code>not logged in</code> 이 뜨면 <b>새 탭에서 열기</b>로 한 번 로그인해 주세요.'
+      : '';
+    note.hidden = !one.away;
+  };
+
+  // 고른 문서의 틀을 만들어 두고 나머지는 감춘다 (탭을 오갈 때 다시 안 읽게)
+  const show = () => {
+    const one = docOf(picked);
+    let frame = frames.querySelector(`iframe[data-doc="${one.key}"]`);
+    if (!frame) {
+      frame = document.createElement('iframe');
+      frame.dataset.doc = one.key;
+      frame.title = one.name;
+      frame.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+      frame.src = one.src;
+      frames.appendChild(frame);
+    }
+    [...frames.querySelectorAll('iframe')].forEach((each) => { each.hidden = each !== frame; });
+  };
+
+  const draw = () => { renderTabs(); show(); lucide.createIcons(); };
+
+  new MutationObserver(() => {
+    if (onboarding.hidden) return;
+    draw();
+  }).observe(onboarding, { attributes: true, attributeFilter: ['hidden'] });
+  if (!onboarding.hidden) draw();
+
+  onboarding.addEventListener('click', (event) => {
+    const tab = event.target.closest('[data-doc]');
+    if (tab) {
+      picked = tab.dataset.doc;
+      try { localStorage.setItem(KEY, picked); } catch { /* 거들기다 */ }
+      draw();
+      return;
+    }
+    if (event.target.closest('.onboard-reload')) {
+      const frame = frames.querySelector(`iframe[data-doc="${picked}"]`);
+      if (frame) frame.remove();
+      show();
+      return;
+    }
+    if (event.target.closest('.onboard-open')) window.open(docOf(picked).src, '_blank', 'noopener');
+  });
 }
 
 // ── 광고자동 세팅 · 메타 광고 세팅 ──────────────────────────────────

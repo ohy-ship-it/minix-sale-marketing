@@ -1212,3 +1212,20 @@ body.is-resizing .sup-card{cursor:col-resize}
 .wk-roll-name{display:flex;align-items:center;gap:7px;margin:0 0 7px;font-size:13px;font-weight:800;color:#2c2c2b}
 .wk-roll-name small{font-size:10px;font-weight:600;color:#9b9a97;background:#f1f1ef;border-radius:4px;padding:2px 6px}
 @media(max-width:900px){.wk-body{grid-template-columns:1fr}}
+
+/* ── 온보딩 자료 (문서 네 개를 탭으로 띄운다) ── */
+.onboard{background:#fff}
+.onboard .board-header .week-pull{margin-left:6px}
+.onboard .board-header .week-pull:first-of-type{margin-left:auto}
+.onboard-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 10px}
+.onboard-tab{display:inline-flex;flex-direction:column;gap:1px;border:1px solid var(--line);border-radius:8px;
+  background:#fff;color:#74746d;font-size:12px;font-weight:700;padding:8px 13px;cursor:pointer;text-align:left}
+.onboard-tab em{font-style:normal;font-size:9.5px;font-weight:500;color:#a4a39a}
+.onboard-tab:hover{background:#f7f7f5}
+.onboard-tab.is-on{background:#242520;border-color:#242520;color:#fff}
+.onboard-tab.is-on em{color:#b7b8ae}
+.onboard-note{margin:0 0 10px;padding:8px 11px;border:1px solid #eee6d8;border-radius:8px;
+  background:#fdf8ef;font-size:11.5px;color:#7a6647}
+.onboard-note code{background:#f1ece1;border-radius:3px;padding:1px 4px;font-size:11px}
+.onboard-frames{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fbfbf8}
+.onboard-frames iframe{display:block;width:100%;height:calc(100vh - 230px);min-height:620px;border:0}
