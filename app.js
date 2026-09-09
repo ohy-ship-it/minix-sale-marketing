@@ -3267,7 +3267,7 @@ if (weeklyWrite) {
           <i data-lucide="${mine.status === 'done' ? 'square-check-big' : 'square'}"></i>${mine.status === 'done' ? '다 적었습니다' : '작성 중'}</button>
       </div>
       ${one.note ? `<p class="wk-hint">${escapeHtml(one.note)}</p>` : ''}
-      <textarea class="wk-text" data-part="${one.key}" spellcheck="false"
+      <textarea class="wk-text" data-text="${one.key}" spellcheck="false"
         placeholder="## 지난 주 한 일&#10;- …&#10;&#10;## 이번 주 할 일&#10;- …">${escapeHtml(mine.text)}</textarea>
       <div class="wk-tools">
         <button type="button" class="wk-mini" data-fill="template">서식 넣기</button>
@@ -3337,8 +3337,13 @@ if (weeklyWrite) {
       return;
     }
 
-    const node = event.target.closest('[data-part]');
-    if (node) { part = node.dataset.part; render(); return; }
+    const node = event.target.closest('.wk-node');
+    if (node) {
+      if (node.dataset.part === part) return;   // 같은 파트면 다시 그리지 않는다
+      part = node.dataset.part;
+      render();
+      return;
+    }
 
     if (event.target.closest('.wk-copy')) {
       copyText(asText())
@@ -3370,7 +3375,7 @@ if (weeklyWrite) {
   weeklyWrite.addEventListener('input', (event) => {
     const box = event.target.closest('.wk-text');
     if (!box) return;
-    const key = box.dataset.part;
+    const key = box.dataset.text;
     const mine = partOf(key);
     book[week] = book[week] || {};
     book[week][key] = { ...mine, text: box.value };
