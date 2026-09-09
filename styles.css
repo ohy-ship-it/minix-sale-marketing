@@ -1229,3 +1229,14 @@ body.is-resizing .sup-card{cursor:col-resize}
 .onboard-note code{background:#f1ece1;border-radius:3px;padding:1px 4px;font-size:11px}
 .onboard-frames{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fbfbf8}
 .onboard-frames iframe{display:block;width:100%;height:calc(100vh - 230px);min-height:620px;border:0}
+
+/* 미닉스 워크스페이스 문서 — 틀 안에서는 로그인이 실려 가지 않아 안내판을 둔다 */
+.onboard-away{display:flex;flex-direction:column;align-items:center;gap:9px;
+  padding:52px 26px;text-align:center;color:#74746d}
+.onboard-away svg{width:26px;color:#b7b8ae}
+.onboard-away b{font-size:14px;color:#2c2c2b}
+.onboard-away p{max-width:560px;margin:0;font-size:12px;line-height:1.75}
+.onboard-away code{background:#f1f1ef;border-radius:3px;padding:1px 5px;font-size:11px}
+.onboard-away .primary-action{margin-top:4px}
+.onboard-try{border:0;background:none;color:#9b9a97;font-size:11px;text-decoration:underline;cursor:pointer}
+.onboard-try:hover{color:#74746d}

@@ -3408,6 +3408,7 @@ if (weeklyWrite) {
 //                     'not logged in' 이 보이면 [새 탭에서 열기] 로 한 번 열어 두면 된다.
 const onboarding = document.querySelector('#onboarding');
 if (onboarding) {
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const MINE = 'https://minix-workspace.onrender.com/';
   // 새로 올린 주소는 배포가 퍼지는 몇 분 동안 옛 응답(첫 화면)으로 잡힐 수 있다.
   // 판 번호를 붙이면 그 캐시를 비켜 간다 — 문서를 새로 올릴 때 옛 판이 남는 것도 함께 막는다.
@@ -3436,16 +3437,35 @@ if (onboarding) {
   const renderTabs = () => {
     tabs.innerHTML = DOCS.map((one) => `<button type="button" class="onboard-tab${one.key === picked ? ' is-on' : ''}"
       data-doc="${one.key}">${one.name}${one.away ? '<em>미닉스 워크스페이스</em>' : ''}</button>`).join('');
-    const one = docOf(picked);
-    note.innerHTML = one.away
-      ? '미닉스 워크스페이스에 로그인돼 있어야 보입니다. 빈 화면이나 <code>not logged in</code> 이 뜨면 <b>새 탭에서 열기</b>로 한 번 로그인해 주세요.'
-      : '';
-    note.hidden = !one.away;
+    note.hidden = true;
+    note.innerHTML = '';
   };
+
+  // 그쪽 문서는 로그인이 틀에 실려 가지 않는다. 까닭과 여는 길을 적어 준다.
+  const awayCard = (one) => `<div class="onboard-away">
+      <i data-lucide="lock"></i>
+      <b>${escapeHtml(one.name)}</b>
+      <p>미닉스 워크스페이스에 로그인해 두어도 <b>이 틀 안에서는</b> 보이지 않습니다.
+        그쪽 로그인 쿠키가 <code>sameSite=lax</code> 라 다른 사이트의 틀에는 실려 가지 않기 때문입니다
+        (구글 로그인을 다시 해도 같습니다).</p>
+      <button type="button" class="primary-action onboard-open"><i data-lucide="external-link"></i>새 탭에서 열기</button>
+      <button type="button" class="onboard-try" data-try="${one.key}">그래도 여기서 열어 보기</button>
+    </div>`;
+
+  const forced = {};                            // 안내판을 무르고 틀로 열어 본 문서
 
   // 고른 문서의 틀을 만들어 두고 나머지는 감춘다 (탭을 오갈 때 다시 안 읽게)
   const show = () => {
     const one = docOf(picked);
+    if (one.away && !forced[one.key]) {
+      [...frames.querySelectorAll('iframe')].forEach((each) => { each.hidden = true; });
+      let card = frames.querySelector('.onboard-away');
+      if (card) card.remove();
+      frames.insertAdjacentHTML('beforeend', awayCard(one));
+      return;
+    }
+    const card = frames.querySelector('.onboard-away');
+    if (card) card.remove();
     let frame = frames.querySelector(`iframe[data-doc="${one.key}"]`);
     if (!frame) {
       frame = document.createElement('iframe');
@@ -3480,6 +3500,12 @@ if (onboarding) {
   if (!onboarding.hidden) draw();
 
   onboarding.addEventListener('click', (event) => {
+    const tryIt = event.target.closest('[data-try]');
+    if (tryIt) {
+      forced[tryIt.dataset.try] = true;
+      draw();
+      return;
+    }
     const tab = event.target.closest('[data-doc]');
     if (tab) {
       picked = tab.dataset.doc;
