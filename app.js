@@ -3409,8 +3409,12 @@ if (weeklyWrite) {
 const onboarding = document.querySelector('#onboarding');
 if (onboarding) {
   const MINE = 'https://minix-workspace.onrender.com/';
+  // 새로 올린 주소는 배포가 퍼지는 몇 분 동안 옛 응답(첫 화면)으로 잡힐 수 있다.
+  // 판 번호를 붙이면 그 캐시를 비켜 간다 — 문서를 새로 올릴 때 옛 판이 남는 것도 함께 막는다.
+  const stamp = (String((document.querySelector('script[src*="app.js"]') || {}).src || '')
+    .split('?v=')[1] || '').replace(/[^0-9]/g, '');
   const DOCS = [
-    { key: 'minix', name: '미닉스본부 온보딩', src: 'docs/minix-onboarding.html' },
+    { key: 'minix', name: '미닉스본부 온보딩', src: 'docs/minix-onboarding.html' + (stamp ? `?v=${stamp}` : '') },
     { key: 'sales', name: '세일즈 팀 온보딩', src: MINE + 'minix/minix_onboarding/minix_salesteam_onboarding.html', away: true },
     { key: 'slack', name: '슬랙 태깅 규칙', src: MINE + 'minix/minix_onboarding/minix_slack_tagging_rules.html', away: true },
     { key: 'rr', name: '세일즈 팀 R&R', src: MINE + 'minix/minix_salesteam_r&r/rr.html', away: true },
