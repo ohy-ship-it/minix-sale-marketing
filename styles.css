@@ -1270,3 +1270,32 @@ body.is-resizing .sup-card{cursor:col-resize}
 
 .wk-mini svg{width:13px;margin-right:3px;vertical-align:-2px}
 .wk-text.is-drop{border-color:#9db4e8;background:#f4f8ff;box-shadow:0 0 0 3px #3d71d81f}
+
+/* 주간미팅 — 적으면서 바로 꾸며지는 칸 */
+.wk-live{min-height:260px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;
+  background:#fff;font-size:12.5px;line-height:1.7;color:#37352f;outline:none}
+.wk-live:focus{border-color:#9db4e8;box-shadow:0 0 0 3px #3d71d815}
+.wk-live.is-drop{border-color:#9db4e8;background:#f4f8ff;box-shadow:0 0 0 3px #3d71d81f}
+.wk-live>*:first-child{margin-top:0}
+.wk-live h4{margin:14px 0 6px;font-size:13.5px;font-weight:800;color:#2c2c2b}
+.wk-live p{margin:0 0 6px}
+.wk-live ul{margin:0 0 8px;padding-left:18px}
+.wk-live li{margin:1px 0}
+.wk-live li.wk-box{list-style:none;position:relative;padding-left:20px}
+.wk-live li.wk-box>input{position:absolute;left:0;top:3px;width:12px;height:12px;margin:0;
+  accent-color:#2383e2;cursor:pointer}
+.wk-live li.wk-box.is-on>span{color:#8c8c85;text-decoration:line-through}
+.wk-live .wk-pic{position:relative;margin:8px 0;display:inline-block;max-width:100%}
+.wk-live .wk-pic img{display:block;max-width:100%;border:1px solid var(--line);border-radius:8px}
+.wk-live .wk-pic-out{position:absolute;right:6px;top:6px;width:20px;height:20px;border:0;
+  border-radius:6px;background:#00000073;color:#fff;font-size:12px;line-height:1;cursor:pointer}
+.wk-live .wk-pic:hover .wk-pic-out{background:#000000a6}
+.wk-live .wk-table{font-size:12px}
+.wk-live .wk-table th,.wk-live .wk-table td{min-width:64px}
+.wk-live .wk-table td:focus,.wk-live .wk-table th:focus{outline:2px solid #9db4e8;outline-offset:-2px}
+.wk-live img:not([src]){display:block;width:100%;max-width:520px;height:120px;
+  border:1px dashed #e3e2dc;border-radius:8px;background:#faf9f7}
+
+.wk-live{position:relative}
+.wk-live.is-blank::before{content:'여기에 그냥 적으면 됩니다. 줄 앞에 ## 은 제목, - 은 목록, - [] 는 체크칸이 됩니다.';
+  position:absolute;left:15px;top:12px;color:#b6b5b0;pointer-events:none}

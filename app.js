@@ -3139,6 +3139,7 @@ if (weeklyWrite) {
   let part = 'notice';
   let note = '';
   let pulled = false;
+  let raw = false;                           // 참이면 옛 방식(마크다운 원문 + 미리보기)으로 본다
   const waits = {};                            // 파트마다 저장 타이머
 
   try {
@@ -3280,7 +3281,10 @@ if (weeklyWrite) {
   const cells = (line) => line.replace(/^\||\|$/g, '').split('|').map((one) => one.trim());
   const isRule = (line) => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(line.trim());
 
-  const draw = (text) => {
+  // edit=true 면 편집 칸에 쓸 모양으로 그린다.
+  //   그림 = 손댈 수 없는 덩어리(contenteditable=false) — 글자 치다 깨지지 않게
+  //   체크칸 = 진짜 네모칸(input) — 눌러서 끄고 켠다
+  const draw = (text, edit) => {
     const lines = String(text || '').split(/\r?\n/);
     const out = [];
     let open = false;
@@ -3316,10 +3320,13 @@ if (weeklyWrite) {
         // 드라이브 그림이면 바이트를 받아 화면에서 그린다 (보는 사람의 구글 로그인에 매달리지 않게).
         const id = driveId(link);
         const kept = id ? shots.get(id) : null;
-        out.push(`<a class="wk-shot" href="${escapeHtml(link)}" target="_blank" rel="noopener">`
-          + `<img${id ? ` data-shot="${escapeHtml(id)}"` : ''}`
+        const tag = `<img${id ? ` data-shot="${escapeHtml(id)}"` : ''}`
           + `${kept || !id ? ` src="${escapeHtml(kept || link)}"` : ''}`
-          + ` alt="${escapeHtml(shot[1])}" loading="lazy"></a>`);
+          + ` alt="${escapeHtml(shot[1])}" loading="lazy">`;
+        out.push(edit
+          ? `<figure class="wk-pic" contenteditable="false" data-url="${escapeHtml(link)}">${tag}`
+            + `<button type="button" class="wk-pic-out" data-pic-out="1" title="이 그림을 뺍니다">×</button></figure>`
+          : `<a class="wk-shot" href="${escapeHtml(link)}" target="_blank" rel="noopener">${tag}</a>`);
         continue;
       }
       // 제목 — # · ## · ### 모두 받는다 (보여 주는 크기는 같다)
@@ -3327,18 +3334,81 @@ if (weeklyWrite) {
       if (title) { shut(); out.push(`<h4>${marks(title[2].trim())}</h4>`); continue; }
       // 체크칸 — '- [ ]' · '- [x]' · 사이 빈칸이 없는 '- []' 도 받는다
       const box = /^[-*]\s*\[([ xX]?)\]\s*(.*)$/.exec(one);
-      if (box) { start(); out.push(`<li class="wk-box${/[xX]/.test(box[1]) ? ' is-on' : ''}">${marks(box[2])}</li>`); continue; }
+      if (box) {
+        start();
+        const on = /[xX]/.test(box[1]);
+        out.push(edit
+          ? `<li class="wk-box${on ? ' is-on' : ''}"><input type="checkbox" contenteditable="false"${on ? ' checked' : ''}><span>${marks(box[2])}</span></li>`
+          : `<li class="wk-box${on ? ' is-on' : ''}">${marks(box[2])}</li>`);
+        continue;
+      }
       // 목록 — 뒤에 글이 없어도(서식이 넣어 주는 '- ' 한 줄) 빈 목록으로 둔다.
       // 전에는 이 줄이 글자 '-' 로 보였다.
       const dot = /^[-*](?:\s+(.*))?$/.exec(one);
       if (dot) { start(); out.push(`<li>${marks((dot[1] || '').trim())}</li>`); continue; }
-      if (!one) { shut(); continue; }
+      // 빈 줄 — 편집 칸에서는 빈 덩어리로 남겨 둔다 (담을 때 빈 줄이 그대로 지켜지게)
+      if (!one) { shut(); if (edit) out.push('<p><br></p>'); continue; }
       shut();
       out.push(`<p>${marks(one)}</p>`);
     }
     shut();
     const body = out.join('');
-    return body || '<p class="wk-empty">아직 아무것도 적히지 않았습니다.</p>';
+    if (body) return body;
+    return edit ? '<p><br></p>' : '<p class="wk-empty">아직 아무것도 적히지 않았습니다.</p>';
+  };
+
+  // ── 적은 것을 다시 마크다운으로 (시트에 담는 형식은 그대로 둔다) ──
+  const inline = (node) => {
+    let out = '';
+    node.childNodes.forEach((each) => {
+      if (each.nodeType === 3) { out += each.nodeValue; return; }
+      if (each.nodeName === 'BR') { out += '\n'; return; }
+      if (each.nodeName === 'INPUT') return;                 // 체크칸은 앞에서 따로 적는다
+      const inner = inline(each);
+      out += (each.nodeName === 'B' || each.nodeName === 'STRONG') && inner.trim()
+        ? `**${inner}**` : inner;
+    });
+    return out;
+  };
+
+  const cellsOf = (row) => [...row.children].map((one) => inline(one).replace(/\s+/g, ' ').trim());
+
+  const mdFrom = (root) => {
+    const out = [];
+    [...root.children].forEach((node) => {
+      const name = node.nodeName;
+      if (name === 'FIGURE') {
+        const link = node.dataset.url || '';
+        if (link) out.push(`![그림](${link})`);
+        return;
+      }
+      if (/^H[1-6]$/.test(name)) { out.push(`## ${inline(node).trim()}`); return; }
+      if (name === 'UL' || name === 'OL') {
+        [...node.children].forEach((item) => {
+          const tick = item.querySelector('input[type="checkbox"]');
+          const text = inline(item).trim();
+          out.push(tick ? `- [${tick.checked ? 'x' : ' '}] ${text}` : `- ${text}`);
+        });
+        return;
+      }
+      const table = node.nodeName === 'TABLE' ? node : node.querySelector('table');
+      if (table) {
+        const head = [...table.querySelectorAll('thead tr')];
+        const body = [...table.querySelectorAll('tbody tr')];
+        if (head.length) {
+          const names = cellsOf(head[0]);
+          out.push(`| ${names.join(' | ')} |`);
+          out.push(`| ${names.map(() => '---').join(' | ')} |`);
+        }
+        body.forEach((row) => out.push(`| ${cellsOf(row).join(' | ')} |`));
+        return;
+      }
+      if (!node.textContent.trim()) { out.push(''); return; }   // 빈 줄은 한 줄로
+      const text = inline(node).replace(/\u00a0/g, ' ');
+      text.split('\n').forEach((line) => out.push(line.trim()));
+    });
+    // 빈 줄이 셋 이상 이어지면 둘로 줄인다 (편집하다 보면 늘어난다)
+    return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   };
 
   // 합본을 그대로 복사할 수 있게 글자로 만든다 (슬랙 · 노션에 붙이기)
@@ -3394,17 +3464,24 @@ if (weeklyWrite) {
           <i data-lucide="${mine.status === 'done' ? 'square-check-big' : 'square'}"></i>작성완료</button>
       </div>
       ${one.note ? `<p class="wk-hint">${escapeHtml(one.note)}</p>` : ''}
-      <textarea class="wk-text" data-text="${one.key}" spellcheck="false"
-        placeholder="## 지난 주 한 일&#10;- …&#10;&#10;## 이번 주 할 일&#10;- …">${escapeHtml(mine.text)}</textarea>
+      ${raw
+    ? `<textarea class="wk-text" data-text="${one.key}" spellcheck="false"
+        placeholder="## 지난 주 한 일&#10;- …&#10;&#10;## 이번 주 할 일&#10;- …">${escapeHtml(mine.text)}</textarea>`
+    : `<div class="wk-live${mine.text.trim() ? '' : ' is-blank'}" data-live="${one.key}"
+        contenteditable="true" spellcheck="false" role="textbox" aria-multiline="true"
+        aria-label="${escapeHtml(one.name)} 주간 보고">${draw(mine.text, true)}</div>`}
       <div class="wk-tools">
         <button type="button" class="wk-mini" data-fill="template">서식 넣기</button>
         <button type="button" class="wk-mini" data-fill="table">표 넣기</button>
         <button type="button" class="wk-mini" data-fill="shot"><i data-lucide="image-plus"></i>그림 넣기</button>
         <input type="file" class="wk-file" accept="image/*" multiple hidden>
-        <small>적는 법 — <b>## 제목</b> · <b>- 목록</b> · <b>- [ ] 체크칸</b> · <b>**굵게**</b>
-          · 그림은 <b>Ctrl+V</b> · <b>끌어다 놓기</b> · <b>[그림 넣기]</b></small>
+        <button type="button" class="wk-mini wk-raw" data-raw="1">${raw ? '적기 칸으로' : '원문 보기'}</button>
+        ${raw
+    ? '<small>원문(마크다운)입니다 — <b>## 제목</b> · <b>- 목록</b> · <b>- [ ] 체크칸</b> · <b>**굵게**</b></small>'
+    : `<small>그냥 적으면 됩니다 — 줄 앞에 <b>## </b> 제목 · <b>- </b> 목록 · <b>- [] </b> 체크칸
+          · 굵게는 <b>Ctrl+B</b> · 그림은 <b>Ctrl+V</b> · <b>끌어다 놓기</b></small>`}
       </div>
-      <div class="wk-read">${draw(mine.text)}</div>
+      ${raw ? `<div class="wk-read">${draw(mine.text)}</div>` : ''}
     </section>`;
   };
 
@@ -3433,6 +3510,247 @@ if (weeklyWrite) {
     lucide.createIcons();
     fillShots();
   };
+
+  // ── 편집 칸 (적으면서 바로 꾸며지는 칸) ───────────────────────
+  const liveBox = () => weeklyWrite.querySelector('.wk-live');
+
+  // 적은 것을 마크다운으로 바꿔 담는다 (화면은 건드리지 않는다 — 한글 조합이 끊기지 않게)
+  const keepLive = () => {
+    const root = liveBox();
+    if (!root) return;
+    const mine = partOf(part);
+    const value = mdFrom(root);
+    book[week] = book[week] || {};
+    book[week][part] = { ...mine, text: value };
+    root.classList.toggle('is-blank', !value.trim());   // 빈 칸에는 안내를 띄운다
+    fillShots();
+    save(part);
+  };
+
+  const spot = () => {
+    const sel = window.getSelection();
+    return sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+  };
+
+  const putCaret = (node, atEnd) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    range.collapse(!atEnd);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+
+  // 커서가 놓인 곳 (Selenium · 사람 모두 '고른 자리' 를 보는 것이 맞다 — event.target 은 칸 자체일 수 있다)
+  const caretNode = (root) => {
+    const range = spot();
+    if (!range) return null;
+    let node = range.startContainer;
+    if (node.nodeType === 3) node = node.parentNode;
+    return node && node.nodeType === 1 && root.contains(node) ? node : null;
+  };
+
+  // 커서가 있는 '줄' — 목록이면 그 항목, 아니면 칸 바로 밑의 덩어리
+  const caretLine = (root) => {
+    const node = caretNode(root);
+    if (!node) return null;
+    const item = node.closest('li');
+    if (item && root.contains(item)) return item;
+    let one = node;
+    while (one && one.parentNode !== root) one = one.parentNode;
+    return one && one.nodeType === 1 ? one : null;
+  };
+
+  // 줄 앞에서 커서까지의 글자 (## · - · - [] 를 알아보는 데 쓴다)
+  const headText = (line) => {
+    const range = spot();
+    if (!range) return '';
+    const cut = range.cloneRange();
+    try { cut.setStart(line, 0); } catch (e) { return ''; }
+    return cut.toString();
+  };
+
+  const blankLine = () => {
+    const box = document.createElement('p');
+    box.appendChild(document.createElement('br'));
+    return box;
+  };
+
+  const boxLine = (text, on) => {
+    const item = document.createElement('li');
+    item.className = `wk-box${on ? ' is-on' : ''}`;
+    const tick = document.createElement('input');
+    tick.type = 'checkbox';
+    tick.contentEditable = 'false';
+    tick.checked = !!on;
+    const hold = document.createElement('span');
+    if (text) hold.textContent = text;
+    else hold.appendChild(document.createElement('br'));
+    item.appendChild(tick);
+    item.appendChild(hold);
+    return item;
+  };
+
+  // 목록 항목을 앞 목록에 붙이거나 새 목록을 만들어 넣는다
+  const intoList = (line, item) => {
+    const before = line.previousElementSibling;
+    if (before && before.nodeName === 'UL') {
+      before.appendChild(item);
+      line.remove();
+      return;
+    }
+    const list = document.createElement('ul');
+    list.appendChild(item);
+    line.replaceWith(list);
+  };
+
+  // 줄 앞의 기호를 그 자리에서 모양으로 바꾼다 (칸을 눌렀을 때)
+  const reline = (root, line, head) => {
+    if (line.nodeName !== 'LI' && line.parentNode !== root) return false;
+    const rest = inline(line).slice(head.length).replace(/^\s+/, '');
+    // 체크칸 — '- []' 도, 목록 항목 안에서 '[]' 만 쳐도 받는다.
+    // ('- ' 를 치는 순간 목록이 되니, 사람이 '- [] ' 를 차례로 치면 여기로 온다)
+    if (/^(?:[-*]\s*)?\[[ xX]?\]$/.test(head)) {
+      const item = boxLine(rest, /[xX]/.test(head));
+      if (line.nodeName === 'LI') line.replaceWith(item);
+      else intoList(line, item);
+      putCaret(item.querySelector('span'), !!rest);
+      keepLive();
+      return true;
+    }
+    if (line.nodeName === 'LI') return false;   // 목록 안에서 제목 · 목록 기호는 그냥 글자로 둔다
+    if (/^#{1,6}$/.test(head)) {
+      const title = document.createElement('h4');
+      if (rest) title.textContent = rest;
+      else title.appendChild(document.createElement('br'));
+      line.replaceWith(title);
+      putCaret(title, !!rest);
+      keepLive();
+      return true;
+    }
+    if (/^[-*]$/.test(head)) {
+      const item = document.createElement('li');
+      if (rest) item.textContent = rest;
+      else item.appendChild(document.createElement('br'));
+      intoList(line, item);
+      putCaret(item, !!rest);
+      keepLive();
+      return true;
+    }
+    return false;
+  };
+
+  // 커서 자리 다음에 덩어리(그림 · 표)를 끼워 넣는다
+  const putBlock = (html) => {
+    const root = liveBox();
+    if (!root) return [];
+    const hold = document.createElement('div');
+    hold.innerHTML = html;
+    const kids = [...hold.childNodes];
+    const line = caretLine(root);
+    let anchor = line;
+    while (anchor && anchor.parentNode !== root) anchor = anchor.parentNode;
+    const empty = anchor && anchor.nodeName === 'P' && !anchor.textContent.trim();
+    let at = anchor;
+    kids.forEach((one) => {
+      if (at) { root.insertBefore(one, at.nextSibling); at = one; } else { root.appendChild(one); }
+    });
+    if (empty) anchor.remove();
+    const last = kids[kids.length - 1];
+    const cell = last && last.querySelector ? last.querySelector('td, th') : null;
+    if (cell) { putCaret(cell, false); } else if (last) {
+      const tail = blankLine();
+      root.insertBefore(tail, last.nextSibling);
+      putCaret(tail, false);
+    }
+    keepLive();
+    return kids;
+  };
+
+  weeklyWrite.addEventListener('keydown', (event) => {
+    const root = event.target.closest('.wk-live');
+    if (!root) return;
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
+      event.preventDefault();
+      document.execCommand('bold');
+      keepLive();
+      return;
+    }
+
+    if (event.key === ' ' && !event.isComposing) {
+      const line = caretLine(root);
+      if (line && reline(root, line, headText(line).trim())) event.preventDefault();
+      return;
+    }
+
+    if (event.key === 'Tab') {                  // 표 안에서 다음 칸으로 (끝 칸이면 줄을 하나 더)
+      const cell = (caretNode(root) || event.target).closest('td, th');
+      if (!cell) return;
+      event.preventDefault();
+      const table = cell.closest('table');
+      const all = [...table.querySelectorAll('th, td')];
+      const next = all[all.indexOf(cell) + (event.shiftKey ? -1 : 1)];
+      if (next) { putCaret(next, false); return; }
+      const body = table.querySelector('tbody') || table;
+      const row = document.createElement('tr');
+      const wide = (table.querySelector('tr') || { children: [] }).children.length || 1;
+      for (let n = 0; n < wide; n += 1) {
+        const one = document.createElement('td');
+        one.appendChild(document.createElement('br'));
+        row.appendChild(one);
+      }
+      body.appendChild(row);
+      putCaret(row.firstChild, false);
+      keepLive();
+      return;
+    }
+
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      const line = caretLine(root);
+      if (!line) return;
+      const bare = !line.textContent.trim();
+      if (line.nodeName === 'LI') {
+        if (bare) {                             // 빈 항목에서 엔터 = 목록 빠져나오기
+          const list = line.parentNode;
+          event.preventDefault();
+          line.remove();
+          const tail = blankLine();
+          root.insertBefore(tail, list.nextSibling);
+          if (!list.children.length) list.remove();
+          putCaret(tail, false);
+          keepLive();
+          return;
+        }
+        if (line.classList.contains('wk-box')) { // 체크칸은 체크칸으로 이어 준다
+          event.preventDefault();
+          const item = boxLine('', false);
+          line.parentNode.insertBefore(item, line.nextSibling);
+          putCaret(item.querySelector('span'), false);
+          keepLive();
+        }
+        return;
+      }
+      if (/^H[1-6]$/.test(line.nodeName)) {     // 제목 다음 줄은 보통 글로
+        event.preventDefault();
+        const tail = blankLine();
+        root.insertBefore(tail, line.nextSibling);
+        putCaret(tail, false);
+        keepLive();
+      }
+    }
+  });
+
+  // 붙여넣기는 글자만 받는다 (남의 서식이 그대로 들어와 어지러워지지 않게)
+  weeklyWrite.addEventListener('paste', (event) => {
+    if (!event.target.closest('.wk-live')) return;
+    const clip = event.clipboardData;
+    const items = [...((clip && clip.items) || [])];
+    if (items.some((one) => one.kind === 'file' && String(one.type).indexOf('image/') === 0)) return;
+    event.preventDefault();
+    document.execCommand('insertText', false, String((clip && clip.getData('text/plain')) || ''));
+    keepLive();
+  });
 
   // ── 글칸에 끼워 넣기 ──────────────────────────────────────────
   // 커서 자리에 넣고, 화면을 통째로 다시 그리지 않는다 (커서를 잃지 않게 미리보기만 갈아 준다).
@@ -3504,8 +3822,24 @@ if (weeklyWrite) {
 
   const pasteShot = (file) => {
     shotSeq += 1;
+    const tag = `w${shotSeq}`;
     const mark = `![그림 올리는 중… ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} (${shotSeq})]()`;
-    putIn(mark);
+    if (liveBox()) putBlock(`<p class="wk-wait" data-wait="${tag}">그림 올리는 중…</p>`);
+    else putIn(mark);
+    // 올린 뒤 표시를 그림으로 바꿔 끼운다
+    const land = (piece) => {
+      const hole = weeklyWrite.querySelector(`[data-wait="${tag}"]`);
+      if (hole) {
+        if (!piece) { hole.remove(); } else {
+          const hold = document.createElement('div');
+          hold.innerHTML = piece;
+          hole.replaceWith(...hold.childNodes);
+        }
+        keepLive();
+        return;
+      }
+      swapMark(mark, piece ? `![그림](${piece})` : '');
+    };
     let mine = null;                            // 방금 만든 data: 주소 (다시 받지 않으려고)
     shrink(file)
       .then((got) => {
@@ -3516,11 +3850,11 @@ if (weeklyWrite) {
       .then((body) => {
         const id = driveId(body.url) || body.id;
         if (id && mine) shots.set(id, mine);     // 손에 있는 것을 그대로 쓴다 (바로 보인다)
-        swapMark(mark, `![그림](${body.url})`);
+        land(liveBox() ? draw(`![그림](${body.url})`, true) : body.url);
         flashNote('그림을 넣었습니다');
       })
       .catch((reason) => {
-        swapMark(mark, '');
+        land('');
         note = `그림을 못 올렸습니다 — ${reason.message}`;
         tell();
         flashNote(`그림을 못 올렸습니다 — ${reason.message}`);
@@ -3547,16 +3881,17 @@ if (weeklyWrite) {
 
   // 글칸에 끌어다 놓기
   weeklyWrite.addEventListener('dragover', (event) => {
-    if (!event.target.closest('.wk-text')) return;
+    const box = event.target.closest('.wk-text, .wk-live');
+    if (!box) return;
     event.preventDefault();
-    event.target.classList.add('is-drop');
+    box.classList.add('is-drop');
   });
   weeklyWrite.addEventListener('dragleave', (event) => {
-    const box = event.target.closest('.wk-text');
+    const box = event.target.closest('.wk-text, .wk-live');
     if (box) box.classList.remove('is-drop');
   });
   weeklyWrite.addEventListener('drop', (event) => {
-    const box = event.target.closest('.wk-text');
+    const box = event.target.closest('.wk-text, .wk-live');
     if (!box) return;
     const files = (event.dataTransfer && event.dataTransfer.files) || [];
     if (!files.length) return;                  // 글자를 끌어다 놓은 것은 그대로 둔다
@@ -3567,7 +3902,7 @@ if (weeklyWrite) {
   });
 
   weeklyWrite.addEventListener('paste', (event) => {
-    if (!event.target.closest('.wk-text')) return;
+    if (!event.target.closest('.wk-text, .wk-live')) return;
     const items = [...((event.clipboardData && event.clipboardData.items) || [])];
     const shot = items.find((one) => one.kind === 'file' && String(one.type).indexOf('image/') === 0);
     if (!shot) return;                          // 글 붙여넣기는 그대로 둔다
@@ -3593,6 +3928,23 @@ if (weeklyWrite) {
   };
 
   weeklyWrite.addEventListener('click', (event) => {
+    const tick = event.target.closest('.wk-live input[type="checkbox"]');
+    if (tick) {                                 // 체크칸 켜고 끄기
+      const item = tick.closest('li');
+      if (item) item.classList.toggle('is-on', tick.checked);
+      keepLive();
+      return;
+    }
+
+    const picOut = event.target.closest('[data-pic-out]');
+    if (picOut) {                               // 그림 빼기
+      picOut.closest('figure')?.remove();
+      keepLive();
+      return;
+    }
+
+    if (event.target.closest('.wk-raw')) { raw = !raw; render(); return; }
+
     if (event.target.closest('.wk-pull')) { note = '시트에서 불러오는 중…'; render(); pull(); return; }
 
     const open = event.target.closest('[data-open]');
@@ -3674,7 +4026,8 @@ if (weeklyWrite) {
         return;
       }
       if (fill.dataset.fill === 'table') {      // 표는 커서 자리에 끼워 넣는다 (있는 글을 지우지 않는다)
-        putIn(TABLE);
+        if (liveBox()) putBlock(draw(TABLE, true));
+        else putIn(TABLE);
         return;
       }
       const mine = partOf(part);
@@ -3697,6 +4050,7 @@ if (weeklyWrite) {
   });
 
   weeklyWrite.addEventListener('input', (event) => {
+    if (event.target.closest('.wk-live')) { keepLive(); return; }
     const box = event.target.closest('.wk-text');
     if (!box) return;
     const key = box.dataset.text;
