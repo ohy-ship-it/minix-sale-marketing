@@ -3237,7 +3237,7 @@ if (weeklyWrite) {
     return `<button type="button" class="wk-node${part === one.key ? ' is-on' : ''}" data-part="${one.key}">
           <i data-lucide="${one.key === 'notice' ? 'megaphone' : 'user'}"></i>
           <span>${escapeHtml(one.name)}
-            <small>${done ? '다 적음' : (mine.text.trim() ? '작성 중' : '비어 있음')}${mine.at ? ` · ${whenText(mine.at)}` : ''}</small>
+            <small>${done ? '작성완료' : (mine.text.trim() ? '작성 중' : '비어 있음')}${mine.at ? ` · ${whenText(mine.at)}` : ''}</small>
           </span>
           <em class="wk-dot${done ? ' is-done' : (mine.text.trim() ? ' is-wip' : '')}"></em>
         </button>`;
@@ -3253,7 +3253,7 @@ if (weeklyWrite) {
         </div>
         ${PARTS.map((one) => `<div class="wk-roll">
           <h4 class="wk-roll-name">${escapeHtml(one.name)}
-            <small>${partOf(one.key).status === 'done' ? '다 적음' : '작성 중'}</small></h4>
+            <small>${partOf(one.key).status === 'done' ? '작성완료' : '작성 중'}</small></h4>
           <div class="wk-read">${draw(partOf(one.key).text)}</div>
         </div>`).join('')}
       </section>`;
@@ -3263,8 +3263,9 @@ if (weeklyWrite) {
     return `<section class="wk-pane">
       <div class="wk-phead"><h3>${escapeHtml(one.name)}</h3>
         <span class="wk-when">${mine.at ? `${whenText(mine.at)} 에 고침` : '아직 안 적었습니다'}</span>
-        <button type="button" class="week-pull wk-status${mine.status === 'done' ? ' is-done' : ''}">
-          <i data-lucide="${mine.status === 'done' ? 'square-check-big' : 'square'}"></i>${mine.status === 'done' ? '다 적었습니다' : '작성 중'}</button>
+        <button type="button" class="week-pull wk-status${mine.status === 'done' ? ' is-done' : ''}"
+          title="${mine.status === 'done' ? '누르면 작성 중으로 되돌립니다' : '다 적었으면 눌러 주세요'}">
+          <i data-lucide="${mine.status === 'done' ? 'square-check-big' : 'square'}"></i>작성완료</button>
       </div>
       ${one.note ? `<p class="wk-hint">${escapeHtml(one.note)}</p>` : ''}
       <textarea class="wk-text" data-text="${one.key}" spellcheck="false"
