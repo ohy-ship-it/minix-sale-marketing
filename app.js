@@ -3206,10 +3206,16 @@ if (weeklyWrite) {
     const start = () => { if (!open) { out.push('<ul>'); open = true; } };
     String(text || '').split(/\r?\n/).forEach((line) => {
       const one = line.trim();
-      if (/^##\s+/.test(one)) { shut(); out.push(`<h4>${marks(one.slice(2).trim())}</h4>`); return; }
-      const box = /^[-*]\s*\[( |x|X)\]\s*(.*)$/.exec(one);
-      if (box) { start(); out.push(`<li class="wk-box${box[1] === ' ' ? '' : ' is-on'}">${marks(box[2])}</li>`); return; }
-      if (/^[-*]\s+/.test(one)) { start(); out.push(`<li>${marks(one.slice(1).trim())}</li>`); return; }
+      // 제목 — # · ## · ### 모두 받는다 (보여 주는 크기는 같다)
+      const head = /^(#{1,6})\s+(.*)$/.exec(one);
+      if (head) { shut(); out.push(`<h4>${marks(head[2].trim())}</h4>`); return; }
+      // 체크칸 — '- [ ]' · '- [x]' · 사이 빈칸이 없는 '- []' 도 받는다
+      const box = /^[-*]\s*\[([ xX]?)\]\s*(.*)$/.exec(one);
+      if (box) { start(); out.push(`<li class="wk-box${/[xX]/.test(box[1]) ? ' is-on' : ''}">${marks(box[2])}</li>`); return; }
+      // 목록 — 뒤에 글이 없어도(서식이 넣어 주는 '- ' 한 줄) 빈 목록으로 둔다.
+      // 전에는 이 줄이 글자 '-' 로 보였다.
+      const dot = /^[-*](?:\s+(.*))?$/.exec(one);
+      if (dot) { start(); out.push(`<li>${marks((dot[1] || '').trim())}</li>`); return; }
       if (!one) { shut(); return; }
       shut();
       out.push(`<p>${marks(one)}</p>`);
@@ -3272,7 +3278,7 @@ if (weeklyWrite) {
         placeholder="## 지난 주 한 일&#10;- …&#10;&#10;## 이번 주 할 일&#10;- …">${escapeHtml(mine.text)}</textarea>
       <div class="wk-tools">
         <button type="button" class="wk-mini" data-fill="template">서식 넣기</button>
-        <small><b>##</b> 제목 · <b>-</b> 불릿 · <b>- [ ]</b> 체크 · <b>**굵게**</b></small>
+        <small>적는 법 — <b>## 제목</b> · <b>- 목록</b> · <b>- [ ] 체크칸</b> (<b>- [x]</b> 면 지운 줄) · <b>**굵게**</b></small>
       </div>
       <div class="wk-read">${draw(mine.text)}</div>
     </section>`;
