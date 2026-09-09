@@ -1001,6 +1001,17 @@ function weeklyPartDrop_(payload) {
   }
 }
 
+// 드라이브 권한 승인용. 편집기에서 이 함수를 실행하면 권한 창이 뜬다.
+// **일부러 try/catch 를 두지 않는다.** 오류를 붙잡으면 Apps Script 가 권한 창을 띄우지 못하고
+// 우리 코드가 오류만 로그로 적어 버린다 (checkImageSave 가 그래서 안 먹혔다).
+// getUi() 도 부르지 않는다 — 편집기에서는 알림창을 띄울 수 없어 실행이 멈춘다.
+function grantDrive() {
+  var folder = imageFolder_();
+  var line = '드라이브 권한 OK · 폴더: ' + folder.getName() + ' · ' + folder.getUrl();
+  Logger.log(line);
+  return line;
+}
+
 // 그림 담을 폴더 확인 — 편집기에서 한 번 실행해 드라이브 권한을 승인해 두면 된다.
 // (새 권한은 스크립트를 다시 배포한 뒤 한 번 승인해야 붙여넣기가 된다)
 function checkImageSave() {
