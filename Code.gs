@@ -808,6 +808,117 @@ function phasePut_(payload) {
   }
 }
 
+// ── 주간미팅 작성 ─────────────────────────────────────────────────────
+// 미닉스 워크스페이스의 '주간 리포트(팀)' 와 같은 짜임새다: 한 주 안에 파트가 여럿,
+// 파트 하나는 한 사람이 적는다. 그래서 한 주 × 한 파트가 한 줄이고,
+// 저장은 그 줄만 덮어쓴다 (동시에 같은 줄을 고칠 일이 없다).
+//
+// 주(週) 는 그 주 월요일 날짜(2026-09-07)로 적어 둔다 — 이름표는 화면에서 만든다.
+// 빈 줄도 지우지 않는다. 줄이 있으면 '그 주가 열려 있다'는 뜻이다.
+var WEEKLY_SHEET_NAME = '주간미팅';
+var WEEKLY_HEADERS = ['주', '파트', '이름', '내용', '상태', '수정자', '수정시각'];
+
+function weeklySheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(WEEKLY_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(WEEKLY_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, WEEKLY_HEADERS.length).setValues([WEEKLY_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 100);
+    sheet.setColumnWidth(2, 90);
+    sheet.setColumnWidth(3, 90);
+    sheet.setColumnWidth(4, 520);
+  }
+  return sheet;
+}
+
+function weeklyDay_(value) {
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, 'Asia/Seoul', 'yyyy-MM-dd');
+  }
+  return String(value || '').trim().slice(0, 10);
+}
+
+function weeklyGet_() {
+  var sheet = weeklySheet_();
+  var grid = sheet.getDataRange().getValues();
+  var rows = [];
+  for (var at = 1; at < grid.length; at++) {
+    var week = weeklyDay_(grid[at][0]);
+    var part = String(grid[at][1] || '').trim();
+    if (!week || !part) continue;
+    rows.push({
+      week: week,
+      part: part,
+      name: String(grid[at][2] || ''),
+      text: String(grid[at][3] || ''),
+      status: String(grid[at][4] || 'wip'),
+      by: String(grid[at][5] || ''),
+      at: grid[at][6] instanceof Date ? grid[at][6].toISOString() : String(grid[at][6] || '')
+    });
+  }
+  return {
+    ok: true,
+    rows: rows,
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+// 한 주 · 한 파트의 글만 고친다 (없으면 새로 넣는다). 빈 글도 그대로 둔다.
+function weeklyPut_(payload) {
+  var week = weeklyDay_((payload && payload.week) || '');
+  var part = String((payload && payload.part) || '').trim();
+  if (!week || !part) throw new Error('주와 파트가 있어야 합니다.');
+  var name = String((payload && payload.name) || '');
+  var text = String((payload && payload.text) || '');
+  var status = String((payload && payload.status) || 'wip');
+  var who = String((payload && payload.by) || '');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = weeklySheet_();
+    var last = sheet.getLastRow();
+    var at = 0;
+    if (last > 1) {
+      var have = sheet.getRange(2, 1, last - 1, 2).getValues();
+      for (var i = 0; i < have.length; i++) {
+        if (weeklyDay_(have[i][0]) === week && String(have[i][1]).trim() === part) { at = i + 2; break; }
+      }
+    }
+    if (!at) at = sheet.getLastRow() + 1;
+    sheet.getRange(at, 1, 1, WEEKLY_HEADERS.length)
+      .setValues([[week, part, name, text, status, who, new Date()]]);
+    return { ok: true, week: week, part: part, savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 한 주를 통째로 지운다 (그 주의 모든 파트 줄).
+function weeklyDrop_(payload) {
+  var week = weeklyDay_((payload && payload.week) || '');
+  if (!week) throw new Error('지울 주가 비어 있습니다.');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = weeklySheet_();
+    var last = sheet.getLastRow();
+    if (last < 2) return { ok: true, week: week, removed: 0 };
+    var have = sheet.getRange(2, 1, last - 1, 1).getValues();
+    var gone = 0;
+    for (var i = have.length - 1; i >= 0; i--) {      // 아래에서부터 지운다 (줄 번호가 밀리지 않게)
+      if (weeklyDay_(have[i][0]) === week) { sheet.deleteRow(i + 2); gone++; }
+    }
+    return { ok: true, week: week, removed: gone };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 // ── 팀 메모 (대시보드 홈) ─────────────────────────────────────────────
 // 이름이 '팀 메모' 인데 그 브라우저에만 있었다. 시트에 한 칸으로 담는다.
 // 여러 사람이 같은 순간에 고치면 뒤에 온 것이 이긴다 — 자물쇠로 겹쳐 쓰는 것만 막는다.
@@ -1282,6 +1393,9 @@ function handleAction_(payload) {
     if (payload.action === 'schedulePut') return schedPut_(payload);
     if (payload.action === 'phaseGet') return phaseGet_();
     if (payload.action === 'phasePut') return phasePut_(payload);
+    if (payload.action === 'weeklyGet') return weeklyGet_();
+    if (payload.action === 'weeklyPut') return weeklyPut_(payload);
+    if (payload.action === 'weeklyDrop') return weeklyDrop_(payload);
     if (payload.action === 'noteGet') return noteGet_();
     if (payload.action === 'notePut') return notePut_(payload);
     if (payload.action === 'utmWaitGet') return utmWaitGet_();

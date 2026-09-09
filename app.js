@@ -907,6 +907,7 @@ const VIEWS = {
   // hash 는 섹션 id 와 달라야 한다. 같으면 브라우저가 그 요소로 스크롤해 버린다.
   '메타 광고 세팅': { section: '#ad-setup', hash: '#meta-ad-setup' },
   '퍼포먼스일정': { section: '#brand-schedule', hash: '#performance-schedule' },
+  '주간미팅 작성': { section: '#weekly-write', hash: '#weekly' },
   'UTM 빌더': { section: '#utm-builder', hash: '#utm' },
   '매체별 성과': { section: '#media-performance', hash: '#media-report' },
   '소재별 결과': { section: '#creative-performance', hash: '#creative-result' },
@@ -3088,6 +3089,313 @@ if (contentSchedule) {
   }).observe(contentSchedule, { attributes: true, attributeFilter: ['hidden'] });
   render();
   if (!contentSchedule.hidden) pull(false).then(openLinked);
+}
+
+// ── 주간미팅 작성 ──────────────────────────────────────────────────
+// 미닉스 워크스페이스의 '주간 리포트(팀)' 를 이 워크스페이스 몫으로 옮긴 화면이다.
+//   · 한 주 안에 파트가 여럿이고, 파트 하나는 한 사람이 적는다 (그래서 겹쳐 쓸 일이 없다)
+//   · 파트 = 전체 공유 + 김진빈 · 이정민 · 김서영
+//   · 시트가 원본이다 (주간미팅 탭). localStorage 는 사본 — 시트를 못 읽을 때 버틴다.
+// 원본에 있는 진행상황 · 이슈 브리핑은 그쪽 세일즈 API 를 모아 만드는 것이라 여기서는 뺐다.
+const weeklyWrite = document.querySelector('#weekly-write');
+if (weeklyWrite) {
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  const pad = (n) => String(n).padStart(2, '0');
+  const iso = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const dayOf = (value) => new Date(`${value}T00:00:00`);
+  const addDays = (date, count) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + count);
+  const mondayOf = (date) => addDays(date, -((date.getDay() + 6) % 7));   // 일요일도 그 주 월요일로
+
+  const PARTS = [
+    { key: 'notice', name: '전체 공유', note: '모두가 함께 볼 이야기 — 공지 · 일정 · 결정' },
+    { key: 'jinbin', name: '김진빈', note: '' },
+    { key: 'jungmin', name: '이정민', note: '' },
+    { key: 'seoyoung', name: '김서영', note: '' },
+  ];
+  const nameOf = (key) => (PARTS.find((one) => one.key === key) || {}).name || key;
+  const TEMPLATE = ['## 지난 주 한 일', '- ', '', '## 이번 주 할 일', '- ', '', '## 함께 볼 것 · 도움이 필요한 것', '- '].join('\n');
+
+  const KEY = 'minix-weekly-v1';
+  let book = {};                               // 주 → { 파트 → {text,status,at} }
+  let week = '';                               // 지금 보는 주 (그 주 월요일)
+  let part = 'notice';
+  let note = '';
+  let pulled = false;
+  const waits = {};                            // 파트마다 저장 타이머
+
+  try {
+    const kept = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (kept && typeof kept === 'object') { book = kept.book || {}; week = kept.week || ''; }
+  } catch { book = {}; }
+
+  const cache = () => {
+    try { localStorage.setItem(KEY, JSON.stringify({ book: book, week: week })); } catch { /* 거들기다 */ }
+  };
+
+  const weekList = () => Object.keys(book).sort().reverse();
+  // 이름표는 '2026년 9월 2주차 (9/7~9/11)' 처럼 짓는다.
+  // 달은 그 주 수요일이 든 달로 본다 (8/31~9/4 는 9월 1주차 — 주간소재요청 이름과 같은 셈).
+  // 주차는 그 달 1일이 든 주의 월요일부터 몇 번째 주인가로 센다.
+  const weekLabel = (key) => {
+    const start = dayOf(key);
+    const end = addDays(start, 4);             // 월~금
+    const mid = addDays(start, 2);             // 수요일
+    const first = new Date(mid.getFullYear(), mid.getMonth(), 1);
+    const nth = Math.round((start - mondayOf(first)) / 604800000) + 1;
+    return `${mid.getFullYear()}년 ${mid.getMonth() + 1}월 ${nth}주차`
+      + ` (${start.getMonth() + 1}/${start.getDate()}~${end.getMonth() + 1}/${end.getDate()})`;
+  };
+  const partOf = (key) => (book[week] || {})[key] || { text: '', status: 'wip', at: '' };
+  const whenText = (value) => {
+    if (!value) return '';
+    const at = new Date(value);
+    if (Number.isNaN(at.getTime())) return '';
+    return `${at.getMonth() + 1}/${at.getDate()} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  };
+
+  const tell = () => {
+    const box = weeklyWrite.querySelector('.week-note');
+    if (box) box.textContent = note;
+  };
+
+  const save = (key) => {
+    cache();
+    if (waits[key]) window.clearTimeout(waits[key]);
+    note = '저장 중…';
+    tell();
+    waits[key] = window.setTimeout(() => {
+      delete waits[key];
+      const mine = partOf(key);
+      askSheet({ action: 'weeklyPut', week: week, part: key, name: nameOf(key),
+        text: mine.text, status: mine.status, by: '' })
+        .then(() => { note = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`; })
+        .catch((reason) => { note = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
+        .then(tell);
+    }, 700);
+  };
+
+  const pull = () => askSheet({ action: 'weeklyGet' })
+    .then((body) => {
+      pulled = true;
+      const got = {};
+      (body.rows || []).forEach((row) => {
+        const at = String(row.week || '').slice(0, 10);
+        if (!at) return;
+        got[at] = got[at] || {};
+        got[at][row.part] = { text: String(row.text || ''), status: row.status === 'done' ? 'done' : 'wip', at: row.at || '' };
+      });
+      book = got;
+      if (!book[week]) week = weekList()[0] || '';
+      cache();
+      note = weekList().length ? '' : '아직 적은 주가 없습니다 — [+ 이번 주] 를 눌러 시작하세요';
+      render();
+    })
+    .catch((reason) => {
+      note = `시트에서 못 읽었습니다 — ${reason.message} (이 브라우저 값만 보입니다)`;
+      render();
+    });
+
+  // ── 글 모양 (마크다운 조금) ───────────────────────────────────
+  // ## 제목 · - 불릿 · - [ ] 체크 · **굵게** 만 본다. 원본 리포트도 이 정도만 쓴다.
+  const marks = (text) => escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  const draw = (text) => {
+    const out = [];
+    let open = false;
+    const shut = () => { if (open) { out.push('</ul>'); open = false; } };
+    const start = () => { if (!open) { out.push('<ul>'); open = true; } };
+    String(text || '').split(/\r?\n/).forEach((line) => {
+      const one = line.trim();
+      if (/^##\s+/.test(one)) { shut(); out.push(`<h4>${marks(one.slice(2).trim())}</h4>`); return; }
+      const box = /^[-*]\s*\[( |x|X)\]\s*(.*)$/.exec(one);
+      if (box) { start(); out.push(`<li class="wk-box${box[1] === ' ' ? '' : ' is-on'}">${marks(box[2])}</li>`); return; }
+      if (/^[-*]\s+/.test(one)) { start(); out.push(`<li>${marks(one.slice(1).trim())}</li>`); return; }
+      if (!one) { shut(); return; }
+      shut();
+      out.push(`<p>${marks(one)}</p>`);
+    });
+    shut();
+    const body = out.join('');
+    return body || '<p class="wk-empty">아직 아무것도 적히지 않았습니다.</p>';
+  };
+
+  // 합본을 그대로 복사할 수 있게 글자로 만든다 (슬랙 · 노션에 붙이기)
+  const asText = () => [`# 주간미팅 ${weekLabel(week)}`, ''].concat(PARTS.flatMap((one) => {
+    const mine = partOf(one.key);
+    if (!mine.text.trim()) return [];
+    return [`## ${one.name}`, mine.text.trim(), ''];
+  })).join('\n');
+
+  // ── 그리기 ────────────────────────────────────────────────────
+  const tree = () => `<aside class="wk-tree">
+      <button type="button" class="wk-node${part === 'all' ? ' is-on' : ''}" data-part="all">
+        <i data-lucide="layers"></i>합본 보기</button>
+      <div class="wk-tree-label">파트</div>
+      ${PARTS.map((one) => {
+    const mine = partOf(one.key);
+    const done = mine.status === 'done';
+    return `<button type="button" class="wk-node${part === one.key ? ' is-on' : ''}" data-part="${one.key}">
+          <i data-lucide="${one.key === 'notice' ? 'megaphone' : 'user'}"></i>
+          <span>${escapeHtml(one.name)}
+            <small>${done ? '다 적음' : (mine.text.trim() ? '작성 중' : '비어 있음')}${mine.at ? ` · ${whenText(mine.at)}` : ''}</small>
+          </span>
+          <em class="wk-dot${done ? ' is-done' : (mine.text.trim() ? ' is-wip' : '')}"></em>
+        </button>`;
+  }).join('')}
+    </aside>`;
+
+  const pane = () => {
+    if (part === 'all') {
+      return `<section class="wk-pane">
+        <div class="wk-phead"><h3>합본 보기</h3>
+          <span class="wk-when">${escapeHtml(weekLabel(week))}</span>
+          <button type="button" class="week-pull wk-copy"><i data-lucide="copy"></i>글자로 복사</button>
+        </div>
+        ${PARTS.map((one) => `<div class="wk-roll">
+          <h4 class="wk-roll-name">${escapeHtml(one.name)}
+            <small>${partOf(one.key).status === 'done' ? '다 적음' : '작성 중'}</small></h4>
+          <div class="wk-read">${draw(partOf(one.key).text)}</div>
+        </div>`).join('')}
+      </section>`;
+    }
+    const one = PARTS.find((entry) => entry.key === part) || PARTS[0];
+    const mine = partOf(one.key);
+    return `<section class="wk-pane">
+      <div class="wk-phead"><h3>${escapeHtml(one.name)}</h3>
+        <span class="wk-when">${mine.at ? `${whenText(mine.at)} 에 고침` : '아직 안 적었습니다'}</span>
+        <button type="button" class="week-pull wk-status${mine.status === 'done' ? ' is-done' : ''}">
+          <i data-lucide="${mine.status === 'done' ? 'square-check-big' : 'square'}"></i>${mine.status === 'done' ? '다 적었습니다' : '작성 중'}</button>
+      </div>
+      ${one.note ? `<p class="wk-hint">${escapeHtml(one.note)}</p>` : ''}
+      <textarea class="wk-text" data-part="${one.key}" spellcheck="false"
+        placeholder="## 지난 주 한 일&#10;- …&#10;&#10;## 이번 주 할 일&#10;- …">${escapeHtml(mine.text)}</textarea>
+      <div class="wk-tools">
+        <button type="button" class="wk-mini" data-fill="template">서식 넣기</button>
+        <small><b>##</b> 제목 · <b>-</b> 불릿 · <b>- [ ]</b> 체크 · <b>**굵게**</b></small>
+      </div>
+      <div class="wk-read">${draw(mine.text)}</div>
+    </section>`;
+  };
+
+  const render = () => {
+    const list = weekList();
+    weeklyWrite.innerHTML = `
+      <div class="board-header">
+        <div>
+          <div class="eyebrow">오퍼레이션</div>
+          <h2>주간미팅 작성</h2>
+        </div>
+        <span class="week-note">${escapeHtml(note)}</span>
+        <button type="button" class="week-pull wk-pull" title="시트에서 다시 불러옵니다"><i data-lucide="refresh-cw"></i>새로고침</button>
+      </div>
+      <div class="wk-top">
+        <select class="wk-week" aria-label="주 고르기"${list.length ? '' : ' disabled'}>
+          ${list.map((one) => `<option value="${one}"${one === week ? ' selected' : ''}>${escapeHtml(weekLabel(one))}</option>`).join('')
+    || '<option>적은 주가 없습니다</option>'}
+        </select>
+        <button type="button" class="wk-mini" data-open="0">+ 이번 주</button>
+        <button type="button" class="wk-mini" data-open="-1">+ 지난 주</button>
+        ${week ? '<button type="button" class="wk-mini is-warn" data-drop="1">이 주 지우기</button>' : ''}
+      </div>
+      ${week ? `<div class="wk-body">${tree()}${pane()}</div>`
+    : '<p class="wk-none">주를 만들면 파트별로 적을 수 있습니다. <b>+ 이번 주</b> 를 눌러 시작하세요.</p>'}`;
+    lucide.createIcons();
+  };
+
+  // ── 손대기 ────────────────────────────────────────────────────
+  const openWeek = (step) => {
+    const key = iso(mondayOf(addDays(new Date(), Number(step) * 7)));
+    if (!book[key]) {
+      book[key] = { notice: { text: '', status: 'wip', at: '' } };
+      week = key;
+      part = 'notice';
+      render();
+      save('notice');                          // 줄을 하나 만들어 그 주를 열어 둔다
+      return;
+    }
+    week = key;
+    render();
+  };
+
+  weeklyWrite.addEventListener('click', (event) => {
+    if (event.target.closest('.wk-pull')) { note = '시트에서 불러오는 중…'; render(); pull(); return; }
+
+    const open = event.target.closest('[data-open]');
+    if (open) return openWeek(open.dataset.open);
+
+    if (event.target.closest('[data-drop]')) {
+      if (!window.confirm(`${weekLabel(week)} 을 지웁니다. 그 주에 적은 글이 모두 없어집니다.`)) return;
+      const gone = week;
+      delete book[gone];
+      week = weekList()[0] || '';
+      cache();
+      render();
+      askSheet({ action: 'weeklyDrop', week: gone })
+        .then(() => { note = '주를 지웠습니다'; })
+        .catch((reason) => { note = `시트에서 못 지웠습니다 — ${reason.message}`; })
+        .then(tell);
+      return;
+    }
+
+    const node = event.target.closest('[data-part]');
+    if (node) { part = node.dataset.part; render(); return; }
+
+    if (event.target.closest('.wk-copy')) {
+      copyText(asText())
+        .then(() => flashNote('합본을 복사했습니다'))
+        .catch(() => flashNote('복사를 못 했습니다 — 글칸에서 직접 복사해 주세요'));
+      return;
+    }
+
+    if (event.target.closest('[data-fill]')) {
+      const mine = partOf(part);
+      if (mine.text.trim() && !window.confirm('적어 둔 글을 서식으로 덮어씁니다. 그래도 넣을까요?')) return;
+      book[week] = book[week] || {};
+      book[week][part] = { ...mine, text: TEMPLATE };
+      render();
+      save(part);
+      return;
+    }
+
+    const status = event.target.closest('.wk-status');
+    if (status) {
+      const mine = partOf(part);
+      book[week] = book[week] || {};
+      book[week][part] = { ...mine, status: mine.status === 'done' ? 'wip' : 'done' };
+      render();
+      save(part);
+    }
+  });
+
+  weeklyWrite.addEventListener('input', (event) => {
+    const box = event.target.closest('.wk-text');
+    if (!box) return;
+    const key = box.dataset.part;
+    const mine = partOf(key);
+    book[week] = book[week] || {};
+    book[week][key] = { ...mine, text: box.value };
+    // 글을 적는 중에는 다시 그리지 않는다 (자리를 잃지 않게). 미리보기만 갈아 준다.
+    const read = weeklyWrite.querySelector('.wk-read');
+    if (read) read.innerHTML = draw(box.value);
+    save(key);
+  });
+
+  weeklyWrite.addEventListener('change', (event) => {
+    const pick = event.target.closest('.wk-week');
+    if (!pick) return;
+    week = pick.value;
+    cache();
+    render();
+  });
+
+  // 화면을 열 때 한 번만 받아 온다
+  new MutationObserver(() => {
+    if (weeklyWrite.hidden || pulled) return;
+    note = '시트에서 불러오는 중…';
+    render();
+    pull();
+  }).observe(weeklyWrite, { attributes: true, attributeFilter: ['hidden'] });
+  render();
+  if (!weeklyWrite.hidden) pull();
 }
 
 // ── 광고자동 세팅 · 메타 광고 세팅 ──────────────────────────────────
