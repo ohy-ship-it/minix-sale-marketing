@@ -3399,8 +3399,10 @@ if (weeklyWrite) {
       <div class="wk-tools">
         <button type="button" class="wk-mini" data-fill="template">서식 넣기</button>
         <button type="button" class="wk-mini" data-fill="table">표 넣기</button>
+        <button type="button" class="wk-mini" data-fill="shot"><i data-lucide="image-plus"></i>그림 넣기</button>
+        <input type="file" class="wk-file" accept="image/*" multiple hidden>
         <small>적는 법 — <b>## 제목</b> · <b>- 목록</b> · <b>- [ ] 체크칸</b> · <b>**굵게**</b>
-          · 그림은 <b>Ctrl+V 로 붙여넣기</b></small>
+          · 그림은 <b>Ctrl+V</b> · <b>끌어다 놓기</b> · <b>[그림 넣기]</b></small>
       </div>
       <div class="wk-read">${draw(mine.text)}</div>
     </section>`;
@@ -3441,9 +3443,12 @@ if (weeklyWrite) {
     const to = box.selectionEnd === null ? from : box.selectionEnd;
     const before = box.value.slice(0, from);
     const after = box.value.slice(to);
+    // 앞뒤로 줄바꿈을 채운다. 뒤가 붙어 있으면 '![그림](…)## 공지' 처럼 한 줄이 되어
+    // 그림 · 표로 안 그려진다 (글 앞쪽에 넣을 때 그랬다).
     const pad = before && !before.endsWith('\n') ? '\n' : '';
-    box.value = before + pad + piece + after;
-    const at = (before + pad + piece).length;
+    const tail = after && !after.startsWith('\n') && !piece.endsWith('\n') ? '\n' : '';
+    box.value = before + pad + piece + tail + after;
+    const at = (before + pad + piece + tail).length;
     box.focus();
     box.setSelectionRange(at, at);
     keepText(box.value);
@@ -3495,8 +3500,11 @@ if (weeklyWrite) {
     reader.readAsDataURL(file);
   });
 
+  let shotSeq = 0;                              // 올리는 중 표시를 겹치지 않게 하는 번호
+
   const pasteShot = (file) => {
-    const mark = `![그림 올리는 중… ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}]()`;
+    shotSeq += 1;
+    const mark = `![그림 올리는 중… ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} (${shotSeq})]()`;
     putIn(mark);
     let mine = null;                            // 방금 만든 data: 주소 (다시 받지 않으려고)
     shrink(file)
@@ -3518,6 +3526,45 @@ if (weeklyWrite) {
         flashNote(`그림을 못 올렸습니다 — ${reason.message}`);
       });
   };
+
+  // 그림 파일만 골라 같은 길로 보낸다 (단추 · 끌어다 놓기 · 붙여넣기가 모두 이 함수를 쓴다)
+  const takeFiles = (list) => {
+    const shots = [...(list || [])].filter((one) => String(one.type).indexOf('image/') === 0);
+    if (!shots.length) {
+      flashNote('그림 파일만 넣을 수 있습니다');
+      return false;
+    }
+    shots.forEach((one) => pasteShot(one));
+    return true;
+  };
+
+  weeklyWrite.addEventListener('change', (event) => {
+    const box = event.target.closest('.wk-file');
+    if (!box) return;
+    takeFiles(box.files);
+    box.value = '';                             // 같은 파일을 다시 골라도 받게 비운다
+  });
+
+  // 글칸에 끌어다 놓기
+  weeklyWrite.addEventListener('dragover', (event) => {
+    if (!event.target.closest('.wk-text')) return;
+    event.preventDefault();
+    event.target.classList.add('is-drop');
+  });
+  weeklyWrite.addEventListener('dragleave', (event) => {
+    const box = event.target.closest('.wk-text');
+    if (box) box.classList.remove('is-drop');
+  });
+  weeklyWrite.addEventListener('drop', (event) => {
+    const box = event.target.closest('.wk-text');
+    if (!box) return;
+    const files = (event.dataTransfer && event.dataTransfer.files) || [];
+    if (!files.length) return;                  // 글자를 끌어다 놓은 것은 그대로 둔다
+    event.preventDefault();
+    box.classList.remove('is-drop');
+    box.focus();
+    takeFiles(files);
+  });
 
   weeklyWrite.addEventListener('paste', (event) => {
     if (!event.target.closest('.wk-text')) return;
@@ -3622,6 +3669,10 @@ if (weeklyWrite) {
 
     const fill = event.target.closest('[data-fill]');
     if (fill) {
+      if (fill.dataset.fill === 'shot') {       // 파일 고르개를 연다 (고르면 change 에서 받는다)
+        weeklyWrite.querySelector('.wk-file')?.click();
+        return;
+      }
       if (fill.dataset.fill === 'table') {      // 표는 커서 자리에 끼워 넣는다 (있는 글을 지우지 않는다)
         putIn(TABLE);
         return;
