@@ -6018,19 +6018,20 @@ if (mediaPerformance) {
   // 매체 줄 · 광고그룹 줄 · 합계 줄이 같은 숫자 칸을 쓴다. 한 군데서 만든다.
   // 비율은 더한 값에서 다시 계산한다 — 줄마다의 CTR 을 평균 내면 틀린 값이 된다.
   const CROSS_CELLS = 11;
+  // 차례는 crossHead 와 짝이다: 광고비 · 전환값 · ROAS · CPA · 노출 · 클릭 · 결과 · CPM · CPC · CTR · CVR(구매)
   const crossCells = (row, strong) => {
     const spend = strong ? `<b>${money(row.spend)}</b>` : money(row.spend);
     return `<td class="perf-num">${spend}</td>
+      <td class="perf-num">${row.revenue ? money(row.revenue) : '<span class="tool-blank">—</span>'}</td>
+      <td class="perf-num">${blank(ratio(row.revenue, row.spend), perfRoas)}</td>
+      <td class="perf-num">${blank(ratio(row.spend, row.results), money)}</td>
       <td class="perf-num">${count(row.impressions)}</td>
       <td class="perf-num">${count(row.linkClicks)}</td>
-      <td class="perf-num">${blank(ratio(row.linkClicks, row.impressions), percent)}</td>
-      <td class="perf-num">${blank(ratio(row.spend, row.linkClicks), money)}</td>
-      <td class="perf-num">${blank(ratio(row.spend * 1000, row.impressions), money)}</td>
       <td class="perf-num">${count(row.results)}</td>
-      <td class="perf-num">${blank(ratio(row.purchase, row.linkClicks), percent)}</td>
-      <td class="perf-num">${blank(ratio(row.spend, row.results), money)}</td>
-      <td class="perf-num">${row.revenue ? money(row.revenue) : '<span class="tool-blank">—</span>'}</td>
-      <td class="perf-num">${blank(ratio(row.revenue, row.spend), perfRoas)}</td>`;
+      <td class="perf-num">${blank(ratio(row.spend * 1000, row.impressions), money)}</td>
+      <td class="perf-num">${blank(ratio(row.spend, row.linkClicks), money)}</td>
+      <td class="perf-num">${blank(ratio(row.linkClicks, row.impressions), percent)}</td>
+      <td class="perf-num">${blank(ratio(row.purchase, row.linkClicks), percent)}</td>`;
   };
 
   const crossTotals = () => {
@@ -6219,9 +6220,11 @@ if (mediaPerformance) {
       로그인이 풀렸으면 <b>gfa_login.bat</b> 으로 한 번 로그인해 주세요 ('로그인 상태 유지' 체크)</small></p>`;
   };
 
+  // 지표 차례는 행사별 성과(미닉스 워크스페이스 · 행사별 결과) 와 같게 둔다 —
+  // 돈 · 성과(광고비 · 전환값 · ROAS · CPA)가 앞, 규모 · 효율이 뒤다. 두 화면을 나란히 읽으려고.
   const crossHead = (first) => `<thead><tr><th>${first}</th><th class="perf-span-head">집행일자</th>
-    <th>광고비</th><th>노출</th><th>클릭</th><th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th>
-    <th>CVR<small>구매</small></th><th>CPA</th><th>전환값</th><th>ROAS</th></tr></thead>`;
+    <th>광고비</th><th>전환값</th><th>ROAS</th><th>CPA</th><th>노출</th><th>클릭</th><th>결과</th>
+    <th>CPM</th><th>CPC</th><th>CTR</th><th>CVR<small>구매</small></th></tr></thead>`;
 
   // 단계마다의 합을 맨 위에 한 표로 모은다.
   // 단계마다 그 기간만 따로 받아 왔으니 하루가 한 단계에만 들어간다 — 그래서 세 줄을 더한
