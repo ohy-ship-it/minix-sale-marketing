@@ -807,6 +807,16 @@ if (creativeBoard) {
     }
     if (event.target.closest('.week-add')) {
       const week = normalizeWeek({ year: yearFor(new Date()), month: monthFor(new Date()), week: weekNoFor(new Date()) });
+      // 같은 주차가 이미 있으면 물어본다. 빈 주차가 목록 맨 위에 하나 더 생기면
+      // 그 줄을 열게 되어 '적어 둔 내용이 사라진' 것처럼 보인다.
+      const twin = weeks.find((one) => one.year === week.year && one.month === week.month && one.week === week.week);
+      if (twin && !window.confirm(`'${weekName(week)}'가 이미 있습니다 (카드 ${twin.rows.length}건).`
+        + '\n\n빈 주차를 하나 더 만들까요? [취소] 를 누르면 있는 주차를 엽니다.')) {
+        editingWeekId = null;
+        renderWeekList();
+        openWeek(twin.id);
+        return;
+      }
       weeks.unshift(week);
       editingWeekId = week.id;
       // 필터가 켜져 있으면 새 행이 걸러져 보이지 않으므로 해제한다
