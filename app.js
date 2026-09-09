@@ -3242,6 +3242,40 @@ if (weeklyWrite) {
   // ── 글 모양 (마크다운 조금) ───────────────────────────────────
   // ## 제목 · - 불릿 · - [ ] 체크 · **굵게** 만 본다. 원본 리포트도 이 정도만 쓴다.
   const marks = (text) => escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  // ── 붙인 그림을 화면 안에서 그리기 ────────────────────────────
+  // 드라이브 주소를 <img> 에 그대로 걸면, 보는 사람이 회사 구글 계정으로 로그인돼 있어야 하고
+  // 계정을 여러 개 쓰면 엉뚱한 계정으로 물어 깨진 그림이 된다.
+  // 그래서 시트 쪽 길(imageGet)로 바이트를 받아 data: 로 그린다. 이 브라우저에서 한 번만 받는다.
+  const shots = new Map();                      // 그림 번호 → data: 주소
+  const shotWait = new Set();                   // 지금 받고 있는 것
+
+  const driveId = (link) => {
+    const found = /[?&]id=([\w-]{20,})/.exec(link) || /\/d\/([\w-]{20,})/.exec(link);
+    return found ? found[1] : '';
+  };
+
+  const fillShots = () => {
+    weeklyWrite.querySelectorAll('img[data-shot]:not([src])').forEach((box) => {
+      const id = box.dataset.shot;
+      const kept = shots.get(id);
+      if (kept) { box.src = kept; return; }
+      if (shotWait.has(id)) return;
+      shotWait.add(id);
+      askSheet({ action: 'imageGet', id: id })
+        .then((body) => {
+          shots.set(id, `data:${body.mime};base64,${body.data}`);
+          weeklyWrite.querySelectorAll(`img[data-shot="${id}"]`).forEach((each) => {
+            each.src = shots.get(id);
+          });
+        })
+        .catch((reason) => {
+          note = `그림을 못 읽었습니다 — ${reason.message}`;
+          tell();
+        })
+        .then(() => shotWait.delete(id));
+    });
+  };
+
   // 표 — | 로 나눈 줄. 둘째 줄이 |---|---| 면 첫 줄을 머리글로 본다.
   const cells = (line) => line.replace(/^\||\|$/g, '').split('|').map((one) => one.trim());
   const isRule = (line) => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(line.trim());
@@ -3275,10 +3309,17 @@ if (weeklyWrite) {
       if (shot) {
         shut();
         const link = shot[2].trim();
-        out.push(/^https?:\/\//.test(link)
-          ? `<a class="wk-shot" href="${escapeHtml(link)}" target="_blank" rel="noopener">`
-            + `<img src="${escapeHtml(link)}" alt="${escapeHtml(shot[1])}" loading="lazy"></a>`
-          : `<p class="wk-wait">${escapeHtml(shot[1] || '그림')}</p>`);
+        if (!/^https?:\/\//.test(link)) {
+          out.push(`<p class="wk-wait">${escapeHtml(shot[1] || '그림')}</p>`);
+          continue;
+        }
+        // 드라이브 그림이면 바이트를 받아 화면에서 그린다 (보는 사람의 구글 로그인에 매달리지 않게).
+        const id = driveId(link);
+        const kept = id ? shots.get(id) : null;
+        out.push(`<a class="wk-shot" href="${escapeHtml(link)}" target="_blank" rel="noopener">`
+          + `<img${id ? ` data-shot="${escapeHtml(id)}"` : ''}`
+          + `${kept || !id ? ` src="${escapeHtml(kept || link)}"` : ''}`
+          + ` alt="${escapeHtml(shot[1])}" loading="lazy"></a>`);
         continue;
       }
       // 제목 — # · ## · ### 모두 받는다 (보여 주는 크기는 같다)
@@ -3388,6 +3429,7 @@ if (weeklyWrite) {
       ${week ? `<div class="wk-body">${tree()}${pane()}</div>`
     : '<p class="wk-none">주를 만들면 파트별로 적을 수 있습니다. <b>+ 이번 주</b> 를 눌러 시작하세요.</p>'}`;
     lucide.createIcons();
+    fillShots();
   };
 
   // ── 글칸에 끼워 넣기 ──────────────────────────────────────────
@@ -3413,6 +3455,7 @@ if (weeklyWrite) {
     book[week][part] = { ...mine, text: value };
     const read = weeklyWrite.querySelector('.wk-read');
     if (read) read.innerHTML = draw(value);
+    fillShots();
     save(part);
   };
 
@@ -3455,19 +3498,24 @@ if (weeklyWrite) {
   const pasteShot = (file) => {
     const mark = `![그림 올리는 중… ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}]()`;
     putIn(mark);
+    let mine = null;                            // 방금 만든 data: 주소 (다시 받지 않으려고)
     shrink(file)
-      .then((got) => askSheet({ action: 'imageSave', data: got.data, mime: got.mime,
-        name: `주간미팅 ${week} ${nameOf(part)} ${Date.now()}` }))
+      .then((got) => {
+        mine = `data:${got.mime};base64,${got.data}`;
+        return askSheet({ action: 'imageSave', data: got.data, mime: got.mime,
+          name: `주간미팅 ${week} ${nameOf(part)} ${Date.now()}` });
+      })
       .then((body) => {
+        const id = driveId(body.url) || body.id;
+        if (id && mine) shots.set(id, mine);     // 손에 있는 것을 그대로 쓴다 (바로 보인다)
         swapMark(mark, `![그림](${body.url})`);
-        flashNote(body.access === 'private'
-          ? '그림을 올렸지만 나눔을 못 열었습니다 — 다른 사람에게는 안 보일 수 있습니다'
-          : '그림을 넣었습니다');
+        flashNote('그림을 넣었습니다');
       })
       .catch((reason) => {
         swapMark(mark, '');
         note = `그림을 못 올렸습니다 — ${reason.message}`;
         tell();
+        flashNote(`그림을 못 올렸습니다 — ${reason.message}`);
       });
   };
 
@@ -3607,6 +3655,7 @@ if (weeklyWrite) {
     // 글을 적는 중에는 다시 그리지 않는다 (자리를 잃지 않게). 미리보기만 갈아 준다.
     const read = weeklyWrite.querySelector('.wk-read');
     if (read) read.innerHTML = draw(box.value);
+    fillShots();
     save(key);
   });
 

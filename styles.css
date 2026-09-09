@@ -1263,3 +1263,7 @@ body.is-resizing .sup-card{cursor:col-resize}
 .wk-node:hover .wk-out{display:block}
 .wk-out:hover{background:#f6e5e3;color:#d44c47}
 .wk-node:hover .wk-dot{display:none}
+
+/* 그림을 받아 오는 동안 자리를 잡아 둔다 (칸이 덜컥 늘어나지 않게) */
+.wk-shot img:not([src]){display:block;width:100%;max-width:520px;height:120px;
+  border:1px dashed #e3e2dc;border-radius:8px;background:#fbfbf9}

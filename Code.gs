@@ -979,6 +979,47 @@ function imageSave_(payload) {
   };
 }
 
+// 그림을 화면 안에서 그리려면 바이트가 필요하다.
+// 드라이브 주소(thumbnail?id=…)를 <img> 에 그대로 걸면 보는 사람이 회사 구글 계정으로
+// 로그인돼 있어야 하고, 여러 계정을 함께 쓰면 엉뚱한 계정으로 물어 깨진 그림이 된다.
+// 그래서 이 길로 바이트를 받아 화면에서 data: 로 그린다 (웹앱이 소유자 권한으로 읽는다).
+//
+// **우리 그림 폴더 안의 파일만 준다.** 이 웹앱은 누구나 부를 수 있어서, 아무 파일 번호나
+// 받아 주면 소유자의 드라이브를 통째로 읽는 창구가 되어 버린다.
+function imageGet_(payload) {
+  var id = String((payload && payload.id) || '').trim();
+  if (!id) throw new Error('그림 번호가 비어 있습니다.');
+
+  var file;
+  try {
+    file = DriveApp.getFileById(id);
+  } catch (error) {
+    throw new Error('그림을 찾지 못했습니다.');
+  }
+
+  var folderId = imageFolder_().getId();
+  var mine = false;
+  var parents = file.getParents();
+  while (parents.hasNext()) {
+    if (parents.next().getId() === folderId) { mine = true; break; }
+  }
+  if (!mine) throw new Error('워크스페이스 그림 폴더의 파일이 아닙니다.');
+
+  var blob = file.getBlob();
+  var mime = String(blob.getContentType() || '');
+  if (mime.indexOf('image/') !== 0) throw new Error('그림 파일이 아닙니다: ' + mime);
+  var bytes = blob.getBytes();
+
+  return {
+    ok: true,
+    id: id,
+    mime: mime,
+    name: file.getName(),
+    bytes: bytes.length,
+    data: Utilities.base64Encode(bytes)
+  };
+}
+
 // 한 사람(파트)을 통째로 뺀다 — 모든 주의 그 사람 줄을 지운다.
 function weeklyPartDrop_(payload) {
   var part = String((payload && payload.part) || '').trim();
@@ -1508,6 +1549,7 @@ function handleAction_(payload) {
     if (payload.action === 'weeklyDrop') return weeklyDrop_(payload);
     if (payload.action === 'weeklyPartDrop') return weeklyPartDrop_(payload);
     if (payload.action === 'imageSave') return imageSave_(payload);
+    if (payload.action === 'imageGet') return imageGet_(payload);
     if (payload.action === 'noteGet') return noteGet_();
     if (payload.action === 'notePut') return notePut_(payload);
     if (payload.action === 'utmWaitGet') return utmWaitGet_();
