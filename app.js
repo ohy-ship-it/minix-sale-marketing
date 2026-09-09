@@ -2381,6 +2381,7 @@ if (contentSchedule) {
 
   let view = 'cal';                            // cal | table
   let cursor = today.slice(0, 7);
+  const chosen = { sku: [], owners: [] };      // 걸러 보기 (이 브라우저에서만, 새로 열면 풀린다)
   let note = '';
   let pulled = false;
   let saveWait = null;
@@ -2434,6 +2435,49 @@ if (contentSchedule) {
       render();
     });
 
+  // ── 걸러 보기 (SKU · 담당자) ──────────────────────────────────
+  // 퍼포먼스일정 필터와 같은 조작이다 — 칩을 누르면 켜지고, 여러 개는 '또는' 으로 걸린다.
+  // 고를 거리는 지금 담긴 줄에서 뽑는다 (많이 나온 것이 앞).
+  const FACETS = [
+    { key: 'sku', label: 'SKU', icon: 'tag', colors: SKU_COLOR },
+    { key: 'owners', label: '담당자', icon: 'users', colors: OWNER_COLOR },
+  ];
+
+  const facetOptions = (key) => {
+    const tally = new Map();
+    rows.forEach((row) => (row[key] || []).forEach((name) => tally.set(name, (tally.get(name) || 0) + 1)));
+    return [...tally.entries()]
+      .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0], 'ko'))
+      .map(([name]) => name);
+  };
+
+  const anyFilter = () => FACETS.some((facet) => chosen[facet.key].length > 0);
+  const visibleRows = () => (anyFilter()
+    ? rows.filter((row) => FACETS.every((facet) => !chosen[facet.key].length
+      || (row[facet.key] || []).some((name) => chosen[facet.key].includes(name))))
+    : rows);
+
+  const filters = () => {
+    const lines = FACETS.map((facet) => {
+      const options = facetOptions(facet.key);
+      if (!options.length) return '';
+      return `<div class="filter-row${chosen[facet.key].length ? ' is-active' : ''}">
+        <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
+        <span class="filter-options">${options.map((name) => {
+    const on = chosen[facet.key].includes(name);
+    return `<button type="button" class="filter-chip sup-chip is-${colorOf(facet.colors, name)}${on ? ' is-on' : ''}"
+            data-facet="${facet.key}" data-value="${escapeHtml(name)}" aria-pressed="${on}">${escapeHtml(name)}</button>`;
+  }).join('')}</span>
+      </div>`;
+    }).join('');
+    if (!lines) return '';
+    return `<div class="sup-filters">${lines}
+      ${anyFilter() ? `<div class="filter-summary">
+        <button type="button" class="filter-clear">전체 보기</button>
+        <span class="filter-count">${visibleRows().length}개 / ${rows.length}개</span>
+      </div>` : ''}</div>`;
+  };
+
   // ── 달력 ──────────────────────────────────────────────────────
   const dayText = (value) => (value
     ? `${Number(value.slice(0, 4))}년 ${Number(value.slice(5, 7))}월 ${Number(value.slice(8, 10))}일`
@@ -2473,7 +2517,7 @@ if (contentSchedule) {
   // 한 주 안에서 겹치지 않게 줄(lane)을 나눠 막대를 놓는다. (퍼포먼스일정 달력과 같은 방법)
   const weekSegments = (weekStart) => {
     const weekEnd = addDays(weekStart, 6);
-    const segments = rows
+    const segments = visibleRows()
       .map((row) => ({ row: row, span: spanOf(row) }))
       .filter((one) => one.span)
       .map((one) => ({ row: one.row, span: one.span, from: dayOf(one.span.from), to: dayOf(one.span.to) }))
@@ -2565,7 +2609,7 @@ if (contentSchedule) {
   const table = () => `<div class="tool-table-wrap">
       <table class="tool-table sup-table">
         <thead><tr>${COLUMNS.map(([, label]) => `<th>${label}</th>`).join('')}<th>색</th><th></th></tr></thead>
-        <tbody>${rows.map((row) => `<tr data-id="${escapeHtml(row.id)}">
+        <tbody>${visibleRows().map((row) => `<tr data-id="${escapeHtml(row.id)}">
           ${COLUMNS.map(([key, , kind]) => `<td>${kind === 'date'
             ? `<input type="date" data-cell="${key}" value="${escapeHtml(row[key])}">`
             : `<input type="text" data-cell="${key}" value="${escapeHtml(kind === 'list' ? row[key].join(', ') : row[key])}"${kind === 'list' ? ' placeholder="쉼표로 여러 개"' : ''}>`}</td>`).join('')}
@@ -2595,6 +2639,7 @@ if (contentSchedule) {
           <button type="button" class="sup-tab${view === 'cal' ? ' is-on' : ''}" data-view="cal"><i data-lucide="calendar"></i>캘린더 보기</button>
           <button type="button" class="sup-tab${view === 'table' ? ' is-on' : ''}" data-view="table"><i data-lucide="table"></i>표</button>
         </div>
+        ${filters()}
         ${view === 'cal' ? calendar() : table()}
       </div>`;
     lucide.createIcons();
@@ -2606,6 +2651,22 @@ if (contentSchedule) {
 
     const tab = event.target.closest('[data-view]');
     if (tab) { view = tab.dataset.view; render(); return; }
+
+    const facet = event.target.closest('[data-facet]');
+    if (facet) {
+      const key = facet.dataset.facet;
+      const value = facet.dataset.value;
+      chosen[key] = chosen[key].includes(value)
+        ? chosen[key].filter((one) => one !== value)
+        : [...chosen[key], value];
+      render();
+      return;
+    }
+    if (event.target.closest('.filter-clear')) {
+      FACETS.forEach((one) => { chosen[one.key] = []; });
+      render();
+      return;
+    }
 
     const move = event.target.closest('[data-move]');
     if (move) {
@@ -2754,6 +2815,8 @@ if (contentSchedule) {
   const addRow = (day) => {
     const value = /^\d{4}-\d{2}-\d{2}$/.test(day || '') ? day : today;
     const row = normalize({ hand: value, take: value });
+    // 새 줄은 SKU · 담당자가 비어 있어 걸러 보기에 걸린다. 안 보이면 놀라니 필터를 푼다.
+    if (anyFilter()) FACETS.forEach((one) => { chosen[one.key] = []; });
     rows = [...rows, row];
     freshId = row.id;
     pushed = false;

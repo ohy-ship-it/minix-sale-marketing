@@ -1062,6 +1062,9 @@ html.embed-mode .content{padding:14px}
 .sup-tab:hover{background:#f1f1ef}
 .sup-tab.is-on{background:#f1f1ef;color:#37352f}
 
+.sup-filters{margin:0 0 10px;padding:9px 11px;border:1px solid #eeede8;border-radius:9px;background:#fbfbf9}
+.sup-filters .filter-row:last-of-type{margin-bottom:0}
+.sup-filters .filter-summary{margin-top:7px}
 .sup-cal-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
 .sup-cal-head b{font:600 13px inherit;color:#37352f}
 .sup-nav{display:inline-flex;align-items:center;gap:2px;margin-left:auto}
