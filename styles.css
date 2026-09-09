@@ -1299,3 +1299,9 @@ body.is-resizing .sup-card{cursor:col-resize}
 .wk-live{position:relative}
 .wk-live.is-blank::before{content:'여기에 그냥 적으면 됩니다. 줄 앞에 ## 은 제목, - 은 목록, - [] 는 체크칸이 됩니다.';
   position:absolute;left:15px;top:12px;color:#b6b5b0;pointer-events:none}
+
+.wk-back{display:flex;align-items:center;gap:6px;width:100%;padding:7px 9px;margin-top:3px;
+  border:1px dashed var(--line);border-radius:8px;background:transparent;color:#8c8c85;
+  font-size:11.5px;text-align:left;cursor:pointer}
+.wk-back:hover{border-color:#c9c8c1;color:#37352f;background:#faf9f7}
+.wk-back svg{width:13px;height:13px;flex:none}

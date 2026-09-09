@@ -3125,11 +3125,23 @@ if (weeklyWrite) {
   ];
   // 시트 줄에서 찾은 사람 (정해 둔 넷 말고 나중에 넣은 사람들). 열쇠 → 이름
   let more = {};
+  // 뺀 인원. 정해 둔 넷은 줄을 지워도 이 목록에서 다시 살아나므로 따로 적어 둔다.
+  // 시트의 설정 줄(주 '__roster' · 파트 'hidden')에 담아 다른 사람 화면에서도 같이 빠지게 한다.
+  const ROSTER = '__roster';
+  let gone = [];
+  const goneWait = {};                         // 방금 뺀 사람 (늦게 온 불러오기가 되살리지 않게)
   // 이 브라우저에서 넣은 이름. 시트에 아직 안 올라갔거나 이름이 열쇠뿐일 때 이것을 쓴다.
   // (불러오기가 늦게 도착해 방금 넣은 사람을 덮어써 이름을 잃던 일을 막는다)
   let myNames = {};
-  const parts = () => PARTS.concat(Object.keys(more).map((key) => ({ key: key, name: more[key] })));
-  const nameOf = (key) => (parts().find((one) => one.key === key) || {}).name || key;
+  const parts = () => PARTS.concat(Object.keys(more).map((key) => ({ key: key, name: more[key] })))
+    .filter((one) => gone.indexOf(one.key) < 0);
+  // 뺀 사람들 (되돌리기 단추에 쓴다)
+  const goneList = () => gone.map((key) => ({
+    key: key,
+    name: (PARTS.find((one) => one.key === key) || {}).name || myNames[key] || more[key] || key,
+  }));
+  const nameOf = (key) => (parts().find((one) => one.key === key) || {}).name
+    || (PARTS.find((one) => one.key === key) || {}).name || myNames[key] || more[key] || key;
   const TEMPLATE = ['## 지난 주 한 일', '- ', '', '## 이번 주 할 일', '- ', '', '## 함께 볼 것 · 도움이 필요한 것', '- '].join('\n');
   const TABLE = ['| 항목 | 값 | 비고 |', '| --- | --- | --- |', '|  |  |  |', '|  |  |  |', ''].join('\n');
 
@@ -3148,12 +3160,15 @@ if (weeklyWrite) {
       book = kept.book || {};
       week = kept.week || '';
       myNames = kept.names || {};
+      gone = Array.isArray(kept.gone) ? kept.gone : [];
       more = Object.assign({}, myNames);
     }
   } catch { book = {}; }
 
   const cache = () => {
-    try { localStorage.setItem(KEY, JSON.stringify({ book: book, week: week, names: myNames })); } catch { /* 거들기다 */ }
+    try {
+      localStorage.setItem(KEY, JSON.stringify({ book: book, week: week, names: myNames, gone: gone }));
+    } catch { /* 거들기다 */ }
   };
 
   const weekList = () => Object.keys(book).sort().reverse();
@@ -3198,14 +3213,27 @@ if (weeklyWrite) {
     }, 700);
   };
 
+  // 뺀 인원 목록을 시트 설정 줄에 담는다 (다른 사람 화면에서도 같이 빠지게)
+  const saveGone = () => {
+    cache();
+    return askSheet({ action: 'weeklyPut', week: ROSTER, part: 'hidden', name: '뺀 인원',
+      text: gone.join(','), status: 'wip', by: '' })
+      .catch((reason) => { note = `인원 설정을 시트에 못 담았습니다 — ${reason.message}`; tell(); });
+  };
+
   const pull = () => askSheet({ action: 'weeklyGet' })
     .then((body) => {
       pulled = true;
       const got = {};
       const found = {};
+      let hidden = null;
       (body.rows || []).forEach((row) => {
         const at = String(row.week || '').slice(0, 10);
         if (!at) return;
+        if (at === ROSTER) {                    // 주가 아니라 설정 줄이다
+          if (row.part === 'hidden') hidden = String(row.text || '').split(',').map((one) => one.trim()).filter(Boolean);
+          return;
+        }
         got[at] = got[at] || {};
         got[at][row.part] = { text: String(row.text || ''), status: row.status === 'done' ? 'done' : 'wip', at: row.at || '' };
         // 정해 둔 넷이 아니면 나중에 넣은 사람이다. 이름은 그 줄에 적혀 있다.
@@ -3229,7 +3257,9 @@ if (weeklyWrite) {
         if (!named[key] || named[key] === key) named[key] = myNames[key];
       });
       more = named;
-      if (!parts().some((one) => one.key === part)) part = PARTS[0].key;
+      // 뺀 인원은 시트 값을 따른다. 단, 지금 이 브라우저에서 막 뺀 사람은 지킨다 (늦게 온 답이 되살리지 않게)
+      if (hidden) gone = [...new Set(hidden.concat(gone.filter((key) => goneWait[key])))];
+      if (!parts().some((one) => one.key === part)) part = (parts()[0] || PARTS[0]).key;
       if (!book[week]) week = weekList()[0] || '';
       cache();
       note = weekList().length ? '' : '아직 적은 주가 없습니다 — [+ 이번 주] 를 눌러 시작하세요';
@@ -3426,21 +3456,27 @@ if (weeklyWrite) {
       ${parts().map((one) => {
     const mine = partOf(one.key);
     const done = mine.status === 'done';
-    const base = PARTS.some((each) => each.key === one.key);
     return `<button type="button" class="wk-node${part === one.key ? ' is-on' : ''}" data-part="${one.key}">
           <i data-lucide="${one.key === 'notice' ? 'megaphone' : 'user'}"></i>
           <span>${escapeHtml(one.name)}
             <small>${done ? '작성완료' : (mine.text.trim() ? '작성 중' : '비어 있음')}${mine.at ? ` · ${whenText(mine.at)}` : ''}</small>
           </span>
           <em class="wk-dot${done ? ' is-done' : (mine.text.trim() ? ' is-wip' : '')}"></em>
-          ${base ? '' : `<em class="wk-out" role="button" tabindex="0" data-out="${one.key}"
-            title="이 인원을 뺍니다" aria-label="${escapeHtml(one.name)} 빼기">×</em>`}
+          <em class="wk-out" role="button" tabindex="0" data-out="${one.key}"
+            title="이 인원을 뺍니다" aria-label="${escapeHtml(one.name)} 빼기">×</em>
         </button>`;
   }).join('')}
       <button type="button" class="wk-add-part"><i data-lucide="user-plus"></i>인원 추가</button>
+      ${goneList().length ? `<div class="wk-tree-label">뺀 인원</div>
+        ${goneList().map((one) => `<button type="button" class="wk-back" data-back="${one.key}"
+          title="다시 넣습니다"><i data-lucide="rotate-ccw"></i>${escapeHtml(one.name)} 되돌리기</button>`).join('')}` : ''}
     </aside>`;
 
   const pane = () => {
+    if (!parts().length) {                      // 인원을 다 뺐다
+      return `<section class="wk-pane"><p class="wk-none">인원이 없습니다.
+        왼쪽 <b>인원 추가</b> 나 <b>되돌리기</b> 로 한 명을 넣어 주세요.</p></section>`;
+    }
     if (part === 'all') {
       return `<section class="wk-pane">
         <div class="wk-phead"><h3>합본 보기</h3>
@@ -3916,11 +3952,12 @@ if (weeklyWrite) {
   const openWeek = (step) => {
     const key = iso(mondayOf(addDays(new Date(), Number(step) * 7)));
     if (!book[key]) {
-      book[key] = { notice: { text: '', status: 'wip', at: '' } };
+      const first = (parts()[0] || PARTS[0]).key;
+      book[key] = { [first]: { text: '', status: 'wip', at: '' } };
       week = key;
-      part = 'notice';
+      part = first;
       render();
-      save('notice');                          // 줄을 하나 만들어 그 주를 열어 둔다
+      save(first);                             // 줄을 하나 만들어 그 주를 열어 둔다
       return;
     }
     week = key;
@@ -3977,13 +4014,36 @@ if (weeklyWrite) {
       mine.forEach((one) => { delete book[one][key]; });
       delete more[key];
       delete myNames[key];
-      if (part === key) part = PARTS[0].key;
+      if (gone.indexOf(key) < 0) gone.push(key);   // 정해 둔 넷도 이렇게 빠진다 (다시 살아나지 않게)
+      goneWait[key] = true;                       // 늦게 오는 불러오기가 되살리지 않게
+      if (part === key) part = (parts()[0] || PARTS[0]).key;
       cache();
       render();
-      askSheet({ action: 'weeklyPartDrop', part: key })
-        .then((body) => { note = `${who} 를 뺐습니다 (줄 ${body.removed || 0}개)`; })
+      Promise.all([
+        askSheet({ action: 'weeklyPartDrop', part: key }),
+        saveGone(),
+      ])
+        .then((got) => { note = `${who} 를 뺐습니다 (줄 ${(got[0] || {}).removed || 0}개)`; })
         .catch((reason) => { note = `시트에서 못 뺐습니다 — ${reason.message}`; })
-        .then(tell);
+        .then(() => { delete goneWait[key]; tell(); });
+      return;
+    }
+
+    const back = event.target.closest('[data-back]');
+    if (back) {                                 // 뺐던 인원 되돌리기
+      const key = back.dataset.back;
+      const who = nameOf(key);
+      gone = gone.filter((one) => one !== key);
+      if (!PARTS.some((one) => one.key === key)) {
+        more[key] = who;                        // 나중에 넣었던 사람이면 이름을 되살린다
+        myNames[key] = who;
+      }
+      book[week] = book[week] || {};
+      book[week][key] = book[week][key] || { text: '', status: 'wip', at: '' };
+      part = key;
+      render();
+      saveGone().then(() => { note = `${who} 를 되돌렸습니다 (전에 적은 글은 지워졌습니다)`; tell(); });
+      save(key);
       return;
     }
 
@@ -3992,6 +4052,19 @@ if (weeklyWrite) {
       if (!who) return;
       const twin = parts().find((one) => one.name === who);
       if (twin) { part = twin.key; render(); flashNote(`${who} 는 이미 있습니다`); return; }
+      const came = goneList().find((one) => one.name === who);
+      if (came) {                               // 뺐던 사람 이름을 다시 적었다 — 되돌린다
+        gone = gone.filter((one) => one !== came.key);
+        if (!PARTS.some((one) => one.key === came.key)) { more[came.key] = who; myNames[came.key] = who; }
+        book[week] = book[week] || {};
+        book[week][came.key] = book[week][came.key] || { text: '', status: 'wip', at: '' };
+        part = came.key;
+        render();
+        saveGone();
+        save(came.key);
+        flashNote(`${who} 를 되돌렸습니다`);
+        return;
+      }
       const key = `p-${Date.now().toString(36)}`;
       more[key] = who;
       myNames[key] = who;                       // 이 브라우저에 적어 둔다 (불러오기에 지워지지 않게)
