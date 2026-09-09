@@ -2439,29 +2439,63 @@ if (contentSchedule) {
     ? `${Number(value.slice(0, 4))}년 ${Number(value.slice(5, 7))}월 ${Number(value.slice(8, 10))}일`
     : '');
 
-  const cardsOn = (value) => rows.filter((row) => row.hand === value);
+  // 카드 하나가 덮는 기간. 전달 일자와 수급 일자 사이를 덮는다.
+  // 어느 쪽이 앞인지는 줄마다 다르다 (사후 소재는 수급이 먼저다) — 그래서 이른 쪽 · 늦은 쪽으로 잡는다.
+  const spanOf = (row) => {
+    const both = [row.hand, row.take].filter(Boolean).sort();
+    if (!both.length) return null;
+    const from = both[0];
+    const to = both[both.length - 1];
+    // 두 날짜가 같은 날이면 왼쪽 끝은 전달, 오른쪽 끝은 수급을 잡는다 (표 칸 차례와 같게)
+    if (from === to && row.hand && row.take) return { from: from, to: to, firstKey: 'hand', lastKey: 'take' };
+    return { from: from, to: to, firstKey: row.hand === from ? 'hand' : 'take',
+      lastKey: row.hand === to ? 'hand' : 'take' };
+  };
 
-  const cardHtml = (row, place) => `<button type="button" class="sup-card${row.color === '주황' ? ' is-warm' : ''}"
-    style="grid-column:${place.column + 1};grid-row:${place.lane + 2}" data-open="${escapeHtml(row.id)}">
+  const KEY_NAME = { hand: '전달', take: '수급' };
+  const shortDay = (value) => `${Number(value.slice(5, 7))}/${Number(value.slice(8, 10))}`;
+  // 막대가 덮는 기간을 그대로 적는다 (이른 쪽 → 늦은 쪽). 같은 날이면 한 번만 적는다.
+  const spanText = (row, span) => (span.from === span.to
+    ? `${row.hand && row.take ? '전달·수급' : KEY_NAME[span.firstKey]} ${dayText(span.from)}`
+    : `${KEY_NAME[span.firstKey]} ${shortDay(span.from)} → ${KEY_NAME[span.lastKey]} ${shortDay(span.to)}`);
+
+  const cardHtml = (row, seg) => `<button type="button" class="sup-card${row.color === '주황' ? ' is-warm' : ''}${seg.opens ? ' is-start' : ''}${seg.closes ? ' is-end' : ''}"
+    style="grid-column:${seg.start + 1}/span ${seg.end - seg.start + 1};grid-row:${seg.lane + 2}" data-open="${escapeHtml(row.id)}">
     <span class="sup-card-name">${row.icon ? `<em class="sup-icon">${escapeHtml(row.icon)}</em>` : ''}${escapeHtml(row.name) || '제목 없음'}</span>
     ${row.sku.length ? `<span class="sup-line">${row.sku.map((one) => chip(one, colorOf(SKU_COLOR, one))).join('')}</span>` : ''}
-    ${row.take ? `<span class="sup-date">${escapeHtml(dayText(row.take))}</span>` : ''}
+    <span class="sup-date">${escapeHtml(spanText(row, seg.span))}</span>
     ${row.note ? `<span class="sup-note">${escapeHtml(row.note)}</span>` : ''}
     ${row.owners.length ? `<span class="sup-line">${row.owners.map((one) => chip(one, colorOf(OWNER_COLOR, one))).join('')}</span>` : ''}
+    ${seg.opens ? '<span class="cal-grab cal-grab-start" data-grab="start" title="시작일을 끌어 늘립니다"></span>' : ''}
+    ${seg.closes ? '<span class="cal-grab cal-grab-end" data-grab="end" title="종료일을 끌어 늘립니다"></span>' : ''}
   </button>`;
 
-  // 한 주 안에서 같은 날에 여러 장이면 줄(lane)을 나눠 쌓는다.
-  // 퍼포먼스일정 달력과 같은 두 층 짜임새라 칸 비율(cal-*)이 그대로 맞는다.
-  const weekCards = (weekStart) => {
-    const taken = [0, 0, 0, 0, 0, 0, 0];
-    const cards = [];
-    for (let d = 0; d < 7; d += 1) {
-      cardsOn(iso(addDays(weekStart, d))).forEach((row) => {
-        cards.push({ row: row, column: d, lane: taken[d] });
-        taken[d] += 1;
-      });
-    }
-    return cards;
+  // 한 주 안에서 겹치지 않게 줄(lane)을 나눠 막대를 놓는다. (퍼포먼스일정 달력과 같은 방법)
+  const weekSegments = (weekStart) => {
+    const weekEnd = addDays(weekStart, 6);
+    const segments = rows
+      .map((row) => ({ row: row, span: spanOf(row) }))
+      .filter((one) => one.span)
+      .map((one) => ({ row: one.row, span: one.span, from: dayOf(one.span.from), to: dayOf(one.span.to) }))
+      .filter((one) => one.to >= weekStart && one.from <= weekEnd)
+      .map((one) => ({
+        row: one.row,
+        span: one.span,
+        start: Math.max(0, Math.round((one.from - weekStart) / 86400000)),
+        end: Math.min(6, Math.round((one.to - weekStart) / 86400000)),
+        opens: one.from >= weekStart,
+        closes: one.to <= weekEnd,
+      }))
+      .sort((a, b) => (a.start - b.start) || ((b.end - b.start) - (a.end - a.start)));
+
+    const lanes = [];
+    segments.forEach((seg) => {
+      let lane = lanes.findIndex((taken) => taken <= seg.start);
+      if (lane < 0) { lanes.push(0); lane = lanes.length - 1; }
+      lanes[lane] = seg.end + 1;
+      seg.lane = lane;
+    });
+    return segments;
   };
 
   const calendar = () => {
@@ -2488,11 +2522,13 @@ if (contentSchedule) {
           <span class="cal-num${outside ? ' is-out' : ''}${value === today ? ' is-today' : ''}">${escapeHtml(label)}</span>
         </span>`);
       }
+      // 끌고 있는 동안에는 붙잡아 둔 높이를 그대로 쓴다 (칸이 위아래로 밀리지 않게)
+      const held = frozen && frozen[iso(weekStart)];
       weeks.push(`<div class="cal-week" data-start="${iso(weekStart)}">
         <div class="cal-cells">${cells.join('')}</div>
-        <div class="cal-content">
+        <div class="cal-content"${held ? ` style="min-height:${held}px"` : ''}>
           ${heads.join('')}
-          ${weekCards(weekStart).map((place) => cardHtml(place.row, place)).join('')}
+          ${weekSegments(weekStart).map((seg) => cardHtml(seg.row, seg)).join('')}
         </div>
       </div>`);
     }
@@ -2509,8 +2545,9 @@ if (contentSchedule) {
         <div class="cal-weekdays">${WEEKDAYS.map((one) => `<span>${one}</span>`).join('')}</div>
         ${weeks.join('')}
       </div>
-      <p class="sup-hint">빈 칸을 누르면 그 날짜로 <b>새 일정</b>을 적을 수 있습니다.
-        카드를 끌어 옮기면 <b>전달·수급 일자가 함께</b> 움직입니다 (Shift 를 누른 채 끌면 전달 일자만).</p>`;
+      <p class="sup-hint">막대는 <b>전달 일자 ~ 수급 일자</b>를 덮습니다.
+        몸통을 끌면 두 날짜가 <b>함께</b> 옮겨지고, 막대 <b>끝을 잡아 끌면</b> 그 쪽 날짜만 늘어납니다.
+        빈 칸을 누르면 그 날짜로 새 일정을 적습니다.</p>`;
   };
 
   // ── 표 ────────────────────────────────────────────────────────
@@ -2766,11 +2803,22 @@ if (contentSchedule) {
     if (event.key === 'Escape' && openId) closePeek();
   });
 
-  // ── 카드 끌어 옮기기 ──────────────────────────────────────────
-  // 다른 칸에 끌어 놓으면 전달·수급 일자가 같은 날수만큼 함께 움직인다.
-  // Shift 를 누른 채 끌면 전달 일자만 움직인다 (수급 일자는 그대로).
+  // ── 카드 끌어 옮기기 · 늘리기 ─────────────────────────────────
+  // 몸통을 끌면 전달·수급 일자가 같은 날수만큼 함께 움직인다.
+  // 막대 끝을 잡아 끌면 그 쪽 날짜만 움직인다 (반대쪽 날짜를 넘지 않는다).
   let drag = null;
   let dragged = false;
+  let frozen = null;                            // 끌 동안 붙잡아 둔 주 높이 (주 시작 → px)
+
+  // 막대가 옮겨지면 그 주의 줄 수가 바뀌어 높이가 달라진다. 그러면 끌던 자리가
+  // 다른 주로 읽혀 엉뚱한 날에 놓이므로, 끌기 시작할 때의 높이를 붙잡아 둔다.
+  const freeze = () => {
+    frozen = {};
+    contentSchedule.querySelectorAll('.cal-week').forEach((week) => {
+      const body = week.querySelector('.cal-content');
+      if (body) frozen[week.dataset.start] = Math.round(body.getBoundingClientRect().height);
+    });
+  };
 
   const dayFromPoint = (x, y) => {
     const weeks = [...contentSchedule.querySelectorAll('.cal-week')];
@@ -2791,10 +2839,14 @@ if (contentSchedule) {
     const card = event.target.closest('.sup-card');
     if (!card) return;
     const row = rows.find((one) => one.id === card.dataset.open);
-    if (!row || !row.hand) return;
-    drag = { id: row.id, from: dayFromPoint(event.clientX, event.clientY),
-      hand: row.hand, take: row.take, alone: event.shiftKey };
-    document.body.classList.add('is-dragging-card');
+    const span = row && spanOf(row);
+    if (!span) return;
+    const handle = event.target.closest('.cal-grab');
+    drag = { id: row.id, mode: handle ? handle.dataset.grab : 'move',
+      from: dayFromPoint(event.clientX, event.clientY),
+      hand: row.hand, take: row.take, span: span };
+    freeze();                                   // 끌 동안 칸이 밀리지 않게 높이를 붙잡는다
+    document.body.classList.add(handle ? 'is-resizing' : 'is-dragging-card');
     event.preventDefault();
   });
 
@@ -2804,9 +2856,22 @@ if (contentSchedule) {
     if (!row) { drag = null; return; }
     const at = dayFromPoint(event.clientX, event.clientY);
     if (!at) return;
-    const shift = Math.round((dayOf(at) - dayOf(drag.from)) / 86400000);
-    const hand = iso(addDays(dayOf(drag.hand), shift));
-    const take = (drag.alone || !drag.take) ? drag.take : iso(addDays(dayOf(drag.take), shift));
+    let hand = drag.hand;
+    let take = drag.take;
+    if (drag.mode === 'move') {
+      // 몸통 끌기 — 두 날짜가 같은 날수만큼 함께 움직인다
+      const shift = Math.round((dayOf(at) - dayOf(drag.from)) / 86400000);
+      hand = drag.hand ? iso(addDays(dayOf(drag.hand), shift)) : '';
+      take = drag.take ? iso(addDays(dayOf(drag.take), shift)) : '';
+    } else if (drag.mode === 'start') {
+      // 왼쪽 끝 — 이른 쪽 날짜만 움직인다 (늦은 쪽을 넘지 않는다)
+      const value = at > drag.span.to ? drag.span.to : at;
+      if (drag.span.firstKey === 'hand') hand = value; else take = value;
+    } else {
+      // 오른쪽 끝 — 늦은 쪽 날짜만 움직인다 (이른 쪽보다 앞서지 않는다)
+      const value = at < drag.span.from ? drag.span.from : at;
+      if (drag.span.lastKey === 'hand') hand = value; else take = value;
+    }
     if (row.hand === hand && row.take === take) return;
     row.hand = hand;
     row.take = take;
@@ -2815,9 +2880,10 @@ if (contentSchedule) {
   });
 
   window.addEventListener('mouseup', () => {
-    document.body.classList.remove('is-dragging-card');
+    document.body.classList.remove('is-dragging-card', 'is-resizing');
     if (!drag) return;
     drag = null;
+    frozen = null;                              // 붙잡아 둔 높이를 풀어 준다
     if (!dragged) return;
     save();
     render();
