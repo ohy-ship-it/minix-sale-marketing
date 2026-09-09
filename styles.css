@@ -1047,14 +1047,16 @@ html.embed-mode .content{padding:14px}
 .sup-page{max-width:none}
 .sup-title,.sup-sub,.sup-link,.sup-hint{max-width:1180px}
 .sup-title{display:flex;align-items:center;gap:10px}
-.sup-title-icon{font-size:34px;line-height:1}
-.sup-page h1{margin:0;font:700 32px/1.2 inherit;color:#2c2c2b;letter-spacing:-.4px}
-.sup-sub{margin:14px 0 4px;font:700 13px inherit;color:#37352f}
-.sup-link{display:flex;align-items:center;gap:6px;margin:0 0 26px;font-size:13px}
+/* 제목 크기는 퍼포먼스일정(.board-header h2 = 17px) 과 같게 둔다.
+   font 단축 규칙에 inherit 을 쓰면 브라우저가 선언을 통째로 버린다 — 따로 적는다. */
+.sup-title-icon{font-size:20px;line-height:1}
+.sup-page h1{margin:0;font-size:17px;font-weight:800;line-height:1.3;color:#2c2c2b}
+.sup-sub{margin:11px 0 3px;font-size:12px;font-weight:700;color:#37352f}
+.sup-link{display:flex;align-items:center;gap:6px;margin:0 0 16px;font-size:12px}
 .sup-link svg{width:13px;color:#9b9a97}
 .sup-link a{color:#37352f;text-decoration:underline;font-weight:600}
 .sup-db-head{display:flex;align-items:center;gap:9px;margin:0 0 8px}
-.sup-db-head h2{margin:0;font:700 18px inherit;color:#2c2c2b}
+.sup-db-head h2{margin:0;font-size:13px;font-weight:800;color:#2c2c2b}
 .sup-tabs{display:flex;align-items:center;gap:4px;margin-bottom:12px}
 .sup-tab{display:inline-flex;align-items:center;gap:5px;border:0;border-radius:6px;background:none;
   padding:5px 9px;font:600 12px inherit;color:#787774;cursor:pointer}
@@ -1134,3 +1136,18 @@ body.is-resizing .sup-card{cursor:col-resize}
 .event-note code{background:#f1ece1;border-radius:3px;padding:1px 4px;font-size:11px}
 .event-frame{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fbfbf8}
 .event-frame iframe{display:block;width:100%;height:calc(100vh - 260px);min-height:620px;border:0}
+
+/* ── 카드 오른쪽 단추 메뉴 · 짧은 알림 (두 달력이 함께 쓴다) ── */
+.card-menu{position:fixed;z-index:60;display:none;min-width:148px;padding:5px;
+  border:1px solid #e3e2dc;border-radius:8px;background:#fff;box-shadow:0 10px 30px #20211e2e}
+.card-menu.is-open{display:block}
+.card-menu-item{display:flex;align-items:center;gap:8px;width:100%;border:0;background:none;
+  border-radius:6px;padding:7px 9px;color:#37352f;font:600 12px inherit;text-align:left;cursor:pointer}
+.card-menu-item svg{width:14px;color:#9b9a97}
+.card-menu-item:hover{background:#f4f4f1}
+.card-menu-item.is-warn{color:#d44c47}
+.card-menu-item.is-warn svg{color:#d44c47}
+.flash-note{position:fixed;z-index:61;left:50%;bottom:28px;transform:translate(-50%,10px);
+  padding:9px 16px;border-radius:8px;background:#20211ee6;color:#fff;font:600 12px inherit;
+  opacity:0;pointer-events:none;transition:opacity .16s,transform .16s}
+.flash-note.is-open{opacity:1;transform:translate(-50%,0)}

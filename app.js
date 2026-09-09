@@ -2330,6 +2330,82 @@ if (filenameTool) {
 // 칸 이름도 노션과 같다: 이름 · SKU · 전달 일자 · 수급 일자 · 광고 매체 · 참고사항 · 담당자
 //   달력은 **전달 일자**에 놓고, 카드에는 수급 일자를 적는다 (노션 보기와 같은 규칙).
 //   보기는 둘이다 — 캘린더 보기(읽기) · 표(고치기). 값은 시트 '소재수급일정' 에 있다.
+// ── 카드 오른쪽 단추 메뉴 (복제 · 링크 복사 · 삭제) ────────────────
+// 퍼포먼스일정 달력과 콘텐츠 일정 달력이 같은 것을 쓴다.
+// 부르는 쪽은 무엇을 골랐는지만 받아 제 일을 한다.
+const cardMenu = (() => {
+  const box = document.createElement('div');
+  box.className = 'card-menu';
+  document.body.appendChild(box);
+  let pick = null;                              // 고르면 부를 함수
+
+  const close = () => { box.classList.remove('is-open'); pick = null; };
+
+  box.addEventListener('mousedown', (event) => event.stopPropagation());
+  box.addEventListener('click', (event) => {
+    const item = event.target.closest('[data-menu]');
+    if (!item) return;
+    const run = pick;
+    const key = item.dataset.menu;
+    close();
+    if (run) run(key);
+  });
+  window.addEventListener('mousedown', (event) => {
+    if (box.classList.contains('is-open') && !box.contains(event.target)) close();
+  });
+  window.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+  window.addEventListener('resize', close);
+  window.addEventListener('scroll', close, true);
+
+  return (event, items, run) => {
+    event.preventDefault();
+    pick = run;
+    box.innerHTML = items.map((one) => `<button type="button" class="card-menu-item${one.warn ? ' is-warn' : ''}"
+      data-menu="${one.key}"><i data-lucide="${one.icon}"></i>${one.label}</button>`).join('');
+    box.classList.add('is-open');
+    // 화면 밖으로 나가지 않게 살짝 밀어 준다
+    const pad = 8;
+    const left = Math.max(pad, Math.min(event.clientX, window.innerWidth - box.offsetWidth - pad));
+    const top = Math.max(pad, Math.min(event.clientY, window.innerHeight - box.offsetHeight - pad));
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+    lucide.createIcons();
+  };
+})();
+
+// 한 일을 짧게 알려 준다 (2초 뒤 사라진다)
+const flashNote = (() => {
+  const box = document.createElement('div');
+  box.className = 'flash-note';
+  document.body.appendChild(box);
+  let timer = null;
+  return (text) => {
+    box.textContent = text;
+    box.classList.add('is-open');
+    if (timer) window.clearTimeout(timer);
+    timer = window.setTimeout(() => box.classList.remove('is-open'), 2000);
+  };
+})();
+
+// 클립보드. 브라우저가 막으면(예: 권한 없음) 옛 방법으로 한 번 더 해 본다.
+const copyText = (text) => {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => copyOldWay(text));
+  }
+  return copyOldWay(text);
+};
+const copyOldWay = (text) => new Promise((done, fail) => {
+  const box = document.createElement('textarea');
+  box.value = text;
+  box.setAttribute('readonly', '');
+  box.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+  document.body.appendChild(box);
+  box.select();
+  const ok = document.execCommand('copy');
+  box.remove();
+  if (ok) done(); else fail(new Error('복사 못 함'));
+});
+
 const contentSchedule = document.querySelector('#content-schedule');
 if (contentSchedule) {
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -2953,16 +3029,65 @@ if (contentSchedule) {
     if (openId) renderPeek();
   });
 
+  // ── 오른쪽 단추 메뉴 ─────────────────────────────────────────
+  contentSchedule.addEventListener('contextmenu', (event) => {
+    const card = event.target.closest('.sup-card');
+    if (!card) return;
+    const row = rows.find((one) => one.id === card.dataset.open);
+    if (!row) return;
+    cardMenu(event, [
+      { key: 'twin', label: '복제', icon: 'copy' },
+      { key: 'link', label: '링크 복사', icon: 'link' },
+      { key: 'drop', label: '삭제', icon: 'trash-2', warn: true },
+    ], (what) => {
+      if (what === 'twin') {
+        const twin = normalize({ ...row, id: '' });   // 같은 값 · 새 ID
+        rows = [...rows, twin];
+        save();
+        render();
+        flashNote('복제했습니다');
+        return;
+      }
+      if (what === 'link') {
+        copyText(`${location.origin}${location.pathname}#content-cal/${row.id}`)
+          .then(() => flashNote('링크를 복사했습니다'))
+          .catch(() => flashNote('복사를 못 했습니다 — 주소창의 주소를 그대로 쓰세요'));
+        return;
+      }
+      if (openId === row.id) shutPeek();
+      rows = rows.filter((one) => one.id !== row.id);
+      save();
+      render();
+      flashNote('삭제했습니다');
+    });
+  });
+
+  // 링크로 들어왔으면 (#content-cal/<ID>) 그 일정을 찾아 열어 준다
+  const openLinked = () => {
+    const mark = '#content-cal/';
+    if (!location.hash.startsWith(mark)) return;
+    const id = decodeURIComponent(location.hash.slice(mark.length));
+    const row = rows.find((one) => one.id === id);
+    if (!row) return;
+    const day = row.hand || row.take;
+    if (day) cursor = day.slice(0, 7);
+    render();
+    openPeek(id);
+  };
+
+  // 같은 탭에 링크를 붙여 넣으면 문서를 다시 읽지 않고 해시만 바뀐다 — 그때도 열어 준다
+  window.addEventListener('hashchange', () => { if (pulled) openLinked(); });
+
   // 화면을 열 때 한 번만 받아 온다
   new MutationObserver(() => {
     if (contentSchedule.hidden) { closePeek(); return; }
     if (pulled) return;
     note = '시트에서 불러오는 중…';
     render();
-    pull(false);
+    pull(false).then(openLinked);
   }).observe(contentSchedule, { attributes: true, attributeFilter: ['hidden'] });
   render();
-  if (!contentSchedule.hidden) pull(false);
+  if (!contentSchedule.hidden) pull(false).then(openLinked);
 }
 
 // ── 광고자동 세팅 · 메타 광고 세팅 ──────────────────────────────────
@@ -5088,7 +5213,7 @@ if (brandSchedule) {
   };
 
   schedNote = '시트에서 불러오는 중…';
-  window.setTimeout(() => { schedTell(); pullSchedule(); }, 0);
+  window.setTimeout(() => { schedTell(); pullSchedule().then(() => openLinked()); }, 0);
   const commit = ({ redrawPeek = true } = {}) => {
     save();
     renderView();
@@ -5101,6 +5226,53 @@ if (brandSchedule) {
     save();
     renderView();
     openPeek(row.id);
+  };
+
+  // ── 오른쪽 단추 메뉴 (콘텐츠 일정 달력과 같은 것을 쓴다) ──────
+  view.addEventListener('contextmenu', (event) => {
+    const card = event.target.closest('.cal-card');
+    if (!card) return;
+    const row = rows.find((one) => one.id === card.dataset.id);
+    if (!row) return;
+    cardMenu(event, [
+      { key: 'twin', label: '복제', icon: 'copy' },
+      { key: 'link', label: '링크 복사', icon: 'link' },
+      { key: 'drop', label: '삭제', icon: 'trash-2', warn: true },
+    ], (what) => {
+      if (what === 'twin') {
+        rows.push(normalize({ ...row, id: '' }));     // 같은 값 · 새 ID
+        save();
+        renderView();
+        flashNote('복제했습니다');
+        return;
+      }
+      if (what === 'link') {
+        copyText(`${location.origin}${location.pathname}#performance-schedule/${row.id}`)
+          .then(() => flashNote('링크를 복사했습니다'))
+          .catch(() => flashNote('복사를 못 했습니다 — 주소창의 주소를 그대로 쓰세요'));
+        return;
+      }
+      if (openId === row.id) closePeek();
+      rows = rows.filter((one) => one.id !== row.id);
+      save();
+      renderView();
+      flashNote('삭제했습니다');
+    });
+  });
+
+  // 같은 탭에 링크를 붙여 넣으면 문서를 다시 읽지 않고 해시만 바뀐다 — 그때도 열어 준다
+  window.addEventListener('hashchange', () => { if (schedPulled) openLinked(); });
+
+  // 링크로 들어왔으면 (#performance-schedule/<ID>) 그 일정을 찾아 열어 준다
+  const openLinked = () => {
+    const mark = '#performance-schedule/';
+    if (!location.hash.startsWith(mark)) return;
+    const id = decodeURIComponent(location.hash.slice(mark.length));
+    const row = rows.find((one) => one.id === id);
+    if (!row) return;
+    if (row.date?.start) cursor = row.date.start.slice(0, 7);
+    renderView();
+    openPeek(id);
   };
 
   view.addEventListener('click', (event) => {
