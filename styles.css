@@ -1257,3 +1257,9 @@ body.is-resizing .sup-card{cursor:col-resize}
   font-size:11px;font-weight:700;padding:8px 9px;cursor:pointer}
 .wk-add-part svg{width:14px}
 .wk-add-part:hover{background:#f1f1ef;color:#74746d;border-color:#c9c8c0}
+
+.wk-out{display:none;flex:none;width:18px;height:18px;line-height:16px;text-align:center;
+  border-radius:5px;color:#b6b5b0;font-style:normal;font-size:14px;cursor:pointer}
+.wk-node:hover .wk-out{display:block}
+.wk-out:hover{background:#f6e5e3;color:#d44c47}
+.wk-node:hover .wk-dot{display:none}

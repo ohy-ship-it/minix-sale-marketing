@@ -979,6 +979,28 @@ function imageSave_(payload) {
   };
 }
 
+// 한 사람(파트)을 통째로 뺀다 — 모든 주의 그 사람 줄을 지운다.
+function weeklyPartDrop_(payload) {
+  var part = String((payload && payload.part) || '').trim();
+  if (!part) throw new Error('뺄 파트가 비어 있습니다.');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = weeklySheet_();
+    var last = sheet.getLastRow();
+    if (last < 2) return { ok: true, part: part, removed: 0 };
+    var have = sheet.getRange(2, 2, last - 1, 1).getValues();      // 파트 칸
+    var gone = 0;
+    for (var i = have.length - 1; i >= 0; i--) {                    // 아래에서부터 (줄 번호가 밀리지 않게)
+      if (String(have[i][0]).trim() === part) { sheet.deleteRow(i + 2); gone++; }
+    }
+    return { ok: true, part: part, removed: gone };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 // 그림 담을 폴더 확인 — 편집기에서 한 번 실행해 드라이브 권한을 승인해 두면 된다.
 // (새 권한은 스크립트를 다시 배포한 뒤 한 번 승인해야 붙여넣기가 된다)
 function checkImageSave() {
@@ -1473,6 +1495,7 @@ function handleAction_(payload) {
     if (payload.action === 'weeklyGet') return weeklyGet_();
     if (payload.action === 'weeklyPut') return weeklyPut_(payload);
     if (payload.action === 'weeklyDrop') return weeklyDrop_(payload);
+    if (payload.action === 'weeklyPartDrop') return weeklyPartDrop_(payload);
     if (payload.action === 'imageSave') return imageSave_(payload);
     if (payload.action === 'noteGet') return noteGet_();
     if (payload.action === 'notePut') return notePut_(payload);
