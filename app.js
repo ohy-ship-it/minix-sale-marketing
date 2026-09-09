@@ -3123,7 +3123,10 @@ if (weeklyWrite) {
     { key: 'jungmin', name: '이정민', note: '' },
     { key: 'seoyoung', name: '김서영', note: '' },
   ];
-  const nameOf = (key) => (PARTS.find((one) => one.key === key) || {}).name || key;
+  // 시트 줄에서 찾은 사람 (정해 둔 넷 말고 나중에 넣은 사람들). 열쇠 → 이름
+  let more = {};
+  const parts = () => PARTS.concat(Object.keys(more).map((key) => ({ key: key, name: more[key] })));
+  const nameOf = (key) => (parts().find((one) => one.key === key) || {}).name || key;
   const TEMPLATE = ['## 지난 주 한 일', '- ', '', '## 이번 주 할 일', '- ', '', '## 함께 볼 것 · 도움이 필요한 것', '- '].join('\n');
   const TABLE = ['| 항목 | 값 | 비고 |', '| --- | --- | --- |', '|  |  |  |', '|  |  |  |', ''].join('\n');
 
@@ -3190,13 +3193,18 @@ if (weeklyWrite) {
     .then((body) => {
       pulled = true;
       const got = {};
+      const found = {};
       (body.rows || []).forEach((row) => {
         const at = String(row.week || '').slice(0, 10);
         if (!at) return;
         got[at] = got[at] || {};
         got[at][row.part] = { text: String(row.text || ''), status: row.status === 'done' ? 'done' : 'wip', at: row.at || '' };
+        // 정해 둔 넷이 아니면 나중에 넣은 사람이다. 이름은 그 줄에 적혀 있다.
+        if (!PARTS.some((one) => one.key === row.part)) found[row.part] = String(row.name || row.part);
       });
       book = got;
+      more = found;
+      if (!parts().some((one) => one.key === part)) part = PARTS[0].key;
       if (!book[week]) week = weekList()[0] || '';
       cache();
       note = weekList().length ? '' : '아직 적은 주가 없습니다 — [+ 이번 주] 를 눌러 시작하세요';
@@ -3269,7 +3277,7 @@ if (weeklyWrite) {
   };
 
   // 합본을 그대로 복사할 수 있게 글자로 만든다 (슬랙 · 노션에 붙이기)
-  const asText = () => [`# 주간미팅 ${weekLabel(week)}`, ''].concat(PARTS.flatMap((one) => {
+  const asText = () => [`# 주간미팅 ${weekLabel(week)}`, ''].concat(parts().flatMap((one) => {
     const mine = partOf(one.key);
     if (!mine.text.trim()) return [];
     return [`## ${one.name}`, mine.text.trim(), ''];
@@ -3280,7 +3288,7 @@ if (weeklyWrite) {
       <button type="button" class="wk-node${part === 'all' ? ' is-on' : ''}" data-part="all">
         <i data-lucide="layers"></i>합본 보기</button>
       <div class="wk-tree-label">파트</div>
-      ${PARTS.map((one) => {
+      ${parts().map((one) => {
     const mine = partOf(one.key);
     const done = mine.status === 'done';
     return `<button type="button" class="wk-node${part === one.key ? ' is-on' : ''}" data-part="${one.key}">
@@ -3291,6 +3299,7 @@ if (weeklyWrite) {
           <em class="wk-dot${done ? ' is-done' : (mine.text.trim() ? ' is-wip' : '')}"></em>
         </button>`;
   }).join('')}
+      <button type="button" class="wk-add-part"><i data-lucide="user-plus"></i>인원 추가</button>
     </aside>`;
 
   const pane = () => {
@@ -3300,14 +3309,14 @@ if (weeklyWrite) {
           <span class="wk-when">${escapeHtml(weekLabel(week))}</span>
           <button type="button" class="week-pull wk-copy"><i data-lucide="copy"></i>글자로 복사</button>
         </div>
-        ${PARTS.map((one) => `<div class="wk-roll">
+        ${parts().map((one) => `<div class="wk-roll">
           <h4 class="wk-roll-name">${escapeHtml(one.name)}
             <small>${partOf(one.key).status === 'done' ? '작성완료' : '작성 중'}</small></h4>
           <div class="wk-read">${draw(partOf(one.key).text)}</div>
         </div>`).join('')}
       </section>`;
     }
-    const one = PARTS.find((entry) => entry.key === part) || PARTS[0];
+    const one = parts().find((entry) => entry.key === part) || PARTS[0];
     const mine = partOf(one.key);
     return `<section class="wk-pane">
       <div class="wk-phead"><h3>${escapeHtml(one.name)}</h3>
@@ -3478,6 +3487,22 @@ if (weeklyWrite) {
         .then(() => { note = '주를 지웠습니다'; })
         .catch((reason) => { note = `시트에서 못 지웠습니다 — ${reason.message}`; })
         .then(tell);
+      return;
+    }
+
+    if (event.target.closest('.wk-add-part')) {
+      const who = String(window.prompt('넣을 사람 이름을 적어 주세요 (예: 오해영)') || '').trim();
+      if (!who) return;
+      const twin = parts().find((one) => one.name === who);
+      if (twin) { part = twin.key; render(); flashNote(`${who} 는 이미 있습니다`); return; }
+      const key = `p-${Date.now().toString(36)}`;
+      more[key] = who;
+      book[week] = book[week] || {};
+      book[week][key] = { text: '', status: 'wip', at: '' };
+      part = key;
+      render();
+      save(key);                                // 시트에 줄을 만든다 (그래야 다른 사람 화면에도 나온다)
+      flashNote(`${who} 를 넣었습니다`);
       return;
     }
 
