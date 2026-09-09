@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=131">
+  <link rel="stylesheet" href="styles.css?v=132">
   <script src="https://unpkg.com/lucide@latest"></script>
   <!-- 로그인 (미닉스 구글 계정). app.js 보다 먼저 있어야 한다. -->
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
@@ -30,10 +30,15 @@
         <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true"><path fill="#4285F4" d="M17.6 9.2c0-.6-.1-1.2-.2-1.8H9v3.5h4.8a4.1 4.1 0 0 1-1.8 2.7v2.2h2.9c1.7-1.6 2.7-3.9 2.7-6.6z"/><path fill="#34A853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.2-3.8H.8v2.3A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.8 10.7a5.4 5.4 0 0 1 0-3.4V5H.8a9 9 0 0 0 0 8l3-2.3z"/><path fill="#EA4335" d="M9 3.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 0 0 .8 5l3 2.3C4.6 5.2 6.6 3.6 9 3.6z"/></svg>
         구글로 로그인
       </button>
+      <button type="button" class="login-go" id="login-embed-go">
+        <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true"><path fill="#4285F4" d="M17.6 9.2c0-.6-.1-1.2-.2-1.8H9v3.5h4.8a4.1 4.1 0 0 1-1.8 2.7v2.2h2.9c1.7-1.6 2.7-3.9 2.7-6.6z"/><path fill="#34A853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.2-3.8H.8v2.3A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.8 10.7a5.4 5.4 0 0 1 0-3.4V5H.8a9 9 0 0 0 0 8l3-2.3z"/><path fill="#EA4335" d="M9 3.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 0 0 .8 5l3 2.3C4.6 5.2 6.6 3.6 9 3.6z"/></svg>
+        미닉스 계정으로 확인
+      </button>
       <p class="login-note" id="login-note"></p>
-      <p class="login-embed">이 화면은 다른 워크스페이스 안에 틀(iframe)로 들어와 있습니다 —
-        브라우저가 칸마다 로그인을 따로 보므로 <b>여기서 한 번</b> 로그인해 주세요.
-        <a href="https://minix-salemarketing.web.app/" target="_blank" rel="noopener">새 탭에서 열기</a></p>
+      <p class="login-embed">이 화면은 다른 워크스페이스 안에 틀(iframe)로 들어와 있습니다.
+        브라우저가 칸마다 로그인을 따로 보기 때문에 <b>한 번만</b> 확인이 필요합니다 —
+        위 단추를 누르면 작은 창이 열려 우리 사이트의 로그인을 그대로 가져옵니다
+        (이미 로그인돼 있으면 아무것도 묻지 않습니다). <b>다음부터는 묻지 않습니다.</b></p>
     </div>
   </div>
   <aside class="sidebar">
@@ -150,6 +155,6 @@
       <section class="section-block creative-board" id="creative-board" hidden><div class="board-header"><div><div class="eyebrow">콘텐츠 워크플로우</div><h2>광고소재요청 보드 <span>(w/콘마)</span></h2></div><button class="primary-action" id="new-request" type="button"><i data-lucide="plus"></i>소재 요청</button></div><div class="board-toolbar"><button class="week-button active" type="button">26년 8월 4주차 <small>(8/24~8/30)</small></button><button class="week-button" type="button">26년 8월 3주차 <small>(8/16~8/23)</small></button><button class="archive-button" type="button"><i data-lucide="archive"></i>아카이빙</button></div><div class="kanban"><div class="kanban-column"><div class="column-title"><span class="column-dot request"></span>요청 접수 <b>2</b></div><article class="request-card"><div class="card-top"><span class="tag campaign">신제품</span><span class="priority">긴급</span></div><h3>더클레딘MAX 런칭 소재</h3><p>메타 · 피드/릴스 · 3종</p><div class="card-meta"><span><i data-lucide="user-round"></i>김민지</span><span>8/28 마감</span></div></article><article class="request-card"><div class="card-top"><span class="tag blue">프로모션</span></div><h3>8월 마지막 주 할인 배너</h3><p>네이버 · 쿠팡 · 5종</p><div class="card-meta"><span><i data-lucide="user-round"></i>박서준</span><span>8/29 마감</span></div></article><button class="add-card" type="button"><i data-lucide="plus"></i>요청 추가</button></div><div class="kanban-column"><div class="column-title"><span class="column-dot planning"></span>기획·제작 중 <b>2</b></div><article class="request-card"><div class="card-top"><span class="tag green">상시</span></div><h3>여름철 냄새 케어 USP</h3><p>구글 · 반응형 · 카피 4종</p><div class="card-meta"><span><i data-lucide="user-round"></i>이수빈</span><span>8/30 마감</span></div></article><article class="request-card"><div class="card-top"><span class="tag campaign">신제품</span></div><h3>비포 & 애프터 이미지</h3><p>메타 · 캐러셀 · 2종</p><div class="card-meta"><span><i data-lucide="user-round"></i>정하늘</span><span>9/01 마감</span></div></article></div><div class="kanban-column"><div class="column-title"><span class="column-dot review"></span>검수 대기 <b>1</b></div><article class="request-card"><div class="card-top"><span class="tag blue">프로모션</span><span class="review-label">검수 요청</span></div><h3>주말 특가 소재 세트</h3><p>메타 · 스토리 · 4종</p><div class="card-meta"><span><i data-lucide="user-round"></i>김민지</span><span>오늘</span></div></article><button class="add-card" type="button"><i data-lucide="plus"></i>요청 추가</button></div><div class="kanban-column"><div class="column-title"><span class="column-dot done"></span>완료 <b>3</b></div><article class="request-card done-card"><div class="card-top"><span class="tag green">상시</span><span class="check-label"><i data-lucide="circle-check"></i>완료</span></div><h3>장마철 세탁조 클리너</h3><p>네이버 · 이미지 · 3종</p><div class="card-meta"><span><i data-lucide="user-round"></i>이수빈</span><span>8/26 완료</span></div></article></div></div></section>
     </section>
   </main>
-  <script src="app.js?v=131"></script>
+  <script src="app.js?v=132"></script>
 </body>
 </html>

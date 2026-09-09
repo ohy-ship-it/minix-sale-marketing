@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>미닉스 로그인 확인</title>
+  <!--
+    다른 워크스페이스가 우리 화면을 틀(iframe)로 끌어다 쓸 때 쓰는 작은 창이다.
+
+    왜 필요한가: 브라우저는 '어느 사이트 안에서 열렸는지' 에 따라 저장 공간을 따로 둔다.
+    그래서 우리 사이트에 로그인해 두어도, 남의 사이트 안의 틀에서는 그 로그인이 보이지 않는다.
+    이 창은 **우리 사이트로 직접 열린 창**이라 로그인이 그대로 보인다 —
+    여기서 표를 받아 틀에게 건네주고 닫힌다. 이미 로그인돼 있으면 아무것도 묻지 않고 바로 닫힌다.
+  -->
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <style>
+    :root { color-scheme: light }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: #faf9f7; font: 400 13px/1.7 'Noto Sans KR', -apple-system, 'Segoe UI', sans-serif;
+      color: #37352f }
+    .card { width: min(360px, 88vw); padding: 30px 26px; border: 1px solid #e9e9e7; border-radius: 14px;
+      background: #fff; text-align: center }
+    .mark { width: 34px; height: 34px; margin: 0 auto 12px; border-radius: 10px; background: #37352f;
+      color: #fff; font-size: 17px; font-weight: 800; line-height: 34px }
+    h1 { margin: 0 0 6px; font-size: 15px; font-weight: 800; color: #2c2c2b }
+    p { margin: 0 0 16px; font-size: 12px; color: #8c8c85 }
+    button { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border: 1px solid #e9e9e7;
+      border-radius: 9px; background: #fff; font: inherit; font-weight: 700; color: #37352f; cursor: pointer }
+    button:hover { border-color: #c9c8c1; background: #faf9f7 }
+    .note { margin: 14px 0 0; min-height: 17px; font-size: 11.5px; color: #8c8c85 }
+    .note.bad { color: #c2483a }
+    [hidden] { display: none !important }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark">m</div>
+    <h1>미닉스 로그인 확인</h1>
+    <p id="say">로그인을 확인하고 있습니다…</p>
+    <button type="button" id="go" hidden>
+      <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true"><path fill="#4285F4" d="M17.6 9.2c0-.6-.1-1.2-.2-1.8H9v3.5h4.8a4.1 4.1 0 0 1-1.8 2.7v2.2h2.9c1.7-1.6 2.7-3.9 2.7-6.6z"/><path fill="#34A853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.2-3.8H.8v2.3A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.8 10.7a5.4 5.4 0 0 1 0-3.4V5H.8a9 9 0 0 0 0 8l3-2.3z"/><path fill="#EA4335" d="M9 3.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 0 0 .8 5l3 2.3C4.6 5.2 6.6 3.6 9 3.6z"/></svg>
+      구글로 로그인
+    </button>
+    <p class="note" id="note"></p>
+  </div>
+  <script>
+    // app.js 의 값과 같아야 한다 (공개돼도 되는 웹 키다)
+    var CONFIG = {
+      apiKey: 'AIzaSyB6ce9On5hjmyB_5Gz-uSljpZAryWtwBo8',
+      authDomain: 'minix-salemarketing.firebaseapp.com',
+      projectId: 'minix-salemarketing',
+      appId: '1:1064699147013:web:8a4c30dc7e7142549b7d6c'
+    };
+    var DOMAINS = ['athomecorp.com'];
+
+    var say = document.querySelector('#say');
+    var note = document.querySelector('#note');
+    var go = document.querySelector('#go');
+    var told = false;
+
+    var tell = function (text, bad) {
+      note.textContent = text || '';
+      note.className = 'note' + (bad ? ' bad' : '');
+    };
+    var mine = function (mail) {
+      mail = String(mail || '').toLowerCase();
+      for (var i = 0; i < DOMAINS.length; i++) {
+        if (mail.slice(-(DOMAINS[i].length + 1)) === '@' + DOMAINS[i]) return true;
+      }
+      return false;
+    };
+
+    // 표를 틀에게 건네고 닫는다. 갱신 열쇠까지 주므로 다음부터는 이 창이 뜨지 않는다.
+    var hand = function (user) {
+      if (told) return;
+      told = true;
+      user.getIdToken().then(function (token) {
+        var gift = { kind: 'minix-login', token: token, refresh: user.refreshToken, mail: user.email };
+        try {
+          if (window.opener) window.opener.postMessage(gift, window.location.origin);
+        } catch (error) { /* 못 건넸으면 아래 안내로 넘어간다 */ }
+        say.textContent = user.email + ' 으로 확인했습니다.';
+        tell('창을 닫습니다…');
+        window.setTimeout(function () {
+          window.close();
+          tell('이 창을 닫고 화면을 새로 고쳐 주세요.');
+        }, 400);
+      });
+    };
+
+    if (!window.firebase || !window.firebase.auth) {
+      say.textContent = '로그인을 준비하지 못했습니다.';
+      tell('인터넷 연결을 확인하고 다시 열어 주세요.', true);
+    } else {
+      firebase.initializeApp(CONFIG);
+      firebase.auth().onAuthStateChanged(function (user) {
+        if (user && mine(user.email)) { hand(user); return; }
+        if (user) {                                  // 회사 계정이 아니다
+          var mail = user.email;
+          firebase.auth().signOut();
+          say.textContent = '미닉스 계정으로 들어와 주세요.';
+          tell(mail + ' 은 미닉스 계정이 아닙니다.', true);
+          go.hidden = false;
+          return;
+        }
+        say.textContent = '미닉스 구글 계정(@athomecorp.com)으로 로그인해 주세요.';
+        go.hidden = false;
+      });
+
+      go.addEventListener('click', function () {
+        var maker = new firebase.auth.GoogleAuthProvider();
+        maker.setCustomParameters({ hd: DOMAINS[0], prompt: 'select_account' });
+        tell('구글 창에서 계정을 골라 주세요…');
+        firebase.auth().signInWithPopup(maker).catch(function (reason) {
+          var code = String((reason && reason.code) || '');
+          if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') { tell(''); return; }
+          if (code === 'auth/popup-blocked') {       // 창을 못 띄우면 이 창을 그대로 넘긴다
+            firebase.auth().signInWithRedirect(maker);
+            return;
+          }
+          tell('로그인이 안 됐습니다 — ' + ((reason && reason.message) || code), true);
+        });
+      });
+    }
+  </script>
+</body>
+</html>

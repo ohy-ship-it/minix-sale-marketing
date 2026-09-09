@@ -1334,3 +1334,8 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .embed-mode .login-embed{display:block;margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);
   font-size:11px;line-height:1.7;color:#8c8c85}
 .embed-mode .login-embed a{color:#3d71d8}
+
+/* 틀 안에서는 '미닉스 계정으로 확인' 단추만 쓴다 (틀 안에서는 구글 로그인 창이 잘 안 뜬다) */
+#login-embed-go{display:none}
+.embed-mode #login-go{display:none}
+.embed-mode #login-embed-go{display:inline-flex}

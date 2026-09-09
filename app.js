@@ -1136,6 +1136,7 @@ const loginMine = (mail) => LOGIN_DOMAINS
 // 시트로 보낼 로그인 표. 로그인 전이면 될 때까지 기다린다 (기다린 요청은 로그인 뒤에 저절로 나간다).
 const loginToken = () => loginPlan.then((need) => {
   if (!need) return '';
+  if (EMBED_MODE) return loginOpen.then(() => embedMint());
   return loginOpen.then(() => {
     const who = firebase.auth().currentUser;
     return who ? who.getIdToken() : '';
@@ -1154,6 +1155,37 @@ window.fetch = (url, options) => {
     next.body = JSON.stringify(body);
     return rawFetch(url, next);
   });
+};
+
+// ── 틀(iframe) 안에서 — 우리 사이트의 로그인을 빌려 온다 ──────────────
+// 남의 사이트 안에 들어가 있으면 브라우저가 저장 공간을 따로 두어 우리 로그인이 보이지 않는다.
+// 우리 사이트로 직접 열리는 작은 창에서 갱신 열쇠를 받아 두고, 그것으로 표를 만들어 쓴다.
+const EMBED_MODE = document.documentElement.classList.contains('embed-mode');
+const EMBED_KEY = 'minix-embed-login-v1';
+let embedTicket = null;                         // { token, until }
+
+const embedHave = () => { try { return localStorage.getItem(EMBED_KEY) || ''; } catch { return ''; } };
+const embedKeep = (key) => { try { localStorage.setItem(EMBED_KEY, key); } catch { /* 거들기다 */ } };
+const embedDrop = () => { try { localStorage.removeItem(EMBED_KEY); } catch { /* 거들기다 */ } };
+
+// 갱신 열쇠로 로그인 표를 받는다. 표는 한 시간이면 낡으므로 그때마다 새로 받는다.
+const embedMint = () => {
+  const key = embedHave();
+  if (!key) return Promise.resolve('');
+  if (embedTicket && embedTicket.until > Date.now() + 60000) return Promise.resolve(embedTicket.token);
+  return rawFetch(`https://securetoken.googleapis.com/v1/token?key=${FIREBASE_CONFIG.apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(key)}`,
+  })
+    .then((response) => response.json())
+    .then((body) => {
+      if (!body || !body.id_token) throw new Error('열쇠가 낡았습니다');
+      if (body.refresh_token) embedKeep(body.refresh_token);
+      embedTicket = { token: body.id_token, until: Date.now() + (Number(body.expires_in) || 3600) * 1000 };
+      return embedTicket.token;
+    })
+    .catch(() => { embedDrop(); embedTicket = null; return ''; });
 };
 
 const loginShut = () => {
@@ -1181,8 +1213,16 @@ const loginStart = () => {
     .then((response) => response.json())
     .then((body) => {
       if (body && body.error) throw new Error('아직 켜지지 않았습니다');
-      firebase.initializeApp(FIREBASE_CONFIG);
       tellPlan(true);                           // 문을 건다 — 이제부터 요청은 표를 달고 나간다
+      if (EMBED_MODE) {                         // 틀 안 — 담아 둔 열쇠가 있으면 아무것도 묻지 않는다
+        embedMint().then((token) => {
+          if (!token) { loginShow(); return; }
+          loginShut();
+          letIn();
+        });
+        return;
+      }
+      firebase.initializeApp(FIREBASE_CONFIG);
       firebase.auth().onAuthStateChanged((user) => {
         if (user && loginMine(user.email)) {    // 미닉스 계정 — 들여보낸다
           // 방금 로그인한 것이면 화면을 새로 읽는다. 로그인을 기다리며 붙들고 있던 요청들이
@@ -1228,6 +1268,25 @@ document.querySelector('#login-go')?.addEventListener('click', () => {
         ? '팝업이 막혔습니다 — 주소창 오른쪽에서 팝업을 허용하고 다시 눌러 주세요.'
         : `로그인이 안 됐습니다 — ${(reason && reason.message) || code}`, true);
     });
+});
+
+document.querySelector('#login-embed-go')?.addEventListener('click', () => {
+  // 우리 사이트로 직접 열리는 창이라 로그인이 그대로 보인다. 이미 들어와 있으면 곧 저절로 닫힌다.
+  const win = window.open('embed-login.html', 'minixLogin',
+    'width=430,height=520,menubar=no,toolbar=no,location=no');
+  if (!win) { loginSay('창이 막혔습니다 — 주소창 오른쪽에서 팝업을 허용하고 다시 눌러 주세요.', true); return; }
+  loginSay('열린 창에서 확인하고 있습니다…');
+});
+
+window.addEventListener('message', (event) => {
+  if (event.origin !== window.location.origin) return;      // 우리 창에서 온 것만 받는다
+  const gift = event.data;
+  if (!gift || gift.kind !== 'minix-login' || !gift.refresh) return;
+  embedKeep(gift.refresh);
+  embedTicket = gift.token ? { token: gift.token, until: Date.now() + 3000000 } : null;
+  loginSay(`${gift.mail || ''} 으로 확인했습니다 — 화면을 불러옵니다…`);
+  // 로그인을 기다리며 붙들고 있던 요청들이 시간제한에 걸리지 않게 새로 읽는다
+  window.setTimeout(() => window.location.reload(), 300);
 });
 
 document.querySelector('#side-out')?.addEventListener('click', () => {
