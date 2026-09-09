@@ -1099,6 +1099,144 @@ window.setTimeout(() => noteLoad(false), 0);
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E/edit';
 const SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwWEYRTgiY7g5Hoz1U5Y9HGauaSjuZal5AQmO4vU8lN-SrU2xwc17wszUpPypHBixbV/exec';
 
+// ── 로그인 (미닉스 구글 계정만) ────────────────────────────────────────
+// 이 화면은 파이어베이스 호스팅에 올린 정적 파일이라 그 자체로는 문을 걸 수 없다. 두 겹으로 막는다:
+//   ① 여기 — 구글 로그인을 하지 않았으면 화면을 덮어 아무것도 보여 주지 않는다
+//   ② 시트 쪽(Code.gs) — 요청마다 로그인 표(ID 토큰)를 확인한다. 주소가 새어도 소용이 없다.
+// 아래 값들은 공개돼도 되는 것이다 (누구나 볼 수 있는 웹 키다). 실제 문은 ② 가 지킨다.
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyB6ce9On5hjmyB_5Gz-uSljpZAryWtwBo8',
+  authDomain: 'minix-salemarketing.firebaseapp.com',
+  projectId: 'minix-salemarketing',
+  appId: '1:1064699147013:web:8a4c30dc7e7142549b7d6c',
+};
+const LOGIN_DOMAINS = ['athomecorp.com'];
+// 내 PC 에서 열어 보는 것(localhost · 파일 열기)은 문을 걸지 않는다. 시트 쪽 검사는 그대로다.
+const LOGIN_LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])?$/.test(location.hostname);
+
+const rawFetch = window.fetch.bind(window);
+let letIn = null;
+const loginOpen = new Promise((done) => { letIn = done; });   // 로그인이 끝나면 풀린다
+// 문을 걸지 말지는 파이어베이스에 물어본 뒤에 정해진다. 그때까지 시트 요청을 붙들고 있어야 한다 —
+// 안 그러면 화면을 열자마자 나가는 요청들이 로그인 표 없이 먼저 빠져나간다.
+let tellPlan = null;
+const loginPlan = new Promise((done) => { tellPlan = done; });
+const loginGate = document.querySelector('#login-gate');
+
+const loginSay = (text, bad) => {
+  const box = document.querySelector('#login-note');
+  if (!box) return;
+  box.textContent = text || '';
+  box.classList.toggle('is-bad', Boolean(bad));
+};
+
+const loginMine = (mail) => LOGIN_DOMAINS
+  .some((one) => String(mail || '').toLowerCase().endsWith(`@${one}`));
+
+// 시트로 보낼 로그인 표. 로그인 전이면 될 때까지 기다린다 (기다린 요청은 로그인 뒤에 저절로 나간다).
+const loginToken = () => loginPlan.then((need) => {
+  if (!need) return '';
+  return loginOpen.then(() => {
+    const who = firebase.auth().currentUser;
+    return who ? who.getIdToken() : '';
+  });
+});
+
+// 시트로 가는 모든 요청에 로그인 표를 끼운다.
+// 부르는 곳이 열 군데라 하나하나 고치지 않고 여기서 한 번에 붙인다 (앞으로 늘어나도 따라온다).
+window.fetch = (url, options) => {
+  if (String(url) !== SHEET_ENDPOINT) return rawFetch(url, options);
+  return loginToken().then((token) => {
+    const next = Object.assign({}, options || {});
+    let body = {};
+    try { body = JSON.parse(String(next.body || '{}')); } catch { body = {}; }
+    if (token) body.token = token;
+    next.body = JSON.stringify(body);
+    return rawFetch(url, next);
+  });
+};
+
+const loginShut = () => {
+  if (loginGate) loginGate.hidden = true;
+  document.documentElement.classList.remove('is-gated');
+};
+const loginShow = () => {
+  if (loginGate) loginGate.hidden = false;
+  document.documentElement.classList.add('is-gated');
+};
+let loginTried = false;                         // 이 화면에서 [구글로 로그인] 을 눌렀나
+
+const loginWho = (user) => {
+  const line = document.querySelector('#side-who');
+  const mail = document.querySelector('#side-mail');
+  if (mail) mail.textContent = user ? user.email : '';
+  if (line) line.hidden = !user;
+};
+
+const loginStart = () => {
+  if (LOGIN_LOCAL || !window.firebase || !window.firebase.auth) { loginShut(); tellPlan(false); letIn(); return; }
+  // 파이어베이스 콘솔에서 Authentication 을 켰는지 먼저 물어본다.
+  // 아직 안 켰으면 문을 걸지 않는다 — 켜는 순간부터 저절로 걸린다 (다시 배포할 것 없다).
+  rawFetch(`https://identitytoolkit.googleapis.com/v1/projects?key=${FIREBASE_CONFIG.apiKey}`)
+    .then((response) => response.json())
+    .then((body) => {
+      if (body && body.error) throw new Error('아직 켜지지 않았습니다');
+      firebase.initializeApp(FIREBASE_CONFIG);
+      tellPlan(true);                           // 문을 건다 — 이제부터 요청은 표를 달고 나간다
+      firebase.auth().onAuthStateChanged((user) => {
+        if (user && loginMine(user.email)) {    // 미닉스 계정 — 들여보낸다
+          // 방금 로그인한 것이면 화면을 새로 읽는다. 로그인을 기다리며 붙들고 있던 요청들이
+          // 60초 시간제한에 걸려 '구글이 답하지 않았습니다' 로 끝나는 것을 막는다.
+          if (loginTried) { window.location.reload(); return; }
+          loginSay('');
+          loginShut();
+          loginWho(user);
+          letIn();
+          return;
+        }
+        loginWho(null);
+        if (user) {                             // 회사 계정이 아니다
+          const mail = user.email;
+          loginTried = false;
+          firebase.auth().signOut();
+          loginShow();
+          loginSay(`${mail} 은 미닉스 계정이 아닙니다. @${LOGIN_DOMAINS[0]} 계정으로 들어와 주세요.`, true);
+          return;
+        }
+        loginShow();
+      });
+    })
+    .catch(() => {                              // 아직 안 켰거나 물어보지 못했다
+      loginShut();
+      tellPlan(false);
+      letIn();
+      console.warn('[로그인] 파이어베이스 Authentication 이 켜져 있지 않아 문을 걸지 않았습니다.');
+    });
+};
+
+document.querySelector('#login-go')?.addEventListener('click', () => {
+  if (!window.firebase || !firebase.apps.length) { loginSay('로그인을 준비하지 못했습니다. 새로 고쳐 주세요.', true); return; }
+  const maker = new firebase.auth.GoogleAuthProvider();
+  maker.setCustomParameters({ hd: LOGIN_DOMAINS[0], prompt: 'select_account' });
+  loginTried = true;
+  loginSay('구글 창에서 계정을 골라 주세요…');
+  firebase.auth().signInWithPopup(maker)
+    .catch((reason) => {
+      const code = String((reason && reason.code) || '');
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') { loginSay(''); return; }
+      loginSay(code === 'auth/popup-blocked'
+        ? '팝업이 막혔습니다 — 주소창 오른쪽에서 팝업을 허용하고 다시 눌러 주세요.'
+        : `로그인이 안 됐습니다 — ${(reason && reason.message) || code}`, true);
+    });
+});
+
+document.querySelector('#side-out')?.addEventListener('click', () => {
+  if (!window.firebase || !firebase.apps.length) return;
+  firebase.auth().signOut().then(() => window.location.reload());
+});
+
+loginStart();
+
 // 광고 계정 — 메타 광고 세팅 · 매체별 성과가 함께 쓴다.
 // 매체별 성과는 시트 쪽에서 계정 목록을 받아 오고, 못 받으면 이 목록으로 채운다.
 const AD_ACCOUNTS = [

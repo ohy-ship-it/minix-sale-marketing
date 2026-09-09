@@ -89,9 +89,63 @@ var DEFAULT_PRODUCT = [
 ];
 
 // ── 앱 → 시트 적재 ──────────────────────────────────────────────
+// ── 로그인 확인 (미닉스 구글 계정만) ───────────────────────────────────
+// 화면(파이어베이스 호스팅)은 정적 파일이라 그 자체로 문을 걸 수 없다. 그래서 여기서 막는다 —
+// 웹 앱 주소가 새어도, 로그인 표(ID 토큰) 없이는 시트를 읽지도 쓰지도 못한다.
+//
+//   사람    화면이 구글 로그인으로 받은 ID 토큰을 payload.token 에 실어 보낸다.
+//   기계    내 PC 에서 도는 네이버 적재 스크립트는 payload.key 에 스크립트 속성
+//           PUSH_KEY 와 같은 글자를 실어 보낸다 (그 PC 에만 두는 값이다).
+//
+// 급할 때 끄는 법: 스크립트 속성 REQUIRE_LOGIN 을 off 로 둔다 (다시 배포할 것 없다).
+var LOGIN_DOMAINS = ['athomecorp.com'];
+var LOGIN_API_KEY = 'AIzaSyB6ce9On5hjmyB_5Gz-uSljpZAryWtwBo8';   // 파이어베이스 웹 키 (공개돼도 되는 값)
+
+function loginCheck_(payload) {
+  var props = PropertiesService.getScriptProperties();
+  if (String(props.getProperty('REQUIRE_LOGIN') || '').toLowerCase() === 'off') return '';
+
+  var key = String((payload && payload.key) || '');
+  if (key) {
+    var want = String(props.getProperty('PUSH_KEY') || '');
+    if (want && key === want) return '적재도구';
+    throw new Error('적재 열쇠가 맞지 않습니다.');
+  }
+
+  var token = String((payload && payload.token) || '');
+  if (!token) throw new Error('로그인이 필요합니다 — 화면을 새로 고쳐 미닉스 계정으로 들어와 주세요.');
+
+  // 요청마다 구글에 물으면 느리다. 같은 표는 5분간 기억한다.
+  var cache = CacheService.getScriptCache();
+  var slot = 'login:' + Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token));
+  var kept = cache.get(slot);
+  if (kept) return kept;
+
+  var answer = UrlFetchApp.fetch(
+    'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' + LOGIN_API_KEY,
+    { method: 'post', contentType: 'application/json',
+      payload: JSON.stringify({ idToken: token }), muteHttpExceptions: true });
+  if (answer.getResponseCode() !== 200) {
+    throw new Error('로그인이 만료됐습니다 — 화면을 새로 고쳐 주세요.');
+  }
+  var body = JSON.parse(answer.getContentText() || '{}');
+  var who = (body.users && body.users[0]) || null;
+  var mail = String((who && who.email) || '').toLowerCase();
+  var ok = false;
+  for (var i = 0; i < LOGIN_DOMAINS.length; i++) {
+    if (mail.slice(-(LOGIN_DOMAINS[i].length + 1)) === '@' + LOGIN_DOMAINS[i]) ok = true;
+  }
+  if (!ok) throw new Error(mail ? mail + ' 은 미닉스 계정이 아닙니다.' : '로그인을 확인하지 못했습니다.');
+  cache.put(slot, mail, 300);
+  return mail;
+}
+
 function doPost(e) {
   try {
     var payload = JSON.parse(e.postData.contents);
+    var who = loginCheck_(payload);             // 로그인 표를 먼저 본다
+    if (who && !payload.by) payload.by = who;   // 누가 고쳤는지 시트에 남긴다
 
     // action 이 있으면 시트 적재가 아니라 조회 요청이다 (매체별 성과 화면)
     if (payload.action) return json(handleAction_(payload));

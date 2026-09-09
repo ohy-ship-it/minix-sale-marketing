@@ -1,4 +1,5 @@
 google_ads_refresh_token.txt
+minix_push_key.txt
 client_secret_*.json
 .env
 env.txt

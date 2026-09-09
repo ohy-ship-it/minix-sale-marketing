@@ -44,6 +44,18 @@ SHEET_ENDPOINT = ("https://script.google.com/macros/s/"
 # 한 번에 보낼 줄 수. Apps Script 는 큰 본문을 받다가 시간이 넘칠 수 있다.
 PUSH_CHUNK = 400
 
+# 적재 열쇠. 시트 웹앱이 미닉스 구글 로그인을 요구하게 되어(사람은 화면에서 로그인한다),
+# 사람이 아닌 이 스크립트는 열쇠로 통과한다. Apps Script 스크립트 속성 PUSH_KEY 와 같아야 한다.
+#   두는 곳: 환경변수 MINIX_PUSH_KEY, 또는 이 파일 옆의 minix_push_key.txt (git 에 담기지 않는다)
+def push_key() -> str:
+    got = os.environ.get("MINIX_PUSH_KEY", "").strip()
+    if got:
+        return got
+    spot = Path(__file__).with_name("minix_push_key.txt")
+    if spot.exists():
+        return spot.read_text(encoding="utf-8").strip()
+    return ""
+
 # 화면이 부르는 그대로. 버전 번호까지 맞춰 둔다 (v1.1 · v1 이 섞여 있다)
 ACCOUNTS_PATH = "/apis/ad-account/v1.1/adAccounts/access"
 REPORT_PATH = "/apis/report/gfa/v1/adAccounts/{account}/stats/reportPerformance"
@@ -171,7 +183,8 @@ PUSH_TRIES = 3
 def push_once(endpoint: str, chunk: list) -> dict:
     import urllib.request
 
-    body = json.dumps({"action": "naverAppend", "rows": chunk}, ensure_ascii=False).encode("utf-8")
+    body = json.dumps({"action": "naverAppend", "rows": chunk, "key": push_key()},
+                      ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(endpoint, data=body,
                                      headers={"Content-Type": "text/plain;charset=utf-8"})
     with urllib.request.urlopen(request, timeout=180) as response:
@@ -188,6 +201,9 @@ def push_once(endpoint: str, chunk: list) -> dict:
 
 def push_rows(endpoint: str, rows: list) -> None:
     """시트에 적재한다. 같은 날짜 · 같은 줄이 다시 가면 Apps Script 가 덮어쓴다."""
+    if not push_key():
+        print("  적재 열쇠가 없습니다 — 환경변수 MINIX_PUSH_KEY 나 minix_push_key.txt 를 두세요")
+        print("  (Apps Script 스크립트 속성 PUSH_KEY 와 같은 글자여야 합니다)")
     for at in range(0, len(rows), PUSH_CHUNK):
         chunk = rows[at:at + PUSH_CHUNK]
         answer = None
