@@ -1240,3 +1240,14 @@ body.is-resizing .sup-card{cursor:col-resize}
 .onboard-away .primary-action{margin-top:4px}
 .onboard-try{border:0;background:none;color:#9b9a97;font-size:11px;text-decoration:underline;cursor:pointer}
 .onboard-try:hover{color:#74746d}
+
+/* 주간미팅 작성 — 붙인 그림 · 표 */
+.wk-shot{display:block;margin:8px 0}
+.wk-shot img{display:block;max-width:100%;border:1px solid var(--line);border-radius:8px}
+.wk-wait{margin:6px 0;padding:9px 11px;border:1px dashed #e3e2dc;border-radius:8px;
+  background:#fbfbf9;color:#9b9a97;font-size:11.5px}
+.wk-table-wrap{overflow-x:auto;margin:8px 0}
+.wk-table{border-collapse:collapse;min-width:auto;width:auto;font-size:12px}
+.wk-table th,.wk-table td{border:1px solid #e9e9e7;padding:6px 10px;text-align:left;white-space:nowrap}
+.wk-table th{background:#f7f7f5;font-weight:700;color:#37352f}
+.wk-table td{color:#37352f}

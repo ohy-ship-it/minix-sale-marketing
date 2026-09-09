@@ -3125,6 +3125,7 @@ if (weeklyWrite) {
   ];
   const nameOf = (key) => (PARTS.find((one) => one.key === key) || {}).name || key;
   const TEMPLATE = ['## 지난 주 한 일', '- ', '', '## 이번 주 할 일', '- ', '', '## 함께 볼 것 · 도움이 필요한 것', '- '].join('\n');
+  const TABLE = ['| 항목 | 값 | 비고 |', '| --- | --- | --- |', '|  |  |  |', '|  |  |  |', ''].join('\n');
 
   const KEY = 'minix-weekly-v1';
   let book = {};                               // 주 → { 파트 → {text,status,at} }
@@ -3209,27 +3210,59 @@ if (weeklyWrite) {
   // ── 글 모양 (마크다운 조금) ───────────────────────────────────
   // ## 제목 · - 불릿 · - [ ] 체크 · **굵게** 만 본다. 원본 리포트도 이 정도만 쓴다.
   const marks = (text) => escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  // 표 — | 로 나눈 줄. 둘째 줄이 |---|---| 면 첫 줄을 머리글로 본다.
+  const cells = (line) => line.replace(/^\||\|$/g, '').split('|').map((one) => one.trim());
+  const isRule = (line) => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(line.trim());
+
   const draw = (text) => {
+    const lines = String(text || '').split(/\r?\n/);
     const out = [];
     let open = false;
     const shut = () => { if (open) { out.push('</ul>'); open = false; } };
     const start = () => { if (!open) { out.push('<ul>'); open = true; } };
-    String(text || '').split(/\r?\n/).forEach((line) => {
-      const one = line.trim();
+    for (let at = 0; at < lines.length; at += 1) {
+      const one = lines[at].trim();
+
+      // 표 — 이어지는 | 줄을 한 덩어리로 묶는다
+      if (one.length > 1 && one.charAt(0) === '|') {
+        shut();
+        const block = [];
+        while (at < lines.length && lines[at].trim().charAt(0) === '|') { block.push(lines[at].trim()); at += 1; }
+        at -= 1;
+        const head = block.length > 1 && isRule(block[1]) ? cells(block[0]) : null;
+        const body = block.filter((line, i) => !(i === 0 && head) && !isRule(line)).map(cells);
+        out.push(`<div class="wk-table-wrap"><table class="wk-table">`
+          + (head ? `<thead><tr>${head.map((one2) => `<th>${marks(one2)}</th>`).join('')}</tr></thead>` : '')
+          + `<tbody>${body.map((row) => `<tr>${row.map((one2) => `<td>${marks(one2)}</td>`).join('')}</tr>`).join('')}</tbody>`
+          + `</table></div>`);
+        continue;
+      }
+
+      // 그림 — ![적을 말](주소). 주소가 비어 있으면 아직 올리는 중이다.
+      const shot = /^!\[([^\]]*)\]\(([^)]*)\)$/.exec(one);
+      if (shot) {
+        shut();
+        const link = shot[2].trim();
+        out.push(/^https?:\/\//.test(link)
+          ? `<a class="wk-shot" href="${escapeHtml(link)}" target="_blank" rel="noopener">`
+            + `<img src="${escapeHtml(link)}" alt="${escapeHtml(shot[1])}" loading="lazy"></a>`
+          : `<p class="wk-wait">${escapeHtml(shot[1] || '그림')}</p>`);
+        continue;
+      }
       // 제목 — # · ## · ### 모두 받는다 (보여 주는 크기는 같다)
-      const head = /^(#{1,6})\s+(.*)$/.exec(one);
-      if (head) { shut(); out.push(`<h4>${marks(head[2].trim())}</h4>`); return; }
+      const title = /^(#{1,6})\s+(.*)$/.exec(one);
+      if (title) { shut(); out.push(`<h4>${marks(title[2].trim())}</h4>`); continue; }
       // 체크칸 — '- [ ]' · '- [x]' · 사이 빈칸이 없는 '- []' 도 받는다
       const box = /^[-*]\s*\[([ xX]?)\]\s*(.*)$/.exec(one);
-      if (box) { start(); out.push(`<li class="wk-box${/[xX]/.test(box[1]) ? ' is-on' : ''}">${marks(box[2])}</li>`); return; }
+      if (box) { start(); out.push(`<li class="wk-box${/[xX]/.test(box[1]) ? ' is-on' : ''}">${marks(box[2])}</li>`); continue; }
       // 목록 — 뒤에 글이 없어도(서식이 넣어 주는 '- ' 한 줄) 빈 목록으로 둔다.
       // 전에는 이 줄이 글자 '-' 로 보였다.
       const dot = /^[-*](?:\s+(.*))?$/.exec(one);
-      if (dot) { start(); out.push(`<li>${marks((dot[1] || '').trim())}</li>`); return; }
-      if (!one) { shut(); return; }
+      if (dot) { start(); out.push(`<li>${marks((dot[1] || '').trim())}</li>`); continue; }
+      if (!one) { shut(); continue; }
       shut();
       out.push(`<p>${marks(one)}</p>`);
-    });
+    }
     shut();
     const body = out.join('');
     return body || '<p class="wk-empty">아직 아무것도 적히지 않았습니다.</p>';
@@ -3288,7 +3321,9 @@ if (weeklyWrite) {
         placeholder="## 지난 주 한 일&#10;- …&#10;&#10;## 이번 주 할 일&#10;- …">${escapeHtml(mine.text)}</textarea>
       <div class="wk-tools">
         <button type="button" class="wk-mini" data-fill="template">서식 넣기</button>
-        <small>적는 법 — <b>## 제목</b> · <b>- 목록</b> · <b>- [ ] 체크칸</b> (<b>- [x]</b> 면 지운 줄) · <b>**굵게**</b></small>
+        <button type="button" class="wk-mini" data-fill="table">표 넣기</button>
+        <small>적는 법 — <b>## 제목</b> · <b>- 목록</b> · <b>- [ ] 체크칸</b> · <b>**굵게**</b>
+          · 그림은 <b>Ctrl+V 로 붙여넣기</b></small>
       </div>
       <div class="wk-read">${draw(mine.text)}</div>
     </section>`;
@@ -3318,6 +3353,98 @@ if (weeklyWrite) {
     : '<p class="wk-none">주를 만들면 파트별로 적을 수 있습니다. <b>+ 이번 주</b> 를 눌러 시작하세요.</p>'}`;
     lucide.createIcons();
   };
+
+  // ── 글칸에 끼워 넣기 ──────────────────────────────────────────
+  // 커서 자리에 넣고, 화면을 통째로 다시 그리지 않는다 (커서를 잃지 않게 미리보기만 갈아 준다).
+  const putIn = (piece) => {
+    const box = weeklyWrite.querySelector('.wk-text');
+    if (!box) return;
+    const from = box.selectionStart === null ? box.value.length : box.selectionStart;
+    const to = box.selectionEnd === null ? from : box.selectionEnd;
+    const before = box.value.slice(0, from);
+    const after = box.value.slice(to);
+    const pad = before && !before.endsWith('\n') ? '\n' : '';
+    box.value = before + pad + piece + after;
+    const at = (before + pad + piece).length;
+    box.focus();
+    box.setSelectionRange(at, at);
+    keepText(box.value);
+  };
+
+  const keepText = (value) => {
+    const mine = partOf(part);
+    book[week] = book[week] || {};
+    book[week][part] = { ...mine, text: value };
+    const read = weeklyWrite.querySelector('.wk-read');
+    if (read) read.innerHTML = draw(value);
+    save(part);
+  };
+
+  // 올리는 중 표시를 실제 주소(또는 빈 줄)로 바꿔 끼운다
+  const swapMark = (mark, piece) => {
+    const mine = partOf(part);
+    const value = String(mine.text || '').replace(mark + '\n', piece ? piece + '\n' : '').replace(mark, piece);
+    const box = weeklyWrite.querySelector('.wk-text');
+    if (box) box.value = value;
+    keepText(value);
+  };
+
+  // ── 그림 붙여넣기 ─────────────────────────────────────────────
+  // 시트 칸에는 그림을 담을 수 없어(글자만, 한 칸 5만 자) 드라이브에 올리고 주소만 글에 남긴다.
+  // 올리기 전에 긴 변 1600px 로 줄인다 — 화면 캡처는 원본이 몇 MB 라 그대로 올리면 끊긴다.
+  const shrink = (file) => new Promise((done, fail) => {
+    const reader = new FileReader();
+    const picture = new Image();
+    reader.onload = () => { picture.src = String(reader.result); };
+    reader.onerror = () => fail(new Error('그림을 읽지 못했습니다'));
+    picture.onerror = () => fail(new Error('그림을 읽지 못했습니다'));
+    picture.onload = () => {
+      const max = 1600;
+      const scale = Math.min(1, max / Math.max(picture.width, picture.height));
+      const wide = Math.max(1, Math.round(picture.width * scale));
+      const tall = Math.max(1, Math.round(picture.height * scale));
+      const board = document.createElement('canvas');
+      board.width = wide;
+      board.height = tall;
+      board.getContext('2d').drawImage(picture, 0, 0, wide, tall);
+      // 글자가 많은 화면 캡처는 PNG 가 또렷하다. 너무 크면(밑글자 200만 자 ≒ 1.5MB) JPEG 로 바꾼다.
+      let out = board.toDataURL('image/png');
+      let mime = 'image/png';
+      if (out.length > 2000000) { out = board.toDataURL('image/jpeg', 0.92); mime = 'image/jpeg'; }
+      done({ data: out.slice(out.indexOf(',') + 1), mime: mime, wide: wide, tall: tall });
+    };
+    reader.readAsDataURL(file);
+  });
+
+  const pasteShot = (file) => {
+    const mark = `![그림 올리는 중… ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}]()`;
+    putIn(mark);
+    shrink(file)
+      .then((got) => askSheet({ action: 'imageSave', data: got.data, mime: got.mime,
+        name: `주간미팅 ${week} ${nameOf(part)} ${Date.now()}` }))
+      .then((body) => {
+        swapMark(mark, `![그림](${body.url})`);
+        flashNote(body.access === 'private'
+          ? '그림을 올렸지만 나눔을 못 열었습니다 — 다른 사람에게는 안 보일 수 있습니다'
+          : '그림을 넣었습니다');
+      })
+      .catch((reason) => {
+        swapMark(mark, '');
+        note = `그림을 못 올렸습니다 — ${reason.message}`;
+        tell();
+      });
+  };
+
+  weeklyWrite.addEventListener('paste', (event) => {
+    if (!event.target.closest('.wk-text')) return;
+    const items = [...((event.clipboardData && event.clipboardData.items) || [])];
+    const shot = items.find((one) => one.kind === 'file' && String(one.type).indexOf('image/') === 0);
+    if (!shot) return;                          // 글 붙여넣기는 그대로 둔다
+    const file = shot.getAsFile();
+    if (!file) return;
+    event.preventDefault();
+    pasteShot(file);
+  });
 
   // ── 손대기 ────────────────────────────────────────────────────
   const openWeek = (step) => {
@@ -3369,7 +3496,12 @@ if (weeklyWrite) {
       return;
     }
 
-    if (event.target.closest('[data-fill]')) {
+    const fill = event.target.closest('[data-fill]');
+    if (fill) {
+      if (fill.dataset.fill === 'table') {      // 표는 커서 자리에 끼워 넣는다 (있는 글을 지우지 않는다)
+        putIn(TABLE);
+        return;
+      }
       const mine = partOf(part);
       if (mine.text.trim() && !window.confirm('적어 둔 글을 서식으로 덮어씁니다. 그래도 넣을까요?')) return;
       book[week] = book[week] || {};

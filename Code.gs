@@ -919,6 +919,83 @@ function weeklyDrop_(payload) {
   }
 }
 
+// ── 붙여넣은 그림 담기 (주간미팅 작성) ─────────────────────────────────
+// 시트 칸에는 글자만 담긴다 (한 칸 5만 자). 화면에서 붙인 그림은 그보다 훨씬 크므로
+// 드라이브에 파일로 두고, 글에는 ![그림](주소) 한 줄만 남긴다.
+//
+// 처음 부를 때 드라이브 권한을 새로 묻는다 (스크립트를 다시 배포한 뒤 한 번 승인해야 한다).
+// 폴더는 한 번 만들어 그 ID 를 스크립트 속성 IMAGE_FOLDER_ID 에 적어 둔다.
+// 나눔 설정은 **회사 도메인 안에서 링크로 보기**를 먼저 시도한다 (개인 계정이면 링크 공개로 물러선다).
+var IMAGE_FOLDER_NAME = '미닉스 워크스페이스 그림';
+var IMAGE_MAX_BASE64 = 14 * 1000 * 1000;   // 밑글자 1,400만 자 ≒ 파일 10MB
+
+function imageFolder_() {
+  var store = PropertiesService.getScriptProperties();
+  var id = store.getProperty('IMAGE_FOLDER_ID');
+  if (id) {
+    try { return DriveApp.getFolderById(id); } catch (error) { /* 지워졌으면 다시 만든다 */ }
+  }
+  var found = DriveApp.getFoldersByName(IMAGE_FOLDER_NAME);
+  var folder = found.hasNext() ? found.next() : DriveApp.createFolder(IMAGE_FOLDER_NAME);
+  store.setProperty('IMAGE_FOLDER_ID', folder.getId());
+  return folder;
+}
+
+function imageSave_(payload) {
+  var data = String((payload && payload.data) || '');      // 밑글자(base64) 만 온다
+  var mime = String((payload && payload.mime) || 'image/png');
+  var name = String((payload && payload.name) || '붙인 그림');
+  if (!data) throw new Error('그림이 비어 있습니다.');
+  if (data.length > IMAGE_MAX_BASE64) throw new Error('그림이 너무 큽니다 (10MB 넘음). 크기를 줄여 주세요.');
+  if (mime.indexOf('image/') !== 0) throw new Error('그림 파일이 아닙니다: ' + mime);
+
+  var blob = Utilities.newBlob(Utilities.base64Decode(data), mime, name);
+  var file = imageFolder_().createFile(blob);
+
+  // 화면(<img>)에서 바로 보이게 나눔을 열어 준다. 회사 도메인 안으로 먼저 시도한다.
+  var access = '';
+  try {
+    file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW);
+    access = 'domain';
+  } catch (error) {
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      access = 'anyone';
+    } catch (deeper) {
+      access = 'private';   // 나눔을 못 열었다 — 만든 사람만 보인다
+    }
+  }
+
+  return {
+    ok: true,
+    id: file.getId(),
+    // <img> 로 바로 보이는 주소. uc?export=view 는 큰 파일에서 안내 페이지를 주기도 해 썸네일 주소를 쓴다.
+    url: 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w1600',
+    open: file.getUrl(),
+    name: file.getName(),
+    bytes: blob.getBytes().length,
+    access: access,
+    savedAt: new Date().toISOString()
+  };
+}
+
+// 그림 담을 폴더 확인 — 편집기에서 한 번 실행해 드라이브 권한을 승인해 두면 된다.
+// (새 권한은 스크립트를 다시 배포한 뒤 한 번 승인해야 붙여넣기가 된다)
+function checkImageSave() {
+  var message;
+  try {
+    var folder = imageFolder_();
+    message = '드라이브 권한이 있습니다.\n\n폴더: ' + folder.getName()
+      + '\n주소: ' + folder.getUrl()
+      + '\n\n이제 주간미팅 작성에서 그림을 붙여넣을 수 있습니다.';
+  } catch (error) {
+    message = '드라이브를 쓸 수 없습니다.\n\n' + (error && error.message ? error.message : error);
+  }
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
+}
+
 // ── 팀 메모 (대시보드 홈) ─────────────────────────────────────────────
 // 이름이 '팀 메모' 인데 그 브라우저에만 있었다. 시트에 한 칸으로 담는다.
 // 여러 사람이 같은 순간에 고치면 뒤에 온 것이 이긴다 — 자물쇠로 겹쳐 쓰는 것만 막는다.
@@ -1396,6 +1473,7 @@ function handleAction_(payload) {
     if (payload.action === 'weeklyGet') return weeklyGet_();
     if (payload.action === 'weeklyPut') return weeklyPut_(payload);
     if (payload.action === 'weeklyDrop') return weeklyDrop_(payload);
+    if (payload.action === 'imageSave') return imageSave_(payload);
     if (payload.action === 'noteGet') return noteGet_();
     if (payload.action === 'notePut') return notePut_(payload);
     if (payload.action === 'utmWaitGet') return utmWaitGet_();
