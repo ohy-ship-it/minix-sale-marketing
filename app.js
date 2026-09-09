@@ -3448,6 +3448,19 @@ if (onboarding) {
       frame.dataset.doc = one.key;
       frame.title = one.name;
       frame.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+      // 우리 호스팅 문서가 아직 안 올라갔으면 파이어베이스가 index.html 을 대신 준다
+      // (주소 규칙이 '없는 주소는 첫 화면으로'다). 그러면 틀 안에 이 화면이 다시 뜬다 — 걸러 낸다.
+      if (!one.away) {
+        frame.addEventListener('load', () => {
+          let inner = null;
+          try { inner = frame.contentDocument; } catch { inner = null; }
+          if (!inner || !inner.querySelector('#page-heading')) return;
+          frame.remove();
+          note.hidden = false;
+          note.innerHTML = '문서를 아직 못 읽었습니다 (배포가 퍼지는 데 1~2분 걸립니다).'
+            + ' <b>새로고침</b>을 한 번 눌러 주세요.';
+        });
+      }
       frame.src = one.src;
       frames.appendChild(frame);
     }
