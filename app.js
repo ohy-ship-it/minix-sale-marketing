@@ -1254,20 +1254,42 @@ const loginStart = () => {
     });
 };
 
+// 로그인이 안 될 때 무엇 때문인지 사람 말로 알려 준다.
+// (전에는 창이 그냥 닫히면 아무 말도 하지 않아, '떴다가 사라진다' 로만 보였다)
+const LOGIN_WHY = {
+  'auth/configuration-not-found': '로그인이 아직 켜지지 않았습니다 — 파이어베이스 콘솔에서 Authentication → Google 을 켜 주세요.',
+  'auth/operation-not-allowed': '구글 로그인이 꺼져 있습니다 — 파이어베이스 콘솔에서 Google 을 켜 주세요.',
+  'auth/unauthorized-domain': '이 주소가 허용 목록에 없습니다 — 콘솔 Authentication → Settings → 승인된 도메인에 넣어 주세요.',
+  'auth/popup-blocked': '팝업이 막혔습니다 — 주소창 오른쪽에서 팝업을 허용하고 다시 눌러 주세요.',
+  'auth/popup-closed-by-user': '창이 닫혔습니다. 계정을 고르지 않았거나 로그인이 아직 켜지지 않은 것일 수 있습니다.',
+  'auth/cancelled-popup-request': '창이 닫혔습니다. 다시 눌러 주세요.',
+  'auth/internal-error': '구글이 로그인을 거절했습니다 — 콘솔에서 Google 로그인이 켜져 있는지 봐 주세요.',
+};
+
+const loginBad = (reason) => {
+  const code = String((reason && reason.code) || '');
+  console.warn('[로그인] 실패', code, reason);
+  loginSay(LOGIN_WHY[code] || `로그인이 안 됐습니다 — ${(reason && reason.message) || code}`, true);
+};
+
+// 콘솔에서 켰는지 먼저 물어본다 (안 켰으면 창을 열어 봐도 그냥 닫힌다)
+const loginLive = () => rawFetch(`https://identitytoolkit.googleapis.com/v1/projects?key=${FIREBASE_CONFIG.apiKey}`)
+  .then((response) => response.json())
+  .then((body) => !(body && body.error))
+  .catch(() => true);
+
 document.querySelector('#login-go')?.addEventListener('click', () => {
-  if (!window.firebase || !firebase.apps.length) { loginSay('로그인을 준비하지 못했습니다. 새로 고쳐 주세요.', true); return; }
-  const maker = new firebase.auth.GoogleAuthProvider();
-  maker.setCustomParameters({ hd: LOGIN_DOMAINS[0], prompt: 'select_account' });
-  loginTried = true;
-  loginSay('구글 창에서 계정을 골라 주세요…');
-  firebase.auth().signInWithPopup(maker)
-    .catch((reason) => {
-      const code = String((reason && reason.code) || '');
-      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') { loginSay(''); return; }
-      loginSay(code === 'auth/popup-blocked'
-        ? '팝업이 막혔습니다 — 주소창 오른쪽에서 팝업을 허용하고 다시 눌러 주세요.'
-        : `로그인이 안 됐습니다 — ${(reason && reason.message) || code}`, true);
-    });
+  if (!window.firebase) { loginSay('로그인을 준비하지 못했습니다. 새로 고쳐 주세요.', true); return; }
+  loginSay('확인하고 있습니다…');
+  loginLive().then((live) => {
+    if (!live) { loginBad({ code: 'auth/configuration-not-found' }); return; }
+    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    const maker = new firebase.auth.GoogleAuthProvider();
+    maker.setCustomParameters({ hd: LOGIN_DOMAINS[0], prompt: 'select_account' });
+    loginTried = true;
+    loginSay('구글 창에서 계정을 골라 주세요…');
+    firebase.auth().signInWithPopup(maker).catch(loginBad);
+  });
 });
 
 document.querySelector('#login-embed-go')?.addEventListener('click', () => {
