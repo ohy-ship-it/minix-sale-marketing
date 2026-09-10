@@ -8755,11 +8755,12 @@ if (creativePerformance) {
   const controls = () => {
     const range = currentRange();
     const custom = state.preset === 'custom';
+    // 전매체를 맨 앞에 둔다 — 네 매체를 한눈에 보는 자리라 여기서 시작하는 일이 많다
     return `<div class="perf-tabs">
-      ${Object.keys(PERF_SOURCES).map((key) => `<button type="button" class="perf-tab${state.source === key ? ' is-on' : ''}"
-        data-creative="source" data-source="${key}">${PERF_SOURCES[key].name}</button>`).join('')}
       <button type="button" class="perf-tab${isAll() ? ' is-on' : ''}"
         data-creative="source" data-source="${ALL}">전매체</button>
+      ${Object.keys(PERF_SOURCES).map((key) => `<button type="button" class="perf-tab${state.source === key ? ' is-on' : ''}"
+        data-creative="source" data-source="${key}">${PERF_SOURCES[key].name}</button>`).join('')}
     </div>
     <div class="tool-card perf-controls">
       <div class="perf-fields">
