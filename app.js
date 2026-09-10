@@ -1572,12 +1572,19 @@ const askState = { tries: 1 };
 
 // fetch 에는 시간 제한이 없다. 구글이 답을 아예 안 주면 화면이 영원히 '불러오는 중' 에
 // 멈춘다 (흐르는 시간만 계속 늘어난다). 그래서 여기서 끊고, 흘린 요청과 같이 다뤄 다시 묻는다.
-// 제대로 도는 조회는 가장 느린 것도 15초 안쪽이라 60초면 넉넉하다.
 const SHEET_TIMEOUT = 60000;
+
+// 무거운 조회는 60초를 넘긴다. 직접 재 보니 구글 소재는 캠페인을 고르면 30초 · 87초 · 127초까지 갔다
+// (계정 전체는 4~12초). 60초에서 끊으면 화면은 실패로 보이는데 시트 쪽은 그 요청을 계속 돌리고 있고,
+// 다시 물을 때마다 Apps Script 가 같은 사람의 실행을 줄 세워 더 느려진다 — 끊을수록 나빠진다.
+// Apps Script 자체 한도가 6분이라 3분까지 기다려 준다.
+const SHEET_SLOW = /(Creatives|Report|Breakdown|budgetPlan|kolLive|promoCalendar|clarity)/;
+const askBudget = (payload) => (SHEET_SLOW.test(String((payload && payload.action) || '')) ? 180000 : SHEET_TIMEOUT);
 
 const askSheetOnce = (payload) => {
   const stop = new AbortController();
-  const timer = window.setTimeout(() => stop.abort(), SHEET_TIMEOUT);
+  const budget = askBudget(payload);
+  const timer = window.setTimeout(() => stop.abort(), budget);
   return window.fetch(SHEET_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -1606,13 +1613,13 @@ const askSheetOnce = (payload) => {
     .catch((reason) => {
       window.clearTimeout(timer);
       throw new Error(reason && reason.name === 'AbortError'
-        ? '구글이 시간 안에 답하지 않았습니다'
+        ? `구글이 ${Math.round(budget / 1000)}초 안에 답하지 않았습니다`
         : ((reason && reason.message) || '알 수 없는 오류'));
     });
 };
 
 // 서버가 제대로 답한 오류(토큰 없음 같은 것)는 다시 물어도 같은 답이다. 그건 그대로 올린다.
-const askFlaky = (message) => /응답을 흘렸|시간 안에 답하지|HTTP [45]|Failed to fetch|NetworkError|Load failed/.test(message || '');
+const askFlaky = (message) => /응답을 흘렸|안에 답하지|HTTP [45]|Failed to fetch|NetworkError|Load failed/.test(message || '');
 
 const askSheet = (payload, left) => {
   const tries = left === undefined ? SHEET_TRIES : left;
@@ -1623,10 +1630,15 @@ const askSheet = (payload, left) => {
       return body;
     })
     .catch((reason) => {
-      if (tries <= 1 || !askFlaky(reason && reason.message)) throw reason;
-      askState.tries = SHEET_TRIES - tries + 2;
-      return new Promise((done) => window.setTimeout(done, 1200 * (SHEET_TRIES - tries + 1)))
-        .then(() => askSheet(payload, tries - 1));
+      const message = (reason && reason.message) || '';
+      // 시간이 넘친 것은 **한 번만** 다시 묻는다. 시트 쪽은 아직 그 요청을 돌리고 있어서,
+      // 세 번씩 겹쳐 물으면 줄이 밀려 더 느려진다 (구글 소재가 그래서 끝내 안 떴다).
+      // 흘린 답(404 안내 페이지)은 서버가 이미 끝낸 것이라 전처럼 세 번까지 묻는다.
+      const room = /안에 답하지/.test(message) ? Math.min(tries, 2) : tries;
+      if (room <= 1 || !askFlaky(message)) throw reason;
+      askState.tries = SHEET_TRIES - room + 2;
+      return new Promise((done) => window.setTimeout(done, 1200 * (SHEET_TRIES - room + 1)))
+        .then(() => askSheet(payload, room - 1));
     });
 };
 

@@ -2547,7 +2547,10 @@ function metaCreatives_(payload) {
     fetchedAt: new Date().toISOString()
   };
   var text = JSON.stringify(result);
-  cachePut_(cache, key, text, META_CACHE_SECONDS);
+  // 소재가 하나도 없는 답은 짧게만 담아 둔다. 매체가 이따금 빈 목록을 주는데,
+  // 그것을 5분 담아 두면 그 사이 화면에는 '소재 없음' 만 보인다 (구글에서 그랬다).
+  var keep = creatives.length ? META_CACHE_SECONDS : 30;
+  cachePut_(cache, key, text, keep);
   return result;
 }
 
@@ -2750,7 +2753,10 @@ function adsCreatives_(payload) {
     fetchedAt: new Date().toISOString()
   };
   var text = JSON.stringify(result);
-  cachePut_(cache, key, text, META_CACHE_SECONDS);
+  // 소재가 하나도 없는 답은 짧게만 담아 둔다. 매체가 이따금 빈 목록을 주는데,
+  // 그것을 5분 담아 두면 그 사이 화면에는 '소재 없음' 만 보인다 (구글에서 그랬다).
+  var keep = creatives.length ? META_CACHE_SECONDS : 30;
+  cachePut_(cache, key, text, keep);
   return result;
 }
 
