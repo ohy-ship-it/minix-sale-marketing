@@ -1339,3 +1339,11 @@ html.is-gated,html.is-gated body{overflow:hidden}
 #login-embed-go{display:none}
 .embed-mode #login-go{display:none}
 .embed-mode #login-embed-go{display:inline-flex}
+
+/* 소재별 결과 — 전매체 */
+.perf-mix{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.perf-mix-one{padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:#fbfbf9;
+  font-size:10.5px;color:#74746d}
+.perf-mix-one.is-wait{color:#8c8c85;border-style:dashed}
+.perf-mix-one.is-bad{color:#c2483a;border-color:#e7c4bd;background:#fdf6f4}
+.creative-media{color:#3d71d8;font-weight:700}

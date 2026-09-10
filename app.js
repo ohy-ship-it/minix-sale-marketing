@@ -8541,10 +8541,24 @@ if (creativePerformance) {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (saved && typeof saved === 'object') state = { ...defaults, ...saved, accounts: { ...(saved.accounts || {}) } };
   } catch { /* 저장값이 깨졌으면 기본값으로 시작한다 */ }
-  if (!PERF_SOURCES[state.source]) state.source = 'meta';
+  // '전매체' 는 매체가 아니라 모아 보는 자리다. PERF_SOURCES 에 넣지 않는다
+  // (넣으면 매체별 성과가 allReport 같은 없는 요청을 부르게 된다).
+  const ALL = 'all';
+  const ALL_SOURCE = {
+    name: '전매체', clicks: '클릭', fallback: [], properties: [], token: '',
+    breakdowns: [], windows: [], skip: [], skipLabel: '', splitResults: false,
+    note: '네 매체의 소재를 한 자리에서 봅니다. 계정은 각 매체 탭에서 고른 것을 씁니다.',
+    adWait: 40,
+    adWaitNote: '메타 · 구글 · 카카오 · 네이버를 함께 물어봅니다. 받는 대로 붙여 그리므로 '
+      + '먼저 온 매체부터 보입니다. 카카오가 가장 오래 걸립니다.',
+  };
+  const isAll = () => state.source === ALL;
+  if (!PERF_SOURCES[state.source] && state.source !== ALL) state.source = 'meta';
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 
-  const source = () => PERF_SOURCES[state.source];
+  const source = () => PERF_SOURCES[state.source] || ALL_SOURCE;
+  // 전매체에서는 줄마다 그 줄의 매체를 본다 (구매·장바구니를 가르는 매체가 섞여 있다)
+  const srcOf = (row) => PERF_SOURCES[(row && row.media) || state.source] || source();
   const account = () => state.accounts[state.source] || '';
   const setAccount = (id) => { state.accounts[state.source] = id; };
 
@@ -8559,6 +8573,13 @@ if (creativePerformance) {
   let picked = [];      // 고른 목적 (여럿이면 OR)
   let groupQuery = '';  // 광고그룹 이름으로 검색
   let groupBracket = true;   // 광고그룹 검색은 대괄호 안(행사 이름)만 본다
+  let mix = {};         // 전매체 — 매체 → { status, error, count, account }
+  let onlyMedia = '';   // 전매체에서 한 매체만 보기
+  // 불러오기 차례. 매체 탭을 바꾸면 앞 탭의 답이 늦게 도착하는데, 그것이 새 화면에 섞이면
+  // 소재가 겹쳐 보인다 (메타 탭에서 전매체로 옮겼을 때 메타 15장이 두 번 들어갔다).
+  // 그래서 시작할 때 번호를 올리고, 답이 오면 그 번호가 아직 최신인지 본다.
+  let epoch = 0;
+  const nextEpoch = () => { epoch += 1; return epoch; };
 
   // 정렬 차례. [값, 이름, 뽑는 함수, 큰 것이 먼저인가]
   const SORTS = [
@@ -8628,6 +8649,7 @@ if (creativePerformance) {
 
   const shown = () => {
     const rows = creatives.filter((row) => {
+      if (onlyMedia && row.media !== onlyMedia) return false;
       if (kind && kindOf(row) !== kind) return false;
       if (picked.length && picked.indexOf(objectiveOf(row)) < 0) return false;
       // 소재 이름에는 대괄호가 없다 (6108_20260827_flender-mini_price-66_image_ljm).
@@ -8663,17 +8685,19 @@ if (creativePerformance) {
     return `<div class="perf-tabs">
       ${Object.keys(PERF_SOURCES).map((key) => `<button type="button" class="perf-tab${state.source === key ? ' is-on' : ''}"
         data-creative="source" data-source="${key}">${PERF_SOURCES[key].name}</button>`).join('')}
+      <button type="button" class="perf-tab${isAll() ? ' is-on' : ''}"
+        data-creative="source" data-source="${ALL}">전매체</button>
     </div>
     <div class="tool-card perf-controls">
       <div class="perf-fields">
-        <label class="perf-account">광고 계정
+        ${isAll() ? '' : `<label class="perf-account">광고 계정
           <select data-creative="account"${accounts.length ? '' : ' disabled'}>
             ${accounts.length
     ? accounts.map((item) => `<option value="${perfEscape(item.id)}"${item.id === account() ? ' selected' : ''}>`
       + `${perfEscape(item.name)} (${perfEscape(item.accountId)})</option>`).join('')
     : '<option>계정을 불러오는 중…</option>'}
           </select>
-        </label>
+        </label>`}
         <label>기간
           <select data-creative="preset">${PERF_PRESETS.map(([key, name]) => `<option value="${key}"${state.preset === key ? ' selected' : ''}>${name}</option>`).join('')}</select>
         </label>
@@ -8682,20 +8706,41 @@ if (creativePerformance) {
         <button type="button" class="tool-add" data-creative="reload"${status === 'loading' ? ' disabled' : ''}>
           <i data-lucide="refresh-cw"></i>${status === 'loading' ? '불러오는 중…' : '새로고침'}</button>
       </div>
-      <div class="perf-fields perf-scope">
+      ${isAll() ? '' : `<div class="perf-fields perf-scope">
         <label class="perf-account">캠페인
           <select data-creative="campaign"${report ? '' : ' disabled'}>${options(campaignsOf(), state.campaign, '전체 캠페인')}</select>
         </label>
         <label class="perf-account">광고그룹
           <select data-creative="adset"${report ? '' : ' disabled'}>${options(adsetsOf(), state.adset, '전체 광고그룹')}</select>
         </label>
-      </div>
+      </div>`}
       <p class="perf-note">
         <b>${perfEscape(range.since)} ~ ${perfEscape(range.until)}</b>
         ${fetchedAt ? ` · 갱신 ${new Date(fetchedAt).toLocaleString('ko-KR')}${cached ? ' (담아 둔 값)' : ''}` : ''}
-        ${PERF_NET_SOURCES.indexOf(state.source) >= 0 ? `<em class="perf-net">${PERF_NET_TEXT}</em>` : ''}
+        ${isAll() ? ` · ${perfEscape(ALL_SOURCE.note)}` : ''}
+        ${PERF_NET_SOURCES.indexOf(state.source) >= 0 || isAll() ? `<em class="perf-net">${PERF_NET_TEXT}</em>` : ''}
       </p>
+      ${isAll() ? mixLine() : ''}
     </div>`;
+  };
+
+  // 전매체 — 매체마다 어떻게 됐는지 한 줄로 알려 준다 (하나가 실패해도 나머지는 보인다)
+  const mixLine = () => {
+    const keys = Object.keys(PERF_SOURCES);
+    if (!keys.some((key) => mix[key])) return '';
+    return `<p class="perf-note perf-mix">${keys.map((key) => {
+    const one = mix[key] || {};
+    const name = PERF_SOURCES[key].name;
+    if (one.status === 'loading') return `<span class="perf-mix-one is-wait">${name} 불러오는 중…</span>`;
+    if (one.status === 'error') {
+      return `<span class="perf-mix-one is-bad" title="${perfEscape(one.error || '')}">${name} 못 받음</span>`;
+    }
+    if (one.status === 'ready') {
+      return `<span class="perf-mix-one">${name} ${perfCount(one.count)}개${
+        one.account ? ` · ${perfEscape(one.account)}` : ''}</span>`;
+    }
+    return '';
+  }).join('')}</p>`;
   };
 
   const metricRow = (label, value) => `<div><small>${label}</small><b>${value}</b></div>`;
@@ -8709,7 +8754,7 @@ if (creativePerformance) {
     // CVR 은 매체별 성과와 같이 **구매 기준**이다 (구매 ÷ 클릭)
     const cvr = perfRatio(row.purchase, row.linkClicks);
     // GFA 는 구매 · 장바구니를 갈라 본다 (합치면 장바구니가 구매를 덮는다)
-    const split = Boolean(source().splitResults);
+    const split = Boolean(srcOf(row).splitResults);
     return `<article class="creative-card">
       <div class="creative-shot">
         ${row.thumbnail
@@ -8721,9 +8766,10 @@ if (creativePerformance) {
       </div>
       <div class="creative-body">
         <h4>${perfEscape(row.name)}</h4>
-        <p>${perfEscape(row.campaignName || '')}${row.adsetName ? ` · ${perfEscape(row.adsetName)}` : ''}</p>
+        <p>${isAll() ? `<b class="creative-media">${perfEscape(srcOf(row).name)}</b> · ` : ''}${
+  perfEscape(row.campaignName || '')}${row.adsetName ? ` · ${perfEscape(row.adsetName)}` : ''}</p>
         ${row.copy ? `<div class="creative-copy">
-          <p>${state.source === 'naver' ? '<b class="creative-copy-tag">광고문구</b>' : ''}${perfEscape(row.copy)}</p>
+          <p>${row.media === 'naver' || state.source === 'naver' ? '<b class="creative-copy-tag">광고문구</b>' : ''}${perfEscape(row.copy)}</p>
           <button type="button" class="creative-copy-btn" data-creative="copy-text"
             data-text="${perfEscape(row.copy)}" title="문구 복사"><i data-lucide="copy"></i></button>
         </div>` : ''}
@@ -8762,16 +8808,18 @@ if (creativePerformance) {
     }), { spend: 0, impressions: 0, linkClicks: 0, results: 0, revenue: 0,
       purchase: 0, addToCart: 0, lead: 0 });
 
-    const where = state.adset
-      ? (report.adsets.find((row) => row.id === state.adset) || {}).name
-      : (state.campaign ? (report.campaigns.find((row) => row.id === state.campaign) || {}).name : '');
-    const scope = where || '전체 캠페인';
+    const where = isAll() || !report ? ''
+      : (state.adset
+        ? (report.adsets.find((row) => row.id === state.adset) || {}).name
+        : (state.campaign ? (report.campaigns.find((row) => row.id === state.campaign) || {}).name : ''));
+    const scope = where || (isAll() ? '전매체' : '전체 캠페인');
     const card = (label, value, note) => `<div class="perf-stat"><small>${label}</small><strong>${value}</strong><em>${note}</em></div>`;
 
     return `${notice ? `<p class="perf-warn">${perfEscape(notice)}</p>` : ''}
       <p class="creative-scope">${perfEscape(scope)}
         <small>소재 ${perfCount(rows.length)}개${rows.length !== creatives.length
-    ? ` (${[kind ? (kind === 'video' ? '동영상' : '이미지') : '', picked.length ? picked.join(' · ') : '',
+    ? ` (${[onlyMedia ? (PERF_SOURCES[onlyMedia] || {}).name : '',
+      kind ? (kind === 'video' ? '동영상' : '이미지') : '', picked.length ? picked.join(' · ') : '',
       query ? '소재 검색' : '', groupQuery ? '광고그룹 검색' : ''].filter(Boolean).join(' · ')}만)`
     : ''}</small></p>
       <div class="perf-stats">
@@ -8819,6 +8867,14 @@ if (creativePerformance) {
         </div>
         <label class="perf-check" title="[cj-260901]_none_cj 에서 대괄호 안의 cj-260901 만 봅니다">
           <input type="checkbox" data-creative="group-bracket"${groupBracket ? ' checked' : ''}>대괄호 안만</label>
+        ${isAll() ? `<div class="perf-chips">
+          ${Object.keys(PERF_SOURCES).map((key) => {
+    const many = creatives.filter((row) => row.media === key).length;
+    if (!many) return '';
+    return `<button type="button" class="perf-chip${onlyMedia === key ? ' is-on' : ''}"
+      data-creative="media" data-media="${key}">${PERF_SOURCES[key].name} ${perfCount(many)}</button>`;
+  }).join('')}
+        </div>` : ''}
         <div class="perf-chips">
           ${KINDS.map(([key, name]) => {
     const many = creatives.filter((row) => kindOf(row) === key).length;
@@ -8895,7 +8951,7 @@ if (creativePerformance) {
       if (status === 'loading' && !creatives.length) {
         return `<div class="tool-card perf-loading">불러오는 중…</div>${loadWaitOff ? '' : loadWait()}`;
       }
-      if (!report) return '<div class="tool-card perf-loading">광고 계정을 고르면 소재를 불러옵니다.</div>';
+      if (!report && !isAll()) return '<div class="tool-card perf-loading">광고 계정을 고르면 소재를 불러옵니다.</div>';
       return list();
     };
     creativePerformance.innerHTML = `<div class="tool-head">
@@ -8914,8 +8970,9 @@ if (creativePerformance) {
   };
 
   // ── 불러오기 ────────────────────────────────────────────────────
-  const loadCreatives = (refresh) => {
+  const loadCreatives = (refresh, turn) => {
     if (!account()) return;
+    const mine = turn || nextEpoch();
     const range = currentRange();
     status = 'loading';
     beginLoad();
@@ -8930,6 +8987,7 @@ if (creativePerformance) {
       refresh: Boolean(refresh),
     })
       .then((body) => {
+        if (mine !== epoch) return;              // 그새 탭 · 기간이 바뀌었다
         creatives = body.creatives || [];
         fetchedAt = body.fetchedAt || '';
         notice = body.notice || '';
@@ -8939,8 +8997,81 @@ if (creativePerformance) {
         render();
       })
       .catch((reason) => {
+        if (mine !== epoch) return;
         status = 'error';
         error = reason.message;
+        render();
+      });
+  };
+
+  // ── 전매체 ──────────────────────────────────────────────────────
+  // 네 매체를 함께 물어 오는 대로 붙여 그린다. 하나가 실패해도 나머지는 보여 준다.
+  // 계정은 각 매체 탭에서 고른 것을 쓰고, 안 골랐으면 그 매체의 첫 계정을 쓴다
+  // (매체별 성과의 전매체 검색과 같은 규칙이다).
+  const mixAccount = (key) => {
+    const kept = state.accounts[key];
+    if (kept) return Promise.resolve(kept);
+    return askSheet({ action: `${key}Accounts` })
+      .then((body) => (body.accounts || []).filter((one) => !one.disabled))
+      .catch(() => (PERF_SOURCES[key].fallback || []).map(([name, id]) => ({ id, name })))
+      .then((list) => {
+        const first = list[0];
+        if (!first) throw new Error('볼 수 있는 광고 계정이 없습니다.');
+        state.accounts[key] = first.id;
+        save();
+        return first.id;
+      });
+  };
+
+  const mixOne = (key, range, refresh, turn) => mixAccount(key)
+    .then((id) => askSheet({
+      action: `${key}Creatives`, account: id, since: range.since, until: range.until,
+      refresh: Boolean(refresh),
+    }).then((body) => ({ id: id, body: body })))
+    .then(({ id, body }) => {
+      if (turn !== epoch) return;                // 그새 다른 탭으로 옮겼다
+      const rows = (body.creatives || []).map((row) => ({ ...row, media: key }));
+      creatives = creatives.concat(rows);
+      const named = (accounts.find((one) => one.id === id) || {}).name;
+      mix[key] = { status: 'ready', error: '', count: rows.length, account: named || '' };
+      if (body.notice) notice = notice ? `${notice} · ${body.notice}` : body.notice;
+      status = 'ready';
+      render();
+    })
+    .catch((reason) => {
+      if (turn !== epoch) return;
+      mix[key] = { status: 'error', error: reason.message, count: 0, account: '' };
+      render();
+    });
+
+  const loadAll = (refresh) => {
+    const mine = nextEpoch();
+    const range = currentRange();
+    const keys = Object.keys(PERF_SOURCES);
+    status = 'loading';
+    error = '';
+    notice = '';
+    cached = false;
+    creatives = [];
+    report = null;
+    mix = {};
+    keys.forEach((key) => { mix[key] = { status: 'loading', error: '', count: 0, account: '' }; });
+    beginLoad();
+    render();
+    // **한꺼번에 부르지 않는다.** Apps Script 는 같은 사람의 실행을 줄 세우기 때문에
+    // 넷을 동시에 던지면 서로를 기다려 첫 결과가 110초 뒤에 나왔다 (직접 재 봤다).
+    // 하나씩 차례로 부르면 빠른 매체(메타 6초)가 먼저 뜨고, 흘리는 일도 줄어든다.
+    keys.reduce((chain, key) => chain.then(() => mixOne(key, range, refresh, mine)), Promise.resolve())
+      .then(() => {
+        if (mine !== epoch) return;
+        const bad = keys.filter((key) => mix[key].status === 'error');
+        if (bad.length === keys.length) {
+          status = 'error';
+          error = `네 매체를 모두 불러오지 못했습니다 — ${mix[keys[0]].error}`;
+        } else {
+          status = 'ready';
+        }
+        fetchedAt = new Date().toISOString();
         render();
       });
   };
@@ -8950,13 +9081,14 @@ if (creativePerformance) {
   // 잇달아 부르면 두 번의 왕복(각 5~12초)이 그대로 더해져 화면이 그만큼 늦게 뜬다.
   const loadReport = (refresh) => {
     if (!account()) return;
+    const mine = nextEpoch();
     const range = currentRange();
     status = 'loading';
     beginLoad();
     render();
 
     const asked = { campaign: state.campaign, adset: state.adset };
-    loadCreatives(refresh);   // 기다리지 않고 같이 출발한다
+    loadCreatives(refresh, mine);   // 기다리지 않고 같이 출발한다 (같은 차례로 묶는다)
 
     askSheet({
       action: `${state.source}Report`,
@@ -8966,6 +9098,7 @@ if (creativePerformance) {
       refresh: Boolean(refresh),
     })
       .then((body) => {
+        if (mine !== epoch) return;
         report = body;
         currency = (body.account && body.account.currency) || 'KRW';
         if (state.campaign && !report.campaigns.some((row) => row.id === state.campaign)) state.campaign = '';
@@ -8977,6 +9110,7 @@ if (creativePerformance) {
         else render();
       })
       .catch((reason) => {
+        if (mine !== epoch) return;
         // 소재가 이미 왔으면 그것을 지우지 않는다. 고르개만 못 채운 것이다.
         if (status !== 'ready') {
           status = 'error';
@@ -9072,13 +9206,16 @@ if (creativePerformance) {
       state.preset = event.target.value;
       save();
       if (state.preset === 'custom') { render(); return; }
-      loadReport(false);
+      if (isAll()) loadAll(false);
+      else loadReport(false);
       return;
     }
     if (field === 'since' || field === 'until') {
       state[field] = event.target.value;
       save();
-      if (state.since && state.until) loadReport(false);
+      if (!state.since || !state.until) return;
+      if (isAll()) loadAll(false);
+      else loadReport(false);
     }
   });
 
@@ -9092,11 +9229,21 @@ if (creativePerformance) {
       state.adset = '';
       query = '';
       kind = '';
+      onlyMedia = '';
       accounts = [];
       report = null;
       creatives = [];
+      mix = {};
       save();
-      loadAccounts();
+      if (isAll()) loadAll(false);
+      else loadAccounts();
+      return;
+    }
+
+    const mediaChip = event.target.closest('[data-creative="media"]');
+    if (mediaChip) {                                  // 전매체에서 한 매체만 보기
+      onlyMedia = onlyMedia === mediaChip.dataset.media ? '' : mediaChip.dataset.media;
+      render();
       return;
     }
     if (event.target.closest('[data-creative="clear"]')) { query = ''; caretAt = 'search'; caret = 0; render(); return; }
@@ -9114,7 +9261,11 @@ if (creativePerformance) {
       render();
       return;
     }
-    if (event.target.closest('[data-creative="reload"]')) { loadReport(true); return; }
+    if (event.target.closest('[data-creative="reload"]')) {
+      if (isAll()) loadAll(true);
+      else loadReport(true);
+      return;
+    }
     const copyOne = event.target.closest('[data-creative="copy-text"]');
     if (copyOne) {
       const text = copyOne.dataset.text || '';
@@ -9141,8 +9292,8 @@ if (creativePerformance) {
 
   // 엑셀 · 시트에 그대로 붙일 수 있게 탭으로 나눈다
   const copyText = () => {
-    const head = ['소재', '유형', '캠페인', '광고그룹', '문구', '짧은문구',
-      '광고비', '노출', source().clicks, 'CTR', 'CPC', 'CPM']
+    const head = (isAll() ? ['매체'] : []).concat(['소재', '유형', '캠페인', '광고그룹', '문구', '짧은문구',
+      '광고비', '노출', source().clicks, 'CTR', 'CPC', 'CPM'])
       .concat(source().splitResults
         ? ['구매', '장바구니', 'CVR(구매)', 'CPS', 'CPB', '구매매출']
         : ['결과', 'CVR(구매)', 'CPA', '구매전환값'])
@@ -9154,14 +9305,14 @@ if (creativePerformance) {
       const cpm = perfRatio(row.spend * 1000, row.impressions);
       const cpa = perfRatio(row.spend, row.results);
       const cvr = perfRatio(row.purchase, row.linkClicks);
-      lines.push([
+      lines.push((isAll() ? [srcOf(row).name] : []).concat([
         row.name, kindOf(row) === 'video' ? '동영상' : '이미지', row.campaignName || '', row.adsetName || '',
         row.copy || '', row.altCopy || '',
         Math.round(row.spend), row.impressions, row.linkClicks,
         ctr === null ? '' : perfPercent(ctr),
         cpc === null ? '' : Math.round(cpc),
         cpm === null ? '' : Math.round(cpm),
-      ].concat(source().splitResults
+      ]).concat(source().splitResults
         ? [row.purchase, row.addToCart,
           cvr === null ? '' : perfPercent(cvr),
           perfRatio(row.spend, row.purchase) === null ? '' : Math.round(perfRatio(row.spend, row.purchase)),
@@ -9179,7 +9330,8 @@ if (creativePerformance) {
   const openOnce = () => {
     if (loadedOnce || creativePerformance.hidden) return;
     loadedOnce = true;
-    loadAccounts();
+    if (isAll()) loadAll(false);
+    else loadAccounts();
   };
   new MutationObserver(openOnce).observe(creativePerformance, { attributes: true, attributeFilter: ['hidden'] });
   render();
