@@ -7891,13 +7891,57 @@ if (mediaPerformance) {
   const MIX_MEDIA = { meta: '메타', google: '구글', kakao: '카카오모먼트', naver: 'GFA' };
   const MIX_HEAD = ['소재', '노출', '클릭', '광고비', '전환', '매출'];
 
-  // 단계 × 매체로 묶는다 (묶음 하나가 파일 하나). 단계마다 그 기간만 받아 온 값이라
-  // 같은 광고그룹이 사전 · 당일에 다 나와도 광고비는 각 기간의 값으로 갈라져 있다.
+  // 캠페인명에서 제품을 발라낸다.
+  // 이름 규칙은 시트의 UTM 수식과 같다 — `소스_제품정식명_목적(영문)_…`
+  //   google_미닉스 더 플렌더(mini)_purchase              → 더 플렌더(mini)
+  //   facebook_미닉스 더 플렌더_더 플렌더(MAX)_traffic_…    → 더 플렌더(MAX)
+  //   google_미닉스 더 플렌더_더 플렌더(MAX)_branding-vvc #2 → 더 플렌더(MAX)
+  // 제품 정식명 안에도 _ 가 있어서(미닉스 더 플렌더_더 플렌더(MAX)) 목적 낱말을 찾아
+  // 그 앞까지를 제품으로 보고, 그 **마지막 토막**만 쓴다 ('미닉스 ' 는 뗀다).
+  // 규칙을 안 따르는 이름(옛 캠페인 · 네이버 수기 이름)은 발라내지 않는다 — 섞이면 더 헷갈린다.
+  // 목적 낱말은 '-' 앞까지만 보므로 sign-up 은 'sign' 으로 적는다
+  const MIX_PURPOSES = ['purchase', 'traffic', 'branding', 'reach', 'participation', 'prospect',
+    'sign', 'signup', 'message', 'friend', 'view', 'engagement', 'conversion', 'lead',
+    'awareness', 'install', 'app', 'retarget', 'crm'];
+  const MIX_NO_PRODUCT = '(제품 미상)';
+
+  const mixProduct = (name) => {
+    const parts = String(name || '').split('_').map((one) => one.trim()).filter(Boolean);
+    if (parts.length < 3) return '';
+    let at = -1;
+    for (let i = 1; i < parts.length; i += 1) {
+      const head = parts[i].toLowerCase().split(/[-\s#(]/)[0];
+      if (MIX_PURPOSES.indexOf(head) >= 0) { at = i; break; }
+    }
+    if (at < 2) return '';                       // 목적을 못 찾았거나 제품 자리가 없다
+    const last = parts.slice(1, at).pop() || '';
+    return last.replace(/^미닉스\s*/, '').trim();
+  };
+
+  // 단계 × 매체 × 제품으로 묶는다 (묶음 하나가 파일 하나).
+  // MIX 는 업로드를 제품 → 매체 → Phase 자리에 담으므로 그 세 가지로 갈라야 제자리에 들어간다.
+  // 단계마다 그 기간만 받아 온 값이라, 같은 광고그룹이 사전 · 당일에 다 나와도
+  // 광고비는 각 기간의 값으로 갈라져 있다.
   const mixFiles = () => {
     const out = [];
     PHASES.forEach((phase) => Object.keys(SOURCES).forEach((key) => {
       const mine = phaseRows(phase).filter((one) => one.key === key);
-      if (mine.length) out.push({ key: key, phase: phase, rows: mine.map((one) => one.row) });
+      if (!mine.length) return;
+      const order = [];
+      const box = {};
+      mine.forEach((one) => {
+        const product = mixProduct(one.row.campaignName) || MIX_NO_PRODUCT;
+        if (!box[product]) { box[product] = []; order.push(product); }
+        box[product].push(one.row);
+      });
+      // 광고비가 큰 제품을 앞에 둔다. 제품을 못 바른 줄은 맨 뒤로 보낸다.
+      order.sort((a, b) => {
+        if ((a === MIX_NO_PRODUCT) !== (b === MIX_NO_PRODUCT)) return a === MIX_NO_PRODUCT ? 1 : -1;
+        return totalsOf(box[b]).spend - totalsOf(box[a]).spend;
+      });
+      order.forEach((product) => out.push({
+        key: key, phase: phase, product: product, rows: box[product],
+      }));
     }));
     return out;
   };
@@ -7912,8 +7956,9 @@ if (mediaPerformance) {
     Math.round(row.revenue || 0),
   ].join('\t'))).join('\n');
 
-  const mixName = (one) => `MIX_${(crossFor || '검색').replace(/[\\/:*?"<>|]/g, '')}`
-    + `_${MIX_MEDIA[one.key]}_${one.phase}.csv`;
+  const mixSafe = (text) => String(text || '').replace(/[\\/:*?"<>|]/g, '').trim();
+  const mixName = (one) => `MIX_${mixSafe(crossFor || '검색')}`
+    + `_${mixSafe(one.product) || '제품미상'}_${MIX_MEDIA[one.key]}_${one.phase}.csv`;
 
   // 세일즈 워크스페이스(행사별 결과 → 매체결과)가 우리 화면과 똑같이 그릴 수 있게,
   // 화면이 쓰는 값을 그대로 담는다. 비율(CTR · CPC · ROAS …)은 담지 않는다 —
@@ -7981,14 +8026,17 @@ if (mediaPerformance) {
     const late = files.some((one) => one.phase === '사후');
     return `<div class="perf-mix">
       <div class="perf-mix-head"><b>프로모션 MIX 로 보내기</b>
-        <small>매체 × 단계마다 파일 하나입니다. MIX 의 업로드 칸에서 <b>매체</b>와 <b>Phase</b> 를
-          고르고 그 파일을 올리면 컬럼 매핑은 저절로 채워집니다.</small></div>
+        <small>제품 × 매체 × 단계마다 파일 하나입니다 (MIX 가 그 세 자리에 나눠 담습니다).
+          MIX 에서 <b>제품</b>을 고르고 업로드 칸의 <b>매체</b> · <b>Phase</b> 를 맞춘 뒤 올리면
+          컬럼 매핑은 저절로 채워집니다. 캠페인명이 규칙(<b>소스_제품_목적</b>)을 안 따르는 줄은
+          <b>${escapeHtml(MIX_NO_PRODUCT)}</b> 로 묶입니다.</small></div>
       <div class="perf-mix-list">
         ${files.map((one) => `<button type="button" class="perf-mix-btn" data-cross="mix"
-          data-key="${escapeHtml(one.key)}" data-phase="${escapeHtml(one.phase)}">
+          data-key="${escapeHtml(one.key)}" data-phase="${escapeHtml(one.phase)}"
+          data-product="${escapeHtml(one.product)}">
           <i data-lucide="download"></i>
-          <span><b>${escapeHtml(MIX_MEDIA[one.key])} · ${escapeHtml(one.phase)}</b>
-          <small>${count(one.rows.length)}줄 · ${money(totalsOf(one.rows).spend)}</small></span>
+          <span><b>${escapeHtml(one.product)} · ${escapeHtml(one.phase)}</b>
+          <small>${escapeHtml(MIX_MEDIA[one.key])} · ${count(one.rows.length)}줄 · ${money(totalsOf(one.rows).spend)}</small></span>
         </button>`).join('')}
       </div>
       <p class="perf-mix-note">MIX 의 <b>부가세 설정</b>에서 <b>GFA 는 체크하지 마세요</b> (여기 광고비가
@@ -8491,7 +8539,8 @@ if (mediaPerformance) {
     const mixBtn = event.target.closest('[data-cross="mix"]');
     if (mixBtn) {
       const one = mixFiles().find((x) => x.key === mixBtn.dataset.key
-        && x.phase === mixBtn.dataset.phase);
+        && x.phase === mixBtn.dataset.phase
+        && x.product === mixBtn.dataset.product);
       if (one) perfDownload(mixName(one), mixCsv(one.rows));
       return;
     }
