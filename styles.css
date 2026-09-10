@@ -419,9 +419,17 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .checker-actions button{display:inline-flex;align-items:center;gap:5px;border:1px solid #e3e2dc;border-radius:6px;background:#fff;color:#555;font:600 11px inherit;padding:8px 11px;cursor:pointer}
 .checker-actions button:hover{background:#f4f4f1}
 .checker-actions svg{width:13px}
-.checker-frame{flex:1;min-height:min(720px,calc(100vh - 170px));border:1px solid #eeede8;border-radius:10px;overflow:hidden;background:#fff}
-.checker-frame iframe{display:block;width:100%;height:100%;min-height:inherit;border:0}
-@media(max-width:680px){.checker-frame{min-height:calc(100vh - 210px)}}
+/* 검수 칸은 화면 아래까지 쓴다. 모서리를 끌어 더 길게 늘릴 수도 있다 (resize).
+   전에는 720px 에서 멈춰 아래쪽이 남았다. */
+/* flex:1 을 쓰면 (칸 높이가 정해지지 않은 세로 flex 안이라) height 가 무시되고
+   min-height 만큼으로 쪼그라든다. 그래서 flex 늘리기를 끄고 높이를 직접 준다. */
+.checker-frame{flex:none;height:calc(100vh - 132px);min-height:420px;resize:vertical;overflow:auto;
+  border:1px solid #eeede8;border-radius:10px;background:#fff}
+.checker-frame iframe{display:block;width:100%;height:100%;min-height:100%;border:0}
+.checker-frame:fullscreen{height:100vh;min-height:100vh;border:0;border-radius:0}
+.checker-note{margin:0 0 10px;padding:8px 11px;border:1px solid #efe6cf;border-radius:8px;
+  background:#fdfaf1;font-size:11.5px;color:#8a7a4e}
+@media(max-width:680px){.checker-frame{height:calc(100vh - 190px)}}
 
 /* 광고자동 세팅 · 메타 광고 세팅 */
 .ad-setup .tool-card>h3{margin:0 0 12px}

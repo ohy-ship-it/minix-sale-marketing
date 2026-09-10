@@ -980,11 +980,33 @@ if (eventResult) {
 const creativeChecker = document.querySelector('#creative-checker');
 if (creativeChecker) {
   const frame = creativeChecker.querySelector('iframe');
+  const note = creativeChecker.querySelector('.checker-note');
+  let waitTimer = null;
+
+  // 검수 사이트는 Render 무료 플랜이라 아무도 안 쓰면 잠든다. 처음 열면 1분쯤 걸리는데
+  // 그동안 틀이 하얗기만 해서 '안 뜬다' 로 보인다. 그래서 기다리는 중이라고 적어 준다.
+  const tellWait = (text) => {
+    if (!note) return;
+    note.textContent = text || '';
+    note.hidden = !text;
+  };
 
   const loadFrame = () => {
     if (frame.getAttribute('src')) return;
+    tellWait('검수 사이트를 불러오는 중…');
+    if (waitTimer) window.clearTimeout(waitTimer);
+    waitTimer = window.setTimeout(() => {
+      tellWait('검수 사이트가 잠에서 깨는 중일 수 있습니다 (처음 열면 1분쯤 걸립니다). '
+        + '계속 비어 있으면 [새로고침] 이나 [새 탭으로 열기] 를 눌러 주세요.');
+    }, 12000);
     frame.src = frame.dataset.src;
   };
+
+  frame.addEventListener('load', () => {
+    if (waitTimer) window.clearTimeout(waitTimer);
+    waitTimer = null;
+    tellWait('');
+  });
 
   new MutationObserver(() => {
     if (creativeChecker.hidden) return;
@@ -998,6 +1020,13 @@ if (creativeChecker) {
     loadFrame();
   });
   creativeChecker.querySelector('.checker-open').addEventListener('click', () => window.open(frame.dataset.src, '_blank', 'noopener'));
+
+  // 크게 보기 — 이 칸만 화면 전체로 넓힌다 (Esc 로 돌아온다)
+  creativeChecker.querySelector('.checker-big')?.addEventListener('click', () => {
+    const box = creativeChecker.querySelector('.checker-frame');
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    box?.requestFullscreen?.().catch(() => tellWait('이 브라우저에서는 크게 보기가 막혀 있습니다.'));
+  });
 }
 
 const openedView = Object.entries(VIEWS).find(([, entry]) => window.location.hash.startsWith(entry.hash));
