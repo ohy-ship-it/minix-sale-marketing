@@ -7250,37 +7250,45 @@ if (mediaPerformance) {
   // 결과(구매+장바구니+리드)로 세면 장바구니가 많은 계정은 CVR 이 부풀어 견줄 수 없다.
   const cvrOf = (row) => ratio(row.purchase, row.linkClicks);
 
-  const resultHeads = () => (source().splitResults
-    ? `<th>구매${windowName() ? `<small>${escapeHtml(windowName())}</small>` : ''}</th>
-       <th>장바구니</th><th>CVR<small>구매</small></th><th>CPS</th><th>CPB</th>`
-    : '<th>결과</th><th>CVR<small>구매</small></th><th>CPA</th>');
+  // 지표 차례는 한 군데서 정한다. 전매체 · 단계 표(crossHead)와 **같은 차례**로 맞춰 두어야
+  // 화면을 오갈 때 같은 자리에서 같은 숫자를 읽는다.
+  //   광고비 · 전환값 · ROAS · CPA · 노출 · 클릭 · 결과 · CPM · CPC · CTR · CVR구매
+  // 구매 · 장바구니를 갈라 보는 매체(메타 · 카카오 · GFA)는 그 자리에 두 칸씩 들어간다.
+  //   CPA → CPS · CPB   ·   결과 → 구매 · 장바구니
+  const revenueHead = () => `<th>${source().splitResults ? '구매매출' : '전환값'}${windowName() && source().splitResults
+    ? `<small>${escapeHtml(windowName())}</small>` : ''}</th>`;
 
-  const resultCells = (row) => (source().splitResults
-    ? `<td class="perf-num">${count(row.purchase)}</td>
-       <td class="perf-num">${count(row.addToCart)}</td>
-       <td class="perf-num">${blank(cvrOf(row), percent)}</td>
-       <td class="perf-num">${blank(ratio(row.spend, row.purchase), money)}</td>
+  const costHeads = () => (source().splitResults ? '<th>CPS</th><th>CPB</th>' : '<th>CPA</th>');
+  const costCells = (row) => (source().splitResults
+    ? `<td class="perf-num">${blank(ratio(row.spend, row.purchase), money)}</td>
        <td class="perf-num">${blank(ratio(row.spend, row.addToCart), money)}</td>`
-    : `<td class="perf-num">${count(row.results)}</td>
-       <td class="perf-num">${blank(cvrOf(row), percent)}</td>
-       <td class="perf-num">${isTraffic(row) ? `<span class="tool-blank">${source().skipLabel}</span>`
+    : `<td class="perf-num">${isTraffic(row) ? `<span class="tool-blank">${source().skipLabel}</span>`
       : blank(ratio(row.spend, row.results), money)}</td>`);
 
+  const countHeads = () => (source().splitResults
+    ? `<th>구매${windowName() ? `<small>${escapeHtml(windowName())}</small>` : ''}</th><th>장바구니</th>`
+    : '<th>결과</th>');
+  const countCells = (row) => (source().splitResults
+    ? `<td class="perf-num">${count(row.purchase)}</td>
+       <td class="perf-num">${count(row.addToCart)}</td>`
+    : `<td class="perf-num">${count(row.results)}</td>`);
+
   const metricCells = (row) => `<td class="perf-num">${money(row.spend)}</td>
+    <td class="perf-num">${row.revenue ? money(row.revenue) : '<span class="tool-blank">—</span>'}</td>
+    <td class="perf-num">${blank(ratio(row.revenue, row.spend), perfRoas)}</td>
+    ${costCells(row)}
     <td class="perf-num">${count(row.impressions)}</td>
     <td class="perf-num">${count(row.linkClicks)}</td>
-    <td class="perf-num">${blank(ratio(row.linkClicks, row.impressions), percent)}</td>
-    <td class="perf-num">${blank(ratio(row.spend, row.linkClicks), money)}</td>
+    ${countCells(row)}
     <td class="perf-num">${blank(ratio(row.spend * 1000, row.impressions), money)}</td>
-    ${resultCells(row)}
-    <td class="perf-num">${row.revenue ? money(row.revenue) : '<span class="tool-blank">—</span>'}</td>
-    <td class="perf-num">${blank(ratio(row.revenue, row.spend), perfRoas)}</td>`;
+    <td class="perf-num">${blank(ratio(row.spend, row.linkClicks), money)}</td>
+    <td class="perf-num">${blank(ratio(row.linkClicks, row.impressions), percent)}</td>
+    <td class="perf-num">${blank(cvrOf(row), percent)}</td>`;
 
   // 표 머리글도 한 군데서 만든다 (매체별 성과 표 · 상세 표가 같은 칸을 쓴다)
-  const metricHeads = () => `<th>광고비</th><th>노출</th><th>${source().clicks}</th>
-    <th>CTR</th><th>CPC</th><th>CPM</th>${resultHeads()}
-    <th>${source().splitResults ? '구매매출' : '전환값'}${windowName() && source().splitResults
-    ? `<small>${escapeHtml(windowName())}</small>` : ''}</th><th>ROAS</th>`;
+  const metricHeads = () => `<th>광고비</th>${revenueHead()}<th>ROAS</th>${costHeads()}
+    <th>노출</th><th>${source().clicks}</th>${countHeads()}
+    <th>CPM</th><th>CPC</th><th>CTR</th><th>CVR<small>구매</small></th>`;
 
   // ── 상세 보기 ───────────────────────────────────────────────────
 
@@ -7350,7 +7358,8 @@ if (mediaPerformance) {
 
   const detailPanel = (campaign) => {
     const keys = source().breakdowns || [];
-    // 이름 · 예산 + 광고비 노출 클릭 CTR CPC CPM + 결과 자리 + 전환값 ROAS + 상세 칸
+    // 이름 · 예산 + 광고비 전환값 ROAS + 비용 자리 + 노출 클릭 + 결과 자리 + CPM CPC CTR CVR + 상세 칸
+    // (칸 수는 전과 같다 — 차례만 바뀌었다)
     const span = 2 + 6 + resultCount() + 2 + 1;
     return `<tr class="perf-detail-row"><td colspan="${span}">
       <div class="perf-detail">
@@ -8138,9 +8147,7 @@ if (mediaPerformance) {
         같은 하루가 두 단계에 들어가서 합계가 그만큼 부풉니다.</p>` : ''}` : ''}
       ${searched ? crossGap() : ''}
       ${searched ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
-        <thead><tr><th>매체 · 광고그룹</th><th class="perf-span-head">집행일자</th><th>광고비</th><th>노출</th><th>클릭</th>
-          <th>CTR</th><th>CPC</th><th>CPM</th><th>결과</th><th>CVR<small>구매</small></th><th>CPA</th>
-          <th>전환값</th><th>ROAS</th></tr></thead>
+        ${crossHead('매체 · 광고그룹')}
         <tbody>${lines}
           <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>합계</b><small>${escapeHtml(crossFor)}${crossBracket ? ' (대괄호 안)' : ' (이름 전체)'}
             · ${escapeHtml(currentRange().since)} ~ ${escapeHtml(currentRange().until)} · 광고그룹 ${count(found)}</small></span></td>
