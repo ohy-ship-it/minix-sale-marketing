@@ -1911,7 +1911,7 @@ if (filenameTool) {
     { key: 'channel', label: '행사채널' },
   ];
 
-  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', media: '', type: MESSAGE_TYPES[0][0], vertical: false, customTypes: [], customMedia: [], autoEvent: '' };
+  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', medias: [], type: MESSAGE_TYPES[0][0], vertical: false, customTypes: [], customMedia: [], autoEvent: '' };
   let state = { ...defaults };
   let issued = [];
   // 한 번 나간 번호는 목록에서 지워도 다시 쓰지 않는다
@@ -1926,6 +1926,16 @@ if (filenameTool) {
       // 매체는 코드가 없어 이름만 담는다 (예전 저장값에는 이 항목이 없다)
       state.customMedia = (Array.isArray(state.customMedia) ? state.customMedia : [])
         .filter((entry) => typeof entry === 'string' && entry.trim());
+      // 매체 하나만 담던 때의 저장값(media)을 여럿(medias)으로 옮긴다.
+      // **담아 둔 값 자체를 본다** — defaults 에 medias:[] 가 있어 합쳐진 뒤에는 늘 배열이라,
+      // 합친 값을 보면 옛 저장값을 절대 못 찾는다.
+      const savedState = stored.state || {};
+      const savedOne = typeof savedState.media === 'string' ? savedState.media.trim() : '';
+      state.medias = (Array.isArray(savedState.medias)
+        ? savedState.medias
+        : (savedOne ? [savedOne] : []))
+        .filter((one) => typeof one === 'string' && one.trim());
+      delete state.media;
       issued = Array.isArray(stored.issued) ? stored.issued : [];
       watermark = stored.watermark && typeof stored.watermark === 'object' ? { ...stored.watermark } : {};
     }
@@ -2033,11 +2043,16 @@ if (filenameTool) {
 
   const issueNumber = (code) => {
     const seq = nextSequence(code);
-    issued = [{
+    // 시트는 한 줄에 매체 하나다 (설정 탭에서 매체로 utm_source · medium 을 찾는다).
+    // 그래서 매체를 여럿 고르면 **파일명은 같고 매체만 다른 줄**을 그만큼 만든다.
+    // 하나도 안 골랐으면 전처럼 매체 없이 한 줄만 만든다.
+    const picked = state.medias.length ? state.medias : [''];
+    const stamp = new Date().toISOString();
+    const made = picked.map((media) => ({
       id: newId(),
       code,
       seq,
-      media: state.media,
+      media,
       type: state.type,
       campaign: finalName(),
       eventDate: state.date,
@@ -2046,8 +2061,9 @@ if (filenameTool) {
       event: state.event.trim(),
       filename: `${code}-${seq}`,
       vertical: false,
-      createdAt: new Date().toISOString(),
-    }, ...issued];
+      createdAt: stamp,
+    }));
+    issued = [...made, ...issued];
     watermark[code] = Math.max(watermark[code] || 0, seq);
     if (state.vertical) syncVertical();
     save();
@@ -2065,7 +2081,10 @@ if (filenameTool) {
     issued.forEach((entry) => {
       if (entry.vertical) return;
       next.push(entry);
-      const twin = issued.find((other) => other.vertical && other.filename === entry.filename + VERTICAL_SUFFIX);
+      // 매체를 여럿 고르면 파일명이 같은 줄이 여럿이다. 매체까지 보아야 짝이 겹치지 않는다.
+      const twin = issued.find((other) => other.vertical
+        && other.filename === entry.filename + VERTICAL_SUFFIX
+        && (other.media || '') === (entry.media || ''));
       next.push(twin || { ...entry, id: newId(), filename: entry.filename + VERTICAL_SUFFIX, vertical: true, sent: false });
     });
     issued = next;
@@ -2178,7 +2197,7 @@ if (filenameTool) {
     if (!name) return (modal.error = '매체명을 적어 주세요.'), render();
     if (allMediaOptions().some((value) => value === name)) return (modal.error = '이미 있는 매체명입니다.'), render();
     state.customMedia = [...state.customMedia, name];
-    state.media = name;
+    state.medias = [...state.medias, name];
     modal = { open: false, kind: 'type', name: '', code: '', error: '' };
     save();
     render();
@@ -2186,7 +2205,7 @@ if (filenameTool) {
 
   const removeCustomMedia = (name) => {
     state.customMedia = state.customMedia.filter((value) => value !== name);
-    if (state.media === name) state.media = '';
+    state.medias = state.medias.filter((one) => one !== name);
     save();
     render();
   };
@@ -2238,6 +2257,16 @@ if (filenameTool) {
   };
 
   // 직접 추가한 매체는 select 에서 지울 수 없어 칩으로 따로 보여준다
+  // 매체는 여럿 고를 수 있다. 고른 만큼 줄이 나가므로 몇 개인지 밑에 적어 준다.
+  const mediaPicks = () => `<div class="tool-picks">
+      ${allMediaOptions().map((value) => `<button type="button" class="tool-pick${state.medias.indexOf(value) >= 0 ? ' is-on' : ''}"
+        data-media="${escapeHtml(value)}">${escapeHtml(value)}</button>`).join('')}
+      <button type="button" class="tool-pick is-add" data-media-add="1">+ 직접 추가…</button>
+    </div>
+    <small class="tool-picks-note">${state.medias.length
+    ? `${state.medias.length}개 골랐습니다 — 발번하면 <b>매체마다 한 줄</b>씩 나갑니다 (파일명은 같습니다)`
+    : '고르지 않으면 매체 없이 한 줄만 나갑니다'}</small>`;
+
   const customMediaChips = () => (state.customMedia.length ? `
     <div class="utm-custom-list">
       <span>직접 추가한 매체</span>
@@ -2319,7 +2348,7 @@ if (filenameTool) {
           </label>
         </div>
         <div class="tool-grid tool-grid-second">
-          <label>매체<select data-field="media"><option value=""${state.media ? '' : ' selected'}>선택 안 함</option>${allMediaOptions().map((value) => `<option${value === state.media ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}<option value="${CUSTOM_OPTION}">+ 직접 추가…</option></select></label>
+          <div class="tool-field tool-wide">매체${mediaPicks()}</div>
           <div class="tool-field">메시지 유형${typeControl()}</div>
         </div>
         ${customMediaChips()}
@@ -2426,11 +2455,6 @@ if (filenameTool) {
   filenameTool.addEventListener('change', (event) => {
     const field = event.target.closest('[data-field]');
     if (!field || (field.tagName !== 'SELECT' && field.type !== 'date' && field.type !== 'checkbox')) return;
-    // "직접 추가…" 를 고르면 값은 그대로 두고 입력창을 띄운다
-    if (field.dataset.field === 'media' && field.value === CUSTOM_OPTION) {
-      field.value = state.media || '';
-      return openCustomModal('media');
-    }
     state[field.dataset.field] = field.type === 'checkbox' ? field.checked : field.value;
     if (field.dataset.field === 'date' || field.dataset.field === 'channel') syncEvent();
     if (field.dataset.field === 'vertical') {
@@ -2451,6 +2475,19 @@ if (filenameTool) {
 
     const mediaRemove = event.target.closest('.tool-media-remove');
     if (mediaRemove) return removeCustomMedia(mediaRemove.dataset.name);
+
+    if (event.target.closest('[data-media-add]')) return openCustomModal('media');
+
+    const mediaPick = event.target.closest('[data-media]');
+    if (mediaPick) {
+      const name = mediaPick.dataset.media;
+      state.medias = state.medias.indexOf(name) >= 0
+        ? state.medias.filter((one) => one !== name)
+        : [...state.medias, name];
+      save();
+      render();
+      return;
+    }
 
     if (event.target.closest('[data-toggle="type"]')) {
       typeOpen = !typeOpen;

@@ -1347,3 +1347,13 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .perf-mix-one.is-wait{color:#8c8c85;border-style:dashed}
 .perf-mix-one.is-bad{color:#c2483a;border-color:#e7c4bd;background:#fdf6f4}
 .creative-media{color:#3d71d8;font-weight:700}
+
+/* 광고소재 파일명 — 매체 여럿 고르기 */
+.tool-picks{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.tool-pick{padding:5px 10px;border:1px solid var(--line);border-radius:7px;background:#fff;
+  font:600 11.5px inherit;color:#5f5f58;cursor:pointer}
+.tool-pick:hover{border-color:#c9c8c1;background:#faf9f7}
+.tool-pick.is-on{border-color:#2c2c2b;background:#2c2c2b;color:#fff}
+.tool-pick.is-add{border-style:dashed;color:#8c8c85}
+.tool-picks-note{display:block;margin-top:6px;font-size:10.5px;color:#8c8c85;font-weight:400}
+.tool-picks-note b{color:#37352f}
