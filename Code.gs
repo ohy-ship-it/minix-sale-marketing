@@ -1582,6 +1582,7 @@ function handleAction_(payload) {
     if (payload.action === 'kakaoBreakdown') return kakaoBreakdown_(payload);
     if (payload.action === 'kakaoTree') return kakaoTree_(payload);
     if (payload.action === 'kakaoSpec') return kakaoSpec_(payload);
+    if (payload.action === 'kakaoDefaults') return kakaoDefaults_(payload);
     if (payload.action === 'kakaoMake') return kakaoMake_(payload);
     if (payload.action === 'kakaoCreative') return kakaoCreative_(payload);
     // 네이버 GFA 는 공개 API 가 없어 PC 의 스크래퍼가 적재하고, 화면은 그 시트를 읽는다.
@@ -3747,6 +3748,57 @@ function kakaoNewId_(body) {
   return '';
 }
 
+// 유형 × 목표에 맞는 **가장 최근** 캠페인 · 광고그룹을 찾는다.
+// 사람이 고르지 않아도 되도록, 같은 종류로 마지막에 집행한 것을 기준으로 삼는다.
+// (번호가 클수록 나중에 만든 것이다 — 카카오는 만든 차례로 번호를 준다)
+var KAKAO_TYPE_OF = { bizboard: 'TALK_BIZ_BOARD', display: 'DISPLAY' };
+
+function kakaoBase_(account, kind, goal, refresh) {
+  var want = KAKAO_TYPE_OF[String(kind || 'bizboard')] || 'TALK_BIZ_BOARD';
+  var tree = kakaoTree_({ account: account, refresh: refresh });
+  var mine = (tree.campaigns || []).filter(function (one) {
+    return one.type === want && one.groups.length;
+  });
+  if (!mine.length) {
+    throw new Error('계정에 ' + want + ' 캠페인이 하나도 없습니다. '
+      + '모먼트에서 같은 종류의 캠페인을 한 번 만들어 두면 그 설정을 본떠 만듭니다.');
+  }
+  // 목표까지 같은 것이 있으면 그것을, 없으면 같은 유형 아무거나 쓴다
+  var same = goal ? mine.filter(function (one) { return one.goal === goal; }) : [];
+  var pool = same.length ? same : mine;
+  pool.sort(function (a, b) { return Number(b.id) - Number(a.id); });
+  var campaign = pool[0];
+  var groups = campaign.groups.slice().sort(function (a, b) { return Number(b.id) - Number(a.id); });
+
+  var got = kakaoMany_([
+    { key: 'campaign', path: '/campaigns/' + campaign.id },
+    { key: 'group', path: '/adGroups/' + groups[0].id }
+  ], account);
+  if (!got.campaign || !got.group) throw new Error('기준 광고그룹 설정을 못 읽었습니다.');
+  return { campaign: got.campaign, group: got.group, groupName: groups[0].name,
+    campaignName: campaign.name, matchedGoal: same.length > 0 };
+}
+
+/* 화면에 보여 줄 기준값 — 무엇을 본떠 만들지 한 줄로 알려 주고,
+   대체 텍스트 · 프로필 이름 · 행동 버튼처럼 적기 번거로운 값을 미리 채워 준다. */
+function kakaoDefaults_(payload) {
+  var account = String(payload.account || '').replace(/[^0-9]/g, '');
+  if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
+  var base = kakaoBase_(account, payload.kind, payload.goal, !!payload.refresh);
+
+  var sample = null;
+  var made = kakaoList_(kakaoMany_([{ key: 'list', path: '/creatives',
+    params: { adGroupId: base.group.id, config: 'ON,OFF' } }], account).list);
+  for (var i = 0; i < made.length; i += 1) {
+    var one = kakaoMany_([{ key: 'one', path: '/creatives/' + made[i].id }], account).one;
+    if (one) { sample = one; break; }
+  }
+
+  return { ok: true, source: 'kakao', account: account,
+    campaign: base.campaign, group: base.group, sample: sample,
+    basedOn: { campaign: base.campaignName, group: base.groupName, matchedGoal: base.matchedGoal } };
+}
+
 /* 캠페인과 광고그룹을 만든다.
    - 캠페인은 이름이 같은 것이 있으면 그것을 쓴다 (두 번 눌러도 캠페인이 겹치지 않게)
    - 광고그룹은 '틀' 로 고른 기존 광고그룹의 타겟팅 · 게재지면 · 입찰을 그대로 본뜨고
@@ -3756,8 +3808,6 @@ function kakaoMake_(payload) {
   var account = String(payload.account || '').replace(/[^0-9]/g, '');
   var campaignName = String(payload.campaignName || '').trim();
   var groupName = String(payload.groupName || '').trim();
-  var tplCampaignId = String(payload.tplCampaign || '').replace(/[^0-9]/g, '');
-  var tplGroupId = String(payload.tplGroup || '').replace(/[^0-9]/g, '');
   var budget = Math.round(Number(payload.budget) || 0);
   var bid = Math.round(Number(payload.bid) || 0);
   var beginDate = String(payload.beginDate || '').trim();
@@ -3766,17 +3816,15 @@ function kakaoMake_(payload) {
   if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
   if (!campaignName) throw new Error('캠페인명이 비어 있습니다.');
   if (!groupName) throw new Error('광고그룹명이 비어 있습니다.');
-  if (!tplCampaignId || !tplGroupId) throw new Error('본뜰 캠페인 · 광고그룹을 고르지 않았습니다.');
   if (!beginDate) throw new Error('시작일이 비어 있습니다.');
   if (budget < 10000) throw new Error('일예산은 10,000원 이상이어야 합니다.');
 
-  var tpl = kakaoMany_([
-    { key: 'campaign', path: '/campaigns/' + tplCampaignId },
-    { key: 'group', path: '/adGroups/' + tplGroupId }
-  ], account);
-  if (!tpl.campaign || !tpl.group) throw new Error('틀 설정을 못 읽었습니다. 목록을 새로고침하고 다시 골라 주세요.');
+  // 같은 종류 × 목표로 마지막에 만든 광고그룹을 기준으로 삼는다 (사람이 고르지 않는다)
+  var base = kakaoBase_(account, payload.kind, payload.goal, false);
+  var tpl = { campaign: base.campaign, group: base.group };
 
-  var log = [];
+  var log = ['기준: ' + base.groupName + ' (' + base.campaignName + ')'
+    + (base.matchedGoal ? '' : ' — 같은 목표가 없어 같은 유형에서 가져왔습니다')];
 
   // ① 캠페인
   var campaignId = '';

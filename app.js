@@ -5504,7 +5504,8 @@ if (adSetup) {
 //  Apps Script 로 보내고, Apps Script 가 카카오 API 를 부른다.)
 //
 // 캠페인 · 광고그룹에 넣을 값이 많아(타겟팅 · 게재지면 · 입찰 · 요일시간표)
-// 이미 있는 광고그룹 하나를 '틀' 로 골라 그대로 본뜨고, 이름 · 기간 · 예산만 새로 받는다.
+// **같은 종류 × 목표로 마지막에 만든 광고그룹**을 기준 삼아 그대로 본뜨고,
+// 이름 · 기간 · 예산만 새로 받는다. 무엇을 본떴는지는 화면에 한 줄로 적어 준다.
 // 만든 광고그룹은 바로 꺼 둔다(OFF). 소재는 카카오 심사를 거쳐야 노출된다.
 const kakaoSetup = document.querySelector('#kakao-ad-setup');
 if (kakaoSetup) {
@@ -5547,7 +5548,6 @@ if (kakaoSetup) {
 
   const DEFAULT_STATE = {
     account: '', kind: 'bizboard', event: '', urlType: 'landing',
-    tplCampaign: '', tplGroup: '',
     campaignName: '', groupName: '',
     beginDate: '', endDate: '', budget: '', bid: '',
     altText: '', title: '', description: '', profileName: '', action: 'PURCHASE',
@@ -5563,15 +5563,21 @@ if (kakaoSetup) {
   try { history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') || []; } catch { history = []; }
 
   let accounts = [];
-  let tree = null;
-  let treeState = { state: 'idle', message: '' };
-  let spec = null;
-  let specState = { state: 'idle', message: '' };
+  let base = null;                 // 기준 광고그룹 (서버가 찾아 준다)
+  let baseState = { state: 'idle', message: '' };
   let rows = [];                 // 시트에서 가져온 줄 (고른 종류만)
   let lookup = { state: 'idle', message: '' };
   let picks = [];                // 고른 소재 파일 [{ file, name, size, width, height, row, bad }]
   let work = null;               // { running, done, total, lines: [], failed }
   let attempted = false;
+
+  // 시트의 목적(purchase · traffic …) 을 카카오 목표로 옮긴다.
+  // 카카오가 API 로 만들 수 있는 목표는 방문 · 전환뿐이라 둘로만 나눈다.
+  const goalOf = () => {
+    const purpose = (rows[0] || {}).purpose || '';
+    return /purchase|conversion|구매|전환/i.test(purpose) ? 'CONVERSION' : 'VISITING';
+  };
+  const GOAL_LABEL = { CONVERSION: '전환', VISITING: '방문' };
 
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const saveHistory = () => localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
@@ -5677,6 +5683,8 @@ if (kakaoSetup) {
     }
     matchPicks();
     render();
+    // 목표(방문 · 전환)가 시트의 목적에서 정해지므로, 읽고 난 뒤 기준을 다시 찾는다
+    if (rows.length && state.account) loadBase(false);
   };
 
   // ── 카카오 조회 ──────────────────────────────────────────────────
@@ -5686,39 +5694,25 @@ if (kakaoSetup) {
       if (!state.account && accounts.length) state.account = accounts[0].accountId;
       save();
       render();
-      if (state.account) loadTree(false);
+      if (state.account) loadBase(false);
     })
     .catch((reason) => {
-      treeState = { state: 'error', message: `광고 계정을 못 읽었습니다 — ${reason.message}` };
+      baseState = { state: 'error', message: `광고 계정을 못 읽었습니다 — ${reason.message}` };
       render();
     });
 
-  const loadTree = (refresh) => {
-    if (!state.account) return;
-    treeState = { state: 'loading', message: '' };
+  /* 기준 광고그룹 — 사람이 고르지 않는다.
+     같은 종류 × 목표로 마지막에 만든 광고그룹을 서버가 찾아, 그 설정과 본보기 소재를 준다. */
+  const loadBase = (refresh) => {
+    if (!state.account) return undefined;
+    baseState = { state: 'loading', message: '' };
+    base = null;
     render();
-    return askSheet({ action: 'kakaoTree', account: state.account, refresh: !!refresh })
+    return askSheet({ action: 'kakaoDefaults', account: state.account,
+      kind: state.kind, goal: goalOf(), refresh: !!refresh })
       .then((body) => {
-        tree = body;
-        treeState = { state: 'done', message: '' };
-        render();
-      })
-      .catch((reason) => {
-        treeState = { state: 'error', message: `캠페인 목록을 못 읽었습니다 — ${reason.message}` };
-        render();
-      });
-  };
-
-  const loadSpec = () => {
-    if (!state.tplCampaign || !state.tplGroup) { spec = null; return render(); }
-    specState = { state: 'loading', message: '' };
-    spec = null;
-    render();
-    return askSheet({ action: 'kakaoSpec', account: state.account,
-      campaign: state.tplCampaign, group: state.tplGroup })
-      .then((body) => {
-        spec = body;
-        specState = { state: 'done', message: '' };
+        base = body;
+        baseState = { state: 'done', message: '' };
         const group = body.group || {};
         if (!tr(state.budget) && group.dailyBudgetAmount) state.budget = commaNum(group.dailyBudgetAmount);
         if (!tr(state.bid) && group.bidAmount) state.bid = commaNum(group.bidAmount);
@@ -5730,15 +5724,13 @@ if (kakaoSetup) {
         render();
       })
       .catch((reason) => {
-        specState = { state: 'error', message: `틀 설정을 못 읽었습니다 — ${reason.message}` };
+        baseState = { state: 'error', message: reason.message };
         render();
       });
   };
 
-  const tplCampaignOf = () => ((tree && tree.campaigns) || []).find((one) => one.id === state.tplCampaign) || null;
-  const groupsOf = () => (tplCampaignOf() || {}).groups || [];
   const sampleImage = () => {
-    const image = ((spec || {}).sample || {}).profileImage || null;
+    const image = ((base || {}).sample || {}).profileImage || null;
     if (!image || !image.url) return '';
     return image.url.indexOf('//') === 0 ? `https:${image.url}` : image.url;
   };
@@ -5799,7 +5791,7 @@ if (kakaoSetup) {
   const problems = () => {
     const list = [];
     if (!state.account) list.push('광고 계정을 고르세요.');
-    if (!spec) list.push('본뜰 광고그룹을 고르세요.');
+    if (!base) list.push('기준 광고그룹을 아직 못 읽었습니다 — 잠시 뒤 다시 해 보세요.');
     if (!tr(state.campaignName)) list.push('캠페인명이 비어 있습니다 — 행사명으로 시트를 조회하거나 직접 적어 주세요.');
     if (!tr(state.groupName)) list.push('광고그룹명이 비어 있습니다.');
     if (!tr(state.beginDate)) list.push('시작일을 입력하세요.');
@@ -5809,7 +5801,7 @@ if (kakaoSetup) {
       if (!tr(state.title)) list.push('제목을 입력하세요 (디스플레이 필수).');
       if (!tr(state.description)) list.push('설명을 입력하세요 (디스플레이 필수).');
       if (!tr(state.profileName)) list.push('프로필 이름을 입력하세요 (디스플레이 필수).');
-      if (!sampleImage()) list.push('프로필 이미지를 못 가져왔습니다 — 프로필 이미지가 있는 광고그룹을 틀로 고르세요.');
+      if (!sampleImage()) list.push('프로필 이미지를 못 가져왔습니다 — 계정에 프로필 이미지가 든 디스플레이 소재가 있어야 합니다.');
     }
     const good = picks.filter((one) => !sizeBad(one) && urlFor(one));
     if (!picks.length) list.push('소재 파일을 고르세요.');
@@ -5832,8 +5824,8 @@ if (kakaoSetup) {
         account: state.account,
         campaignName: tr(state.campaignName),
         groupName: tr(state.groupName),
-        tplCampaign: state.tplCampaign,
-        tplGroup: state.tplGroup,
+        kind: state.kind,
+        goal: goalOf(),
         beginDate: tr(state.beginDate),
         endDate: tr(state.endDate),
         budget: parseInt(digitsOf(state.budget), 10) || 0,
@@ -5898,45 +5890,22 @@ if (kakaoSetup) {
       <input type="text" data-field="${field}" value="${escapeHtml(state[field])}" placeholder="${escapeHtml(placeholder)}">
     </label>`;
 
-  const specBox = () => {
-    if (specState.state === 'loading') return '<p class="tool-empty">틀 설정을 읽는 중…</p>';
-    if (specState.state === 'error') return `<p class="setup-alert">${escapeHtml(specState.message)}</p>`;
-    if (!spec) return '';
-    const group = spec.group || {};
+  // 무엇을 본떠 만드는지 한 줄로 보여 준다 (고르는 칸이 아니라 알림이다)
+  const baseBox = () => {
+    if (baseState.state === 'loading') return '<p class="tool-empty">기준 광고그룹을 찾는 중… (처음 한 번은 10초쯤 걸립니다)</p>';
+    if (baseState.state === 'error') return `<p class="setup-alert">${escapeHtml(baseState.message)}</p>`;
+    if (!base) return '<p class="tool-empty">광고 계정을 고르면 기준 광고그룹을 찾아 옵니다.</p>';
+    const group = base.group || {};
     const target = group.targeting || {};
     const ages = (target.ages || []).slice().sort((a, b) => Number(a) - Number(b));
-    const sample = spec.sample || {};
+    const on = base.basedOn || {};
     return `<div class="setup-tnd">
-      <div><b>게재지면</b><span>${escapeHtml((group.placements || []).join(' · ')) || '<i>없음</i>'}</span></div>
-      <div><b>기기</b><span>${escapeHtml((group.deviceTypes || []).join(' · ')) || '<i>없음</i>'}</span></div>
+      <div><b>기준</b><span>${escapeHtml(on.group || '')} <small>(${escapeHtml(on.campaign || '')})</small>
+        ${on.matchedGoal === false ? '<em class="setup-warn">같은 목표가 없어 같은 종류에서 가져왔습니다</em>' : ''}</span></div>
+      <div><b>게재지면</b><span>${escapeHtml((group.placements || []).join(' · ')) || '<i>없음</i>'} · ${escapeHtml((group.deviceTypes || []).join(' · '))}</span></div>
       <div><b>타겟</b><span>${escapeHtml(target.ageType === 'ALL' ? '나이 전체' : `${ages.join('·')}세`)} · ${escapeHtml(target.genderType === 'ALL' ? '성별 전체' : (target.genders || []).join('·'))} · ${escapeHtml(target.locationType === 'ALL' ? '지역 전체' : '지역 지정')}</span></div>
       <div><b>입찰</b><span>${escapeHtml(group.bidStrategy || '')} · ${escapeHtml(group.pricingType || '')}${group.bidAmount ? ` · ${commaNum(group.bidAmount)}원` : ''}</span></div>
-      ${sample.name ? `<div><b>본보기 소재</b><span>${escapeHtml(sample.name)}${sample.profileName ? ` · 프로필 ${escapeHtml(sample.profileName)}` : ''}${sample.actionButton ? ` · ${escapeHtml(sample.actionButton)}` : ''}</span></div>` : ''}
     </div>`;
-  };
-
-  const tplBox = () => {
-    if (treeState.state === 'loading') return '<p class="tool-empty">캠페인을 읽는 중… (처음 한 번은 10초쯤 걸립니다)</p>';
-    if (treeState.state === 'error') return `<p class="setup-alert">${escapeHtml(treeState.message)}</p>`;
-    if (!tree) return '<p class="tool-empty">광고 계정을 고르면 캠페인을 읽어 옵니다.</p>';
-    const want = isBoard() ? 'TALK_BIZ_BOARD' : 'DISPLAY';
-    const mine = (tree.campaigns || []).filter((one) => one.type === want && one.groups.length);
-    if (!mine.length) return `<p class="tool-empty">${escapeHtml(KIND_MEDIA[state.kind])} 캠페인이 없습니다 — 틀로 쓸 광고그룹이 있는 캠페인이 필요합니다.</p>`;
-    return `<div class="tool-grid setup-grid">
-      <label class="tool-wide"><span class="setup-req">틀 캠페인</span>
-        <small class="setup-hint">${escapeHtml(KIND_MEDIA[state.kind])} 캠페인 ${mine.length}개</small>
-        <select data-field="tplCampaign">
-          <option value="">고르세요</option>
-          ${mine.map((one) => `<option value="${escapeHtml(one.id)}"${one.id === state.tplCampaign ? ' selected' : ''}>${escapeHtml(one.name)} · 광고그룹 ${one.groups.length}</option>`).join('')}
-        </select></label>
-      <label class="tool-wide"><span class="setup-req">틀 광고그룹</span>
-        <small class="setup-hint">이 광고그룹의 타겟팅 · 게재지면 · 입찰을 그대로 씁니다</small>
-        <select data-field="tplGroup"${groupsOf().length ? '' : ' disabled'}>
-          <option value="">고르세요</option>
-          ${groupsOf().map((one) => `<option value="${escapeHtml(one.id)}"${one.id === state.tplGroup ? ' selected' : ''}>${escapeHtml(one.name)}</option>`).join('')}
-        </select></label>
-    </div>
-    ${specBox()}`;
   };
 
   const sheetTable = () => {
@@ -6026,16 +5995,13 @@ if (kakaoSetup) {
 
       <section class="tool-card">
         <div class="tool-list-head">
-          <h3>본뜰 광고그룹</h3>
+          <h3>새로 만들 캠페인 · 광고그룹
+            <small>${escapeHtml(GOAL_LABEL[goalOf()])} 목표 · 마지막 ${escapeHtml(KIND_MEDIA[state.kind])} 광고그룹을 본뜹니다</small></h3>
           <div class="tool-list-actions">
-            <button type="button" class="tool-copy-all setup-tree-refresh"><i data-lucide="refresh-cw"></i>목록 새로고침</button>
+            <button type="button" class="tool-copy-all setup-base-refresh"><i data-lucide="refresh-cw"></i>기준 새로고침</button>
           </div>
         </div>
-        ${tplBox()}
-      </section>
-
-      <section class="tool-card">
-        <h3>새로 만들 캠페인 · 광고그룹</h3>
+        ${baseBox()}
         <div class="tool-grid setup-grid">
           ${textField('campaignName', '캠페인명', { required: true, hint: '시트에서 가져옵니다 · 같은 이름이 있으면 그 캠페인을 씁니다', placeholder: '시트 조회 후 자동 입력', wide: true })}
           ${textField('groupName', '광고그룹명', { required: true, hint: '시트에서 가져옵니다', placeholder: '시트 조회 후 자동 입력', wide: true })}
@@ -6115,8 +6081,6 @@ if (kakaoSetup) {
     if (!field || (field.tagName !== 'SELECT' && field.type !== 'date')) return;
     state[field.dataset.field] = field.value;
     save();
-    if (field.dataset.field === 'tplCampaign') { state.tplGroup = ''; spec = null; save(); render(); return; }
-    if (field.dataset.field === 'tplGroup') return loadSpec();
     render();
   });
 
@@ -6129,25 +6093,23 @@ if (kakaoSetup) {
     if (drop) { picks.splice(Number(drop.dataset.drop), 1); return render(); }
 
     if (account || kind || urlType) {
-      if (account) { state.account = account.dataset.account; state.tplCampaign = ''; state.tplGroup = ''; spec = null; }
+      if (account) { state.account = account.dataset.account; base = null; }
       if (kind) {
         state.kind = kind.dataset.kind;
-        state.tplCampaign = '';
-        state.tplGroup = '';
-        spec = null;
+        base = null;
         rows = [];
         lookup = { state: 'idle', message: '' };
       }
       if (urlType) state.urlType = urlType.dataset.urltype;
       save();
       render();
-      if (account) loadTree(false);
+      if (account || kind) loadBase(false);
       return;
     }
 
     if (event.target.closest('.setup-pick')) return kakaoSetup.querySelector('.setup-file').click();
     if (event.target.closest('.setup-clear-picks')) { picks = []; return render(); }
-    if (event.target.closest('.setup-tree-refresh')) return loadTree(true);
+    if (event.target.closest('.setup-base-refresh')) return loadBase(true);
     if (event.target.closest('.setup-lookup')) return lookupSheet();
     if (event.target.closest('.setup-make')) {
       if (work && work.running) return undefined;
