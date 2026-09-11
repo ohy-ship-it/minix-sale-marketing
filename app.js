@@ -5796,7 +5796,7 @@ if (kakaoSetup) {
     if (!tr(state.groupName)) list.push('광고그룹명이 비어 있습니다.');
     if (!tr(state.beginDate)) list.push('시작일을 입력하세요.');
     if ((parseInt(digitsOf(state.budget), 10) || 0) < 10000) list.push('일예산은 10,000원 이상이어야 합니다.');
-    if (!tr(state.altText)) list.push('대체 텍스트를 입력하세요 — 카카오 필수값입니다.');
+    if (!tr(state.altText)) list.push('음성 안내 문구를 입력하세요 — 카카오 필수값입니다.');
     if (!isBoard()) {
       if (!tr(state.title)) list.push('제목을 입력하세요 (디스플레이 필수).');
       if (!tr(state.description)) list.push('설명을 입력하세요 (디스플레이 필수).');
@@ -6028,7 +6028,7 @@ if (kakaoSetup) {
         <div class="setup-drop">여기로 파일을 끌어다 놓아도 됩니다 — NAS 폴더를 탐색기에서 열어 그대로 끌어오세요.</div>
         ${picksBox()}
         <div class="tool-grid setup-grid">
-          ${textField('altText', '대체 텍스트', { required: true, hint: '30자 이내 · 카카오 필수값', placeholder: '미닉스 더 플렌더mini 론칭특가', wide: true })}
+          ${textField('altText', '음성 안내', { required: true, hint: '30자 이내 · 카카오 필수값 — 이미지를 소리로 읽어 주는 문구입니다 (모먼트의 \'이미지 설명\')', placeholder: '미닉스 더 플렌더mini 론칭특가', wide: true })}
         </div>
         ${isBoard() ? '' : `<div class="tool-grid setup-grid">
           ${textField('title', '제목', { required: true, hint: '25자 이내', placeholder: '오늘만! 스타벅스 1만원권 이벤트', wide: true })}

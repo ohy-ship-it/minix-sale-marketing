@@ -3780,7 +3780,7 @@ function kakaoBase_(account, kind, goal, refresh) {
 }
 
 /* 화면에 보여 줄 기준값 — 무엇을 본떠 만들지 한 줄로 알려 주고,
-   대체 텍스트 · 프로필 이름 · 행동 버튼처럼 적기 번거로운 값을 미리 채워 준다. */
+   음성 안내(altText) · 프로필 이름 · 행동 버튼처럼 적기 번거로운 값을 미리 채워 준다. */
 function kakaoDefaults_(payload) {
   var account = String(payload.account || '').replace(/[^0-9]/g, '');
   if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
