@@ -1506,7 +1506,8 @@ const PERF_SOURCES = {
     // 브랜드검색 캠페인은 계정에 한두 개뿐이라 그 층은 볼 것이 없다.
     note: '검색광고 API 로 노출 · 클릭 · 전환을 바로 받습니다. '
       + '**광고비는 매체가 주지 않습니다** — 브랜드검색은 정액(CPT) 이라 계약 금액이라서, '
-      + '아래 <b>브랜드검색 광고비</b> 칸에 적어 두면 기간에 맞춰 나눠 넣습니다 (부가세 별도로 적습니다). '
+      + '아래 <b>브랜드검색 광고비</b> 칸에 적어 두면 기간에 맞춰 나눠 넣습니다 '
+      + '(<b>부가세 포함</b>으로 적고, 표에는 10% 를 뺀 금액이 들어갑니다). '
       + '캠페인 자리에 **광고그룹**, 광고그룹 자리에 **소재** 를 넣어 두 단으로 봅니다. '
       + '몇 해 전에 멈춘 광고그룹 · 소재는 표에서 뺍니다. '
       + '전환 · 전환값은 프리미엄로그분석이 붙어 있어야 옵니다 — 안 오면 그 칸은 0 으로 보입니다.',
@@ -1525,7 +1526,7 @@ const PERF_SOURCES = {
 // 네이버 GFA 는 보고서 광고비가 부가세를 포함한 금액이라 Code.gs 가 10% 를 뺀 값을
 // 내려 준다. 화면에도 그 사실을 적어 둔다 — 매체 화면 숫자와 다르게 보일 때 왜 그런지
 // 알 수 있어야 한다. (메타 · 구글 · 카카오모먼트는 매체가 준 값 그대로다)
-const PERF_NET_SOURCES = ['naver'];
+const PERF_NET_SOURCES = ['naver', 'naverSa'];
 const PERF_NET_TEXT = '광고비는 부가세 10%를 뺀 금액입니다';
 
 const PERF_OBJECTIVES = {
@@ -9102,7 +9103,7 @@ if (mediaPerformance) {
     const summary = report.cost || {};
     const sheet = report.costUrl || costUrl;
     const head = `<div class="tool-list-head">
-      <h3>브랜드검색 광고비 <small>정액(CPT) 이라 매체가 주지 않습니다 · 부가세 별도</small></h3>
+      <h3>브랜드검색 광고비 <small>정액(CPT) 이라 매체가 주지 않습니다 · 부가세 포함으로 적습니다</small></h3>
       <div class="tool-list-actions">
         ${sheet ? `<a class="tool-copy" href="${escapeHtml(sheet)}" target="_blank" rel="noopener">시트에서 보기</a>` : ''}
         <button type="button" class="tool-copy" data-cost="open">${costOpen ? '접기' : '적기'}</button>
@@ -9132,7 +9133,7 @@ if (mediaPerformance) {
     return `<div class="tool-card">${head}
       <div class="tool-table-wrap"><table class="tool-table perf-cost">
         <thead><tr><th>대상 (광고그룹 · 캠페인)</th><th>시작일</th><th>종료일</th>
-          <th>광고비 (VAT 별도)</th><th>메모</th><th></th></tr></thead>
+          <th>광고비 (VAT 포함)</th><th>메모</th><th></th></tr></thead>
         <tbody>${rows.map((one, at) => `<tr>
           <td><input list="perf-cost-names" data-cost="target" data-at="${at}"
             value="${escapeHtml(one.target)}" placeholder="광고그룹명 · 캠페인명"></td>
@@ -9149,8 +9150,10 @@ if (mediaPerformance) {
         <button type="button" class="tool-add" data-cost="save"${busy ? ' disabled' : ''}>${busy ? '저장하는 중…' : '저장'}</button>
       </div>
       ${costStatus === 'error' ? `<p class="perf-warn">${escapeHtml(costError)}</p>` : ''}
-      <p class="perf-note">기간은 <b>그 금액을 산 기간</b>입니다. 조회 기간과 겹친 날수만큼만 들어갑니다 —
-        9/1~9/30 에 300만원을 적어 두고 9/1~9/10 을 보면 100만원이 잡힙니다.
+      <p class="perf-note">금액은 <b>부가세 포함</b>으로 적습니다 (계약서에 적힌 그 금액).
+        표에는 10% 를 뺀 값이 들어갑니다 — 다른 매체와 같은 기준으로 견주려는 것입니다.
+        기간은 <b>그 금액을 산 기간</b>이고 조회 기간과 겹친 날수만큼만 들어갑니다 —
+        9/1~9/30 에 330만원을 적어 두고 9/1~9/10 을 보면 99만원이 잡힙니다 (330만 × 10/30 × 0.9).
         종료일을 비우면 아직 도는 중으로 봅니다.
         캠페인명을 적으면 그 아래 광고그룹에, 광고그룹 금액은 다시 소재에 <b>클릭 비중</b>으로 나눕니다.</p>
     </div>`;
@@ -10914,25 +10917,31 @@ if (budgetPlanView) {
     </div>`;
   };
 
+  // SKU 를 **넣는 자리**와 **보는 자리**를 갈라 둔다.
+  // 앞서는 둘 다 드롭다운이라 나란히 놓였는데, 하는 일이 아주 다른데도 같아 보였다 —
+  // 하나는 이 달의 예산에 상품을 들이는 것이고, 하나는 화면에 무엇만 볼지 고르는 것이다.
+  // 넣기는 드롭다운(고르면 들어간다), 보기는 칩(눌러 갈아 끼운다)으로 둔다.
   const events = () => {
     const shown = picked ? plan.skus.filter((one) => one.name === picked) : plan.skus;
+    const left = skuList.filter((one) => !skuOf(one));
     return `<div class="tool-card bg-pick">
-      <div class="perf-filter">
-        <label class="bg-cat">SKU 선택
-          <select data-bg="pick">
-            <option value=""${picked ? '' : ' selected'}>전체 (${num(plan.skus.length)}개)</option>
-            ${plan.skus.map((one) => `<option value="${escape(one.name)}"${one.name === picked ? ' selected' : ''}>${escape(one.name)}</option>`).join('')}
+      <div class="bg-pick-add">
+        <label class="bg-cat"><b>SKU 넣기</b>
+          <select data-bg="addSku"${left.length ? '' : ' disabled'}>
+            <option value="" selected>${left.length ? '상품을 고르세요' : '설정 탭 상품을 다 넣었습니다'}</option>
+            ${left.map((one) => `<option>${escape(one)}</option>`).join('')}
           </select></label>
-        <label class="bg-cat">SKU 추가
-          <select data-bg="addSku">
-            <option value="" selected>고르기</option>
-            ${skuList.filter((one) => !skuOf(one)).map((one) => `<option>${escape(one)}</option>`).join('')}
-          </select></label>
+        <small>설정 탭의 상품명을 그대로 씁니다. <b>여기서 넣은 SKU 만</b> 이 달 예산에 들어갑니다.</small>
       </div>
-      <p class="perf-note">설정 탭의 상품명을 그대로 씁니다. 여기서 고른 SKU 만 이 달의 예산에 들어갑니다.</p>
+      ${plan.skus.length ? `<div class="bg-chips">
+        <span>보기</span>
+        <button type="button" class="bg-chip${picked ? '' : ' is-on'}" data-bg="pick" data-sku="">전체 ${num(plan.skus.length)}</button>
+        ${plan.skus.map((one) => `<button type="button" class="bg-chip${one.name === picked ? ' is-on' : ''}"
+          data-bg="pick" data-sku="${escape(one.name)}">${escape(one.name)}</button>`).join('')}
+      </div>` : ''}
     </div>
     ${shown.length ? shown.map(skuPanel).join('')
-    : '<div class="tool-card page-todo"><h3>SKU 를 먼저 고르세요</h3><ul><li>위 <b>SKU 추가</b> 에서 이 달에 돌릴 상품을 고르면 행사 표가 열립니다.</li></ul></div>'}`;
+    : '<div class="tool-card page-todo"><h3>SKU 를 먼저 넣으세요</h3><ul><li>위 <b>SKU 넣기</b> 에서 이 달에 돌릴 상품을 고르면 그 SKU 의 행사 표가 열립니다.</li></ul></div>'}`;
   };
 
   // 사용액 받기 — 몇 분 걸리는 일이라 어디까지 왔는지 계속 보여 준다
@@ -11010,6 +11019,8 @@ if (budgetPlanView) {
           <button type="button" class="tool-copy-all" data-bg="pull"${pulling ? ' disabled' : ''}>
             <i data-lucide="refresh-cw"></i>${pulling ? '받는 중…' : '사용액 불러오기'}</button>
           <button type="button" class="tool-copy-all" data-bg="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
+          <button type="button" class="tool-copy-all bg-drop-month" data-bg="dropMonth"
+            title="이 달에 짜 둔 것을 통째로 지웁니다"><i data-lucide="trash-2"></i>이 달 지우기</button>
           ${sheetUrl ? `<a class="tool-add" href="${escape(sheetUrl)}" target="_blank" rel="noopener"><i data-lucide="external-link"></i>시트 열기</a>` : ''}
         </div>
         ${noteLine()}
@@ -11079,6 +11090,33 @@ if (budgetPlanView) {
     if (now) return run();
     saveTimer = window.setTimeout(run, 1500);
     return undefined;
+  };
+
+  // 이 달을 통째로 지운다. 시트에서 줄이 없어지므로 달 고르개에서도 사라진다.
+  // 되돌릴 수 없어 무엇이 사라지는지 세어 보여 주고 묻는다.
+  const dropMonth = () => {
+    const many = plan.rows.length;
+    const kinds = plan.skus.length;
+    const what = kinds || many || total
+      ? `SKU ${num(kinds)}개 · 행사 ${num(many)}줄` + (total ? ` · 총 예산 ${eok(total)}` : "")
+      : "아직 아무것도 안 짠 달입니다";
+    if (!window.confirm(`${month} 을 통째로 지웁니다.\n\n${what}\n\n되돌릴 수 없습니다. 지울까요?`)) return;
+    window.clearTimeout(saveTimer);   // 지운 뒤에 자동 저장이 되살아나면 안 된다
+    note = "";
+    error = "";
+    askSheet({ action: "budgetDrop", month, by: "" })
+      .then(() => {
+        note = `${month} 을 지웠습니다`;
+        picked = "";
+        load();
+      })
+      .catch((reason) => {
+        // 시트 쪽이 아직 옛 판이면 이 요청을 모른다. 무엇을 해야 하는지 적어 준다.
+        error = /모르는 요청/.test(reason.message)
+          ? `지우지 못했습니다 — Apps Script 를 새 버전으로 다시 배포해 주세요 (${reason.message})`
+          : `지우지 못했습니다 — ${reason.message}`;
+        render();
+      });
   };
 
   const load = () => {
@@ -11192,6 +11230,8 @@ if (budgetPlanView) {
     const what = hit.dataset.bg;
     if (what === 'save') { save(true); return; }
     if (what === 'reload') { load(); return; }
+    if (what === 'pick') { picked = hit.dataset.sku || ''; render(); return; }
+    if (what === 'dropMonth') { dropMonth(); return; }
     if (what === 'pull') { if (!pulling) pullSpend(); return; }
     if (what === 'add') {
       plan.rows.push({
@@ -11225,7 +11265,6 @@ if (budgetPlanView) {
     if (!hit) return;
     const what = hit.dataset.bg;
     if (what === 'month') { month = hit.value; picked = ''; load(); return; }
-    if (what === 'pick') { picked = hit.value; render(); return; }
     if (what === 'addSku') {
       const name = hit.value;
       if (!name || skuOf(name)) return;

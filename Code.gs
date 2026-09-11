@@ -1603,6 +1603,7 @@ function handleAction_(payload) {
     if (payload.action === 'clarityPage') return clarityPage_(payload);
     if (payload.action === 'budgetGet') return budgetGet_(payload);
     if (payload.action === 'budgetPut') return budgetPut_(payload);
+    if (payload.action === 'budgetDrop') return budgetDrop_(payload);
     if (payload.action === 'promoCalendar') return promoCalendar_(payload);
     if (payload.action === 'kolLive') return kolLive_(payload);
     if (payload.action === 'weeksGet') return weeksGet_();
@@ -4982,11 +4983,14 @@ function naverSaAccounts_() {
 //   대상    광고그룹명 · 캠페인명 · id 아무거나 적으면 된다.
 //           캠페인명을 적으면 그 아래 광고그룹에 클릭 비중으로 나눈다.
 //   기간    그 금액을 산 기간. **조회한 기간과 겹친 날수만큼만** 넣는다 —
-//           9/1~9/30 에 300만원을 적어 두고 9/1~9/10 을 보면 100만원이 잡힌다.
-//   광고비  부가세 별도로 적는다 (다른 매체와 같은 기준으로 견주려고).
+//           9/1~9/30 에 330만원을 적어 두고 9/1~9/10 을 보면 99만원이 잡힌다
+//           (330만 × 10/30 × 0.9 — 겹친 날수로 나눈 뒤 부가세를 뺀다).
+//   광고비  **부가세 포함**으로 적는다 (계약서 · 세금계산서에 적힌 그 금액).
+//           표에 넣을 때 10% 를 뺀다 — 네이버 GFA 와 같은 방식이고, 그래야 매체끼리 견줄 수 있다.
+//           빼는 건 읽을 때만 한다. 시트에는 적은 값이 그대로 남아 계약서와 맞춰 볼 수 있다.
 var SA_COST_SHEET_NAME = '브랜드검색비용';
 var SA_COST_HEADERS = ['대상(광고그룹명 · 캠페인명 · ID)', '시작일', '종료일',
-  '광고비(VAT 별도)', '메모', '수정자', '수정시각'];
+  '광고비(VAT 포함)', '메모', '수정자', '수정시각'];
 
 function saCostSheet_() {
   var book = SpreadsheetApp.openById(SHEET_ID);
@@ -5003,7 +5007,11 @@ function saCostSheet_() {
     // 날짜 칸은 글자로 둔다. 시트가 날짜로 바꿔 두어도 naverDay_ 가 다시 펴 주지만,
     // 사람이 2026-09-01 로 적은 그대로 보이는 편이 헷갈리지 않는다.
     sheet.getRange('B:C').setNumberFormat('@');
+    return sheet;
   }
+  // 머리글이 바뀌었으면 (부가세 별도 → 포함) 그 칸만 고쳐 준다. 적어 둔 줄은 그대로 둔다.
+  var head = String(sheet.getRange(1, 4).getValue() || '');
+  if (head && head !== SA_COST_HEADERS[3]) sheet.getRange(1, 4).setValue(SA_COST_HEADERS[3]);
   return sheet;
 }
 
@@ -5148,7 +5156,8 @@ function saApplyCost_(groupRows, adRows, adKey, since, until) {
     if (!span || !share) return;
     var targets = byKey[saCostKey_(row.target)];
     if (!targets || !targets.length) return;
-    var money = row.cost * (share / span);
+    // 적은 값은 부가세 포함이다. 표에는 10% 를 뺀 금액을 넣는다 (GFA 와 같은 기준).
+    var money = netSpend_(row.cost) * (share / span);
     saSpread_(targets, money);
     out.used += 1;
     out.total += money;
@@ -5220,10 +5229,11 @@ function naverSaReport_(payload) {
     cost: money,
     // 광고비가 어디서 온 값인지 화면이 알 수 있게 함께 보낸다
     notice: money.used
-      ? ('광고비는 시트 「' + SA_COST_SHEET_NAME + '」 탭에 적어 둔 금액을 기간에 맞춰 나눈 값입니다 '
-        + '(브랜드검색은 정액이라 매체가 광고비를 주지 않습니다).')
+      ? ('광고비는 「' + SA_COST_SHEET_NAME + '」 에 적어 둔 금액을 기간에 맞춰 나눈 값입니다 '
+        + '(브랜드검색은 정액이라 매체가 광고비를 주지 않습니다). 적은 값은 부가세 포함이고, '
+        + '표에는 10% 를 뺀 금액이 들어갑니다.')
       : ('브랜드검색은 정액(CPT) 상품이라 검색광고 API 가 광고비를 주지 않습니다 — '
-        + '시트 「' + SA_COST_SHEET_NAME + '」 탭에 대상 · 기간 · 금액을 적어 두면 여기에 넣어 드립니다.'),
+        + '「' + SA_COST_SHEET_NAME + '」 에 대상 · 기간 · 금액(부가세 포함)을 적어 두면 여기에 넣어 드립니다.'),
     costUrl: saCostUrl_(),
     campaigns: saSort_(groupRows.filter(saAlive_)),
     adsets: saSort_(adRows.filter(saAlive_)),
@@ -5947,6 +5957,29 @@ function budgetPut_(payload) {
     lock.releaseLock();
   }
 }
+// 한 달을 통째로 지운다. 줄을 없애므로 달 고르개에서도 사라진다.
+// (빈 값으로 덮지 않고 줄을 지우는 까닭: 남겨 두면 '짜다 만 달' 처럼 보인다)
+function budgetDrop_(payload) {
+  var month = monthBudgetKey_((payload && payload.month) || '');
+  if (!month) throw new Error('지울 달이 비어 있습니다.');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = monthBudgetSheet_();
+    var last = sheet.getLastRow();
+    if (last < 2) return { ok: true, month: month, removed: 0 };
+    var have = sheet.getRange(2, 1, last - 1, 1).getValues();
+    var gone = 0;
+    for (var i = have.length - 1; i >= 0; i--) {      // 아래에서부터 (줄 번호가 밀리지 않게)
+      if (monthBudgetKey_(have[i][0]) === month) { sheet.deleteRow(i + 2); gone++; }
+    }
+    return { ok: true, month: month, removed: gone };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 // ── 프로모션 (세일즈팀 미닉스 워크스페이스 · 행사 캘린더 시트 미러) ──────────
 // 프로모션 등록·수정은 세일즈팀 도구(미닉스)에서 한다. 그쪽이 저장할 때마다
 // 이 시트에 월별 탭(YYYY-MM)으로 그대로 복사해 두므로, 여기서는 읽기만 한다.
