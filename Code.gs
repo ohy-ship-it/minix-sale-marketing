@@ -1594,6 +1594,8 @@ function handleAction_(payload) {
     if (payload.action === 'naverSaAccounts') return { ok: true, accounts: naverSaAccounts_() };
     if (payload.action === 'naverSaReport') return naverSaReport_(payload);
     if (payload.action === 'naverSaCreatives') return naverSaCreatives_(payload);
+    if (payload.action === 'naverSaCostGet') return naverSaCostGet_();
+    if (payload.action === 'naverSaCostPut') return naverSaCostPut_(payload);
     if (payload.action === 'saPeek') return saPeek_(payload);
     // 페이지 결과 (Microsoft Clarity)
     if (payload.action === 'clarityReport') return clarityReport_(payload);
@@ -4812,7 +4814,7 @@ function saAdImage_(ad) {
    (광고그룹 130 · 소재 457 중 실제로 도는 것은 열 몇 개뿐이었다).
    숫자가 있거나 지금 돌고 있는 줄만 보여 준다. */
 function saAlive_(row) {
-  return row.impressions > 0 || row.clicks > 0 || row.results > 0 || row.active;
+  return row.impressions > 0 || row.clicks > 0 || row.results > 0 || row.spend > 0 || row.active;
 }
 
 /* 브랜드검색은 정액(CPT) 이라 광고비(salesAmt)가 늘 0 으로 온다 — 파워링크는 제대로 온다.
@@ -4972,6 +4974,195 @@ function naverSaAccounts_() {
   return [{ id: id, accountId: id, name: '네이버 검색광고 (' + id + ')', currency: 'KRW', disabled: false }];
 }
 
+// ── 브랜드검색 광고비 (사람이 적는다) ──────────────────────────────
+// 브랜드검색은 정액(CPT) 이라 검색광고 API 가 광고비를 주지 않는다 — 직접 물어보고 확인했다
+// (노출 · 클릭 · 전환은 오는데 salesAmt 만 늘 0 이다. 같은 계정의 파워링크는 제대로 온다).
+// 계약 금액이라 사람만 아는 값이다. 그래서 시트에 적어 두고 여기서 붙인다.
+//
+//   대상    광고그룹명 · 캠페인명 · id 아무거나 적으면 된다.
+//           캠페인명을 적으면 그 아래 광고그룹에 클릭 비중으로 나눈다.
+//   기간    그 금액을 산 기간. **조회한 기간과 겹친 날수만큼만** 넣는다 —
+//           9/1~9/30 에 300만원을 적어 두고 9/1~9/10 을 보면 100만원이 잡힌다.
+//   광고비  부가세 별도로 적는다 (다른 매체와 같은 기준으로 견주려고).
+var SA_COST_SHEET_NAME = '브랜드검색비용';
+var SA_COST_HEADERS = ['대상(광고그룹명 · 캠페인명 · ID)', '시작일', '종료일',
+  '광고비(VAT 별도)', '메모', '수정자', '수정시각'];
+
+function saCostSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(SA_COST_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(SA_COST_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, SA_COST_HEADERS.length).setValues([SA_COST_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 300);
+    sheet.setColumnWidth(2, 100);
+    sheet.setColumnWidth(3, 100);
+    sheet.setColumnWidth(4, 140);
+    sheet.setColumnWidth(5, 260);
+    // 날짜 칸은 글자로 둔다. 시트가 날짜로 바꿔 두어도 naverDay_ 가 다시 펴 주지만,
+    // 사람이 2026-09-01 로 적은 그대로 보이는 편이 헷갈리지 않는다.
+    sheet.getRange('B:C').setNumberFormat('@');
+  }
+  return sheet;
+}
+
+function saCostRows_() {
+  var sheet = saCostSheet_();
+  var last = sheet.getLastRow();
+  if (last < 2) return [];
+  var out = [];
+  sheet.getRange(2, 1, last - 1, SA_COST_HEADERS.length).getValues().forEach(function (line) {
+    var target = String(line[0] || '').trim();
+    if (!target) return;
+    out.push({
+      target: target,
+      since: naverDay_(line[1]),
+      until: naverDay_(line[2]),
+      cost: Number(String(line[3] === null || line[3] === undefined ? '' : line[3])
+        .replace(/[,\s\u20a9원]/g, '')) || 0,
+      note: String(line[4] || ''),
+      updatedBy: String(line[5] || ''),
+      updatedAt: line[6] instanceof Date ? line[6].toISOString() : String(line[6] || '')
+    });
+  });
+  return out;
+}
+
+// 시트 주소. 못 열어도 조회가 죽지 않게 빈 글자를 준다.
+function saCostUrl_() {
+  try {
+    return 'https://docs.google.com/spreadsheets/d/' + SHEET_ID
+      + '/edit#gid=' + saCostSheet_().getSheetId();
+  } catch (error) {
+    return '';
+  }
+}
+
+function naverSaCostGet_() {
+  return {
+    ok: true,
+    rows: saCostRows_(),
+    url: saCostUrl_(),
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+// 화면이 가진 목록 그대로 시트를 맞춘다. **빈 목록도 받는다** — 다 지우는 것이 정상일 수 있다.
+function naverSaCostPut_(payload) {
+  var rows = (payload && payload.rows) || [];
+  var who = String((payload && payload.by) || '');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = saCostSheet_();
+    var last = sheet.getLastRow();
+    if (last > 1) sheet.getRange(2, 1, last - 1, SA_COST_HEADERS.length).clearContent();
+    if (rows.length) {
+      var now = new Date();
+      sheet.getRange(2, 1, rows.length, SA_COST_HEADERS.length).setValues(rows.map(function (one) {
+        return [
+          String(one.target || ''),
+          String(one.since || '').slice(0, 10),
+          String(one.until || '').slice(0, 10),
+          Number(one.cost) || 0,
+          String(one.note || ''),
+          who,
+          now
+        ];
+      }));
+    }
+    return { ok: true, saved: rows.length, savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function saDayCount_(since, until) {
+  if (!since || !until || until < since) return 0;
+  var a = new Date(since + 'T00:00:00+09:00').getTime();
+  var b = new Date(until + 'T00:00:00+09:00').getTime();
+  if (!a || !b) return 0;
+  return Math.round((b - a) / 86400000) + 1;
+}
+
+// 두 기간이 겹친 날수 (글자 날짜는 그대로 견줘도 된다 — YYYY-MM-DD 라서)
+function saOverlapDays_(aSince, aUntil, bSince, bUntil) {
+  var since = aSince > bSince ? aSince : bSince;
+  var until = aUntil < bUntil ? aUntil : bUntil;
+  return since > until ? 0 : saDayCount_(since, until);
+}
+
+// 대상 이름을 견줄 수 있는 꼴로 (공백 · 대소문자를 무시한다)
+function saCostKey_(text) {
+  return String(text || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+
+// 여러 줄에 금액을 나눠 넣는다. 클릭 비중으로 나누고, 클릭이 하나도 없으면 고르게 나눈다.
+function saSpread_(rows, money) {
+  if (!rows.length || !money) return;
+  var clicks = 0;
+  rows.forEach(function (one) { clicks += Number(one.clicks) || 0; });
+  rows.forEach(function (one) {
+    var part = clicks ? (Number(one.clicks) || 0) / clicks : 1 / rows.length;
+    one.spend += money * part;
+  });
+}
+
+/* 적어 둔 광고비를 줄에 붙인다.
+   광고그룹에 붙인 금액은 그 안의 소재에 클릭 비중으로 한 번 더 나눈다.
+   adKey 는 소재 줄에서 '어느 광고그룹 것인지' 가 적힌 칸 이름이다
+   (매체별 성과는 campaignId, 소재별 결과는 adsetId 에 광고그룹 번호를 담는다). */
+function saApplyCost_(groupRows, adRows, adKey, since, until) {
+  var out = { rows: 0, used: 0, total: 0 };
+  // 시트를 못 읽어도 성과는 그대로 보여 준다 (광고비는 거들기지 본체가 아니다)
+  var costs = [];
+  try {
+    costs = saCostRows_();
+  } catch (error) {
+    out.error = String(error && error.message ? error.message : error);
+    return out;
+  }
+  out.rows = costs.length;
+  if (!costs.length) return out;
+
+  var byKey = {};
+  var add = function (key, one) {
+    if (!key) return;
+    if (!byKey[key]) byKey[key] = [];
+    if (byKey[key].indexOf(one) < 0) byKey[key].push(one);
+  };
+  groupRows.forEach(function (one) {
+    add(saCostKey_(one.id), one);
+    add(saCostKey_(one.name), one);
+    add(saCostKey_(one.campaignId), one);
+    add(saCostKey_(one.campaignName), one);
+  });
+
+  costs.forEach(function (row) {
+    if (!row.cost || !row.since) return;
+    // 종료일을 안 적었으면 '아직 도는 중' 으로 보고 조회 끝날까지로 친다
+    var end = row.until || until;
+    var span = saDayCount_(row.since, end);
+    var share = saOverlapDays_(row.since, end, since, until);
+    if (!span || !share) return;
+    var targets = byKey[saCostKey_(row.target)];
+    if (!targets || !targets.length) return;
+    var money = row.cost * (share / span);
+    saSpread_(targets, money);
+    out.used += 1;
+    out.total += money;
+  });
+
+  // 광고그룹에 붙은 광고비를 그 안의 소재에 나눈다
+  groupRows.forEach(function (group) {
+    if (!group.spend) return;
+    var mine = adRows.filter(function (one) { return String(one[adKey]) === group.id; });
+    saSpread_(mine, group.spend);
+  });
+  return out;
+}
+
 /* 브랜드검색 성과. 캠페인 자리에 **광고그룹**, 광고그룹 자리에 **소재** 를 넣는다.
    광고비는 부가세 별도이고, 브랜드검색은 정액(CPT) 이라 고른 기간에 걸친 금액이다. */
 function naverSaReport_(payload) {
@@ -5016,6 +5207,9 @@ function naverSaReport_(payload) {
     }, got.stats[one.id]);
   });
 
+  // 사람이 적어 둔 광고비를 기간에 맞춰 붙인다 (매체는 정액이라 광고비를 안 준다)
+  var money = saApplyCost_(groupRows, adRows, 'campaignId', when.since, when.until);
+
   return {
     ok: true,
     source: 'naverSa',
@@ -5023,9 +5217,14 @@ function naverSaReport_(payload) {
     range: when,
     fields: got.fields,
     hasConv: got.fields.indexOf('ccnt') >= 0,
-    // 광고비가 0 인 까닭을 화면이 알 수 있게 함께 보낸다
-    notice: '브랜드검색은 정액(CPT) 상품이라 검색광고 API 가 광고비를 주지 않습니다 — '
-      + '노출 · 클릭 · 전환만 매체에서 옵니다.',
+    cost: money,
+    // 광고비가 어디서 온 값인지 화면이 알 수 있게 함께 보낸다
+    notice: money.used
+      ? ('광고비는 시트 「' + SA_COST_SHEET_NAME + '」 탭에 적어 둔 금액을 기간에 맞춰 나눈 값입니다 '
+        + '(브랜드검색은 정액이라 매체가 광고비를 주지 않습니다).')
+      : ('브랜드검색은 정액(CPT) 상품이라 검색광고 API 가 광고비를 주지 않습니다 — '
+        + '시트 「' + SA_COST_SHEET_NAME + '」 탭에 대상 · 기간 · 금액을 적어 두면 여기에 넣어 드립니다.'),
+    costUrl: saCostUrl_(),
     campaigns: saSort_(groupRows.filter(saAlive_)),
     adsets: saSort_(adRows.filter(saAlive_)),
     fetchedAt: new Date().toISOString()
@@ -5041,6 +5240,16 @@ function naverSaCreatives_(payload) {
 
   var groupOf = {};
   got.groups.forEach(function (one) { groupOf[one.id] = one; });
+
+  // 광고비를 나누려면 광고그룹 줄도 있어야 한다 (숫자는 위에서 받아 둔 것을 쓴다)
+  var groupRows = got.groups.map(function (one) {
+    return saRow_({
+      id: one.id,
+      name: one.name,
+      campaignId: one.campaignId,
+      campaignName: (got.campaignOf[one.campaignId] || {}).name || ''
+    }, got.stats[one.id]);
+  });
 
   var rows = got.ads.map(function (one) {
     var group = groupOf[one.groupId] || {};
@@ -5062,14 +5271,18 @@ function naverSaCreatives_(payload) {
       begin: camp.begin || '',
       end: camp.end || ''
     }, got.stats[one.id]);
-  }).filter(function (row) {
+  });
+
+  // 사람이 적어 둔 광고비를 소재까지 나눠 붙인다 (매체별 성과와 같은 값이다)
+  var money = saApplyCost_(groupRows, rows, 'adsetId', when.since, when.until);
+
+  rows = saSort_(rows.filter(function (row) {
     if (!saAlive_(row)) return false;   // 몇 해 전에 멈춘 소재는 빼고 본다
     // 매체별 성과에서 넘어올 때는 광고그룹(= 그쪽 화면의 캠페인) 번호로 걸러 준다
     if (wantGroup) return row.adsetId === wantGroup;
     if (wantCampaign) return row.adsetId === wantCampaign || row.campaignId === wantCampaign;
     return true;
-  });
-  rows = saSort_(rows);
+  }));
 
   return {
     ok: true,
@@ -5077,6 +5290,7 @@ function naverSaCreatives_(payload) {
     scope: wantGroup || wantCampaign || saProp_('NAVER_SA_CUSTOMER_ID'),
     range: when,
     fields: got.fields,
+    cost: money,
     creatives: rows,
     fetchedAt: new Date().toISOString()
   };
@@ -5628,6 +5842,9 @@ function monthBudgetSheet_() {
     sheet.getRange(1, 1, 1, MONTH_BUDGET_HEADERS.length)
       .setValues([MONTH_BUDGET_HEADERS]).setFontWeight('bold');
     sheet.setFrozenRows(1);
+    // 월 칸은 글자로 둔다. 그냥 두면 시트가 '2026-09' 를 날짜로 바꿔 버려,
+    // 시간대가 어긋나는 순간 앞 달로 읽히는 일이 생긴다.
+    sheet.getRange('A:A').setNumberFormat('@');
     sheet.setColumnWidth(1, 90);
     sheet.setColumnWidth(2, 120);
     sheet.setColumnWidth(3, 520);
