@@ -4571,7 +4571,11 @@ var SA_URL = 'https://api.searchad.naver.com';
 // 없으면 400 이 오므로 그때는 핵심 지표만 다시 부른다.
 var SA_FIELDS = ['impCnt', 'clkCnt', 'salesAmt', 'ctr', 'cpc', 'ccnt', 'crto', 'convAmt', 'ror'];
 var SA_FIELDS_PLAIN = ['impCnt', 'clkCnt', 'salesAmt', 'ctr', 'cpc'];
-var SA_ID_CHUNK = 100;            // /stats 는 한 번에 id 를 이만큼 받는다
+// /stats 는 id 를 여러 개 받지만, UrlFetchApp 은 **주소를 2KB 까지만** 보낸다
+// (넘으면 '제한 초과 : url fetch url 길이'). 검색광고 id 는 길어서 개수로 자르면 넘친다.
+// 그래서 주소 길이를 재어 나누고, 개수로도 넉넉한 끝을 둔다.
+var SA_URL_LIMIT = 1800;
+var SA_ID_CHUNK = 30;
 var SA_CACHE_SECONDS = 600;       // 10분
 
 function saProp_(name) {
@@ -4607,7 +4611,12 @@ function saQuery_(params) {
 }
 
 function saAsk_(path, params) {
-  var response = UrlFetchApp.fetch(SA_URL + path + saQuery_(params), {
+  var url = SA_URL + path + saQuery_(params);
+  if (url.length > 2000) {
+    throw new Error('네이버 검색광고 요청 주소가 너무 깁니다 (' + url.length + '자, ' + path + '). '
+      + '한 번에 묻는 개수를 줄여야 합니다.');
+  }
+  var response = UrlFetchApp.fetch(url, {
     method: 'get',
     muteHttpExceptions: true,
     contentType: 'application/json; charset=UTF-8',
@@ -4625,7 +4634,7 @@ function saMany_(jobs) {
     try {
       answers = UrlFetchApp.fetchAll(chunk.map(function (job) {
         return {
-          url: SA_URL + job.path + saQuery_(job.params),
+          url: SA_URL + job.path + saQuery_(job.params),   // 목록 조회는 id 하나씩이라 짧다
           method: 'get',
           muteHttpExceptions: true,
           contentType: 'application/json; charset=UTF-8',
@@ -4659,12 +4668,41 @@ function saAnswer_(response, where) {
   return body;
 }
 
+/* id 를 주소 길이에 맞춰 나눈다.
+   한 묶음의 주소가 SA_URL_LIMIT 을 넘지 않게 하고, 개수도 SA_ID_CHUNK 를 넘기지 않는다.
+   id 하나가 혼자서도 길면 그것만 담아 보낸다 (더 쪼갤 수 없다). */
+function saStatChunks_(ids, fields, since, until) {
+  var tail = saQuery_({
+    fields: JSON.stringify(fields),
+    timeRange: JSON.stringify({ since: since, until: until })
+  });
+  var fixed = SA_URL.length + '/stats'.length + tail.length + '&ids=%5B%5D'.length;
+  var room = Math.max(SA_URL_LIMIT - fixed, 60);
+
+  var out = [];
+  var now = [];
+  var used = 0;
+  ids.forEach(function (id) {
+    var cost = encodeURIComponent('"' + id + '",').length;
+    if (now.length && (used + cost > room || now.length >= SA_ID_CHUNK)) {
+      out.push(now);
+      now = [];
+      used = 0;
+    }
+    now.push(id);
+    used += cost;
+  });
+  if (now.length) out.push(now);
+  return out;
+}
+
 // /stats 는 id 목록과 지표 이름을 JSON 글자로 받는다.
 function saStats_(ids, since, until) {
   var got = {};
   var fields = SA_FIELDS;
-  for (var at = 0; at < ids.length; at += SA_ID_CHUNK) {
-    var chunk = ids.slice(at, at + SA_ID_CHUNK);
+  var chunks = saStatChunks_(ids, fields, since, until);
+  for (var at = 0; at < chunks.length; at += 1) {
+    var chunk = chunks[at];
     var body = null;
     try {
       body = saAsk_('/stats', { ids: JSON.stringify(chunk), fields: JSON.stringify(fields),
@@ -4672,6 +4710,7 @@ function saStats_(ids, since, until) {
     } catch (error) {
       // 전환 지표를 안 주는 계정이면 핵심 지표만 다시 묻는다
       if (fields === SA_FIELDS) {
+        // 지표를 줄이면 주소도 짧아지므로 같은 묶음으로 다시 물어도 넘치지 않는다
         fields = SA_FIELDS_PLAIN;
         body = saAsk_('/stats', { ids: JSON.stringify(chunk), fields: JSON.stringify(fields),
           timeRange: JSON.stringify({ since: since, until: until }) });
