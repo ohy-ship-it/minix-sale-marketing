@@ -1365,3 +1365,6 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .tool-pick.is-add{border-style:dashed;color:#8c8c85}
 .tool-picks-note{display:block;margin-top:6px;font-size:10.5px;color:#8c8c85;font-weight:400}
 .tool-picks-note b{color:#37352f}
+
+/* 카카오 광고 세팅 — 틀 설정 요약. 이름표가 줄바꿈되면 읽기 나쁘다 */
+#kakao-ad-setup .setup-tnd b{white-space:nowrap}

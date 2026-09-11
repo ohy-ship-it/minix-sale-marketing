@@ -916,6 +916,7 @@ const VIEWS = {
   '광고소재 검수': { section: '#creative-checker', hash: '#creative-check' },
   // hash 는 섹션 id 와 달라야 한다. 같으면 브라우저가 그 요소로 스크롤해 버린다.
   '메타 광고 세팅': { section: '#ad-setup', hash: '#meta-ad-setup' },
+  '카카오 광고 세팅': { section: '#kakao-ad-setup', hash: '#kakao-setup' },
   '퍼포먼스일정': { section: '#brand-schedule', hash: '#performance-schedule' },
   '주간미팅 작성': { section: '#weekly-write', hash: '#weekly' },
   '온보딩 자료': { section: '#onboarding', hash: '#onboarding-docs' },
@@ -5494,6 +5495,881 @@ if (adSetup) {
   });
 
   render();
+}
+
+// ── 광고자동 세팅 · 카카오 광고 세팅 ────────────────────────────────
+// 메타 광고 세팅과 역할을 똑같이 나눈다.
+//   · 이 화면      = 폼 · 시트 조회 · 틀 고르기 · 검증 · 실행 스크립트 생성
+//   · 내려받은 .ps1 = NAS 소재 읽기 · 카카오모먼트 API 호출
+// 브라우저는 NAS 를 못 읽고, Apps Script(클라우드)도 사내 NAS 에 닿지 못한다.
+// 카카오는 캠페인 · 광고그룹에 넣을 값이 많아(타겟팅 · 게재지면 · 입찰 · 요일시간표)
+// **이미 있는 광고그룹 하나를 틀로 골라 그대로 본뜨고**, 이름 · 기간 · 예산만 새로 받는다.
+// 만든 광고그룹은 바로 끈다(OFF). 소재는 카카오 심사를 거쳐야 노출된다.
+const kakaoSetup = document.querySelector('#kakao-ad-setup');
+if (kakaoSetup) {
+  const STORAGE_KEY = 'minix-kakao-setup-v1';
+  const HISTORY_KEY = 'minix-kakao-setup-history-v1';
+  // 프로모션 → 광고명 · 랜딩 URL 대응표가 든 시트 (메타 화면과 같은 시트)
+  const UTM_SHEET_ID = '1K9kGdlfuHCp-VNaKUuGMYi9B_rRbW0rY1lg_NFYMv8s';
+  const UTM_SHEET_NAME = 'utm-builder';
+
+  // 소재 종류. 카카오는 둘의 필수 항목이 다르다 —
+  // 비즈보드는 이미지 · 대체텍스트만, 디스플레이는 제목 · 설명 · 프로필까지 필요하다.
+  const KINDS = [['비즈보드', 'bizboard'], ['디스플레이', 'display']];
+  const FORMAT = { bizboard: 'IMAGE_BANNER', display: 'IMAGE_NATIVE' };
+  const KIND_MEDIA = { bizboard: '비즈보드', display: '디스플레이' };
+  const KIND_SIZE = {
+    bizboard: '1029 × 258 · PNG · 300KB 이하',
+    display: '500×500 · 1200×600 · 720×1280 · 800×1000 중 하나 · 500KB 이하',
+  };
+  // 행동 버튼 — 카카오 ActionButton 값
+  const ACTIONS = [['PURCHASE', '구매하기'], ['LINK', '바로가기'], ['MORE', '알아보기'],
+    ['REQUEST', '신청하기'], ['RESERVATION', '예약하기'], ['JOIN', '가입하기'],
+    ['COUPON', '쿠폰 받기'], ['INQUIRE', '문의하기'], ['SUBSCRIBE', '소식 받기'],
+    ['ADD_FRIEND', '채널 추가']];
+  const URL_TYPES = [['url', 'URL'], ['linkGA', 'LINK(GA)'], ['nt', 'NT'], ['shoplive', '쇼핑라이브']];
+
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  const tr = (value) => String(value ?? '').trim();
+  const digitsOf = (value) => String(value ?? '').replace(/[^0-9]/g, '');
+  const commaNum = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const todayIso = () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  };
+
+  const DEFAULT_STATE = {
+    account: '', kind: 'bizboard',
+    tplCampaign: '', tplGroup: '',
+    campaignName: '', groupName: '',
+    beginDate: '', endDate: '',
+    budget: '', bid: '',
+    promo: '', urlType: 'url',
+    altText: '', title: '', description: '', profileName: '', action: 'PURCHASE',
+    nasPath: '', localPath: '', envDir: '',
+  };
+
+  let state = { ...DEFAULT_STATE, beginDate: todayIso() };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (saved) state = { ...state, ...saved };
+  } catch { /* 저장값이 깨졌으면 기본값으로 시작한다 */ }
+
+  let history = [];
+  try { history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') || []; } catch { history = []; }
+
+  let accounts = [];                       // 광고 계정 목록
+  let tree = null;                         // { campaigns: [...] } — 틀 고르개
+  let treeState = { state: 'idle', message: '' };
+  let spec = null;                         // 틀 캠페인 · 광고그룹 · 본보기 소재
+  let specState = { state: 'idle', message: '' };
+  let rows = [];                           // 시트 조회 결과
+  let lookup = { state: 'idle', message: '' };
+  let script = null;                       // { filename, text, at, ads, stale }
+  let attempted = false;
+  let scriptOpen = false;
+
+  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const saveHistory = () => localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  const isBoard = () => state.kind === 'bizboard';
+
+  // ── 시트 조회 ────────────────────────────────────────────────────
+  const parseCsv = (text) => {
+    const out = [];
+    for (const line of text.replace(/\r/g, '').split('\n')) {
+      if (!line) continue;
+      const cols = [];
+      let col = '';
+      let inQuote = false;
+      for (let i = 0; i < line.length; i += 1) {
+        const ch = line.charAt(i);
+        if (ch === '"') {
+          if (inQuote && line.charAt(i + 1) === '"') { col += '"'; i += 1; }
+          else inQuote = !inQuote;
+        } else if (ch === ',' && !inQuote) { cols.push(col); col = ''; }
+        else col += ch;
+      }
+      cols.push(col);
+      out.push(cols);
+    }
+    return out;
+  };
+
+  const gvizUrl = (sheetId, sheetName) =>
+    `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&headers=0&sheet=${encodeURIComponent(sheetName)}`;
+
+  const urlOf = (row) => (state.urlType === 'linkGA' ? row.linkGA
+    : state.urlType === 'nt' ? row.nt
+      : state.urlType === 'shoplive' ? row.shoplive : row.url) || '';
+  const urlTypeLabel = () => (URL_TYPES.find(([value]) => value === state.urlType) || [])[1] || 'URL';
+
+  const lookupSheet = async () => {
+    const promo = tr(state.promo);
+    if (!promo) { lookup = { state: 'error', message: '프로모션을 입력해주세요.' }; return render(); }
+    lookup = { state: 'loading', message: '' };
+    rows = [];
+    render();
+
+    let table;
+    try {
+      const response = await fetch(gvizUrl(UTM_SHEET_ID, UTM_SHEET_NAME));
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      table = parseCsv(await response.text());
+    } catch (error) {
+      lookup = { state: 'error', message: `시트 조회 실패: ${error.message}` };
+      return render();
+    }
+
+    // 1행은 머리글. 매체(E열)가 카카오 + 고른 종류, 프로모션(H열)이 같은 줄만 남긴다.
+    const want = KIND_MEDIA[state.kind];
+    const found = [];
+    for (let i = 1; i < table.length; i += 1) {
+      const r = table[i];
+      if (r.length < 22) continue;
+      const media = tr(r[4]);
+      if (media.indexOf('카카오') < 0 || media.indexOf(want) < 0) continue;
+      if (tr(r[7]) !== promo) continue;
+      const entry = {
+        msgCode: tr(r[12]),
+        adName: tr(r[22]),
+        url: tr(r[15]),
+        linkGA: tr(r[16]),
+        nt: r.length > 18 ? tr(r[18]) : '',
+        shoplive: r.length > 19 ? tr(r[19]) : '',
+      };
+      if (!entry.msgCode && !entry.adName) continue;
+      found.push(entry);
+    }
+    rows = found;
+    lookup = found.length ? { state: 'done', message: '' }
+      : { state: 'done', message: `'${promo}' 에 매체가 카카오-${want} 인 줄이 없습니다 — 프로모션 값과 매체 값을 확인하세요.` };
+    render();
+  };
+
+  // ── 카카오 조회 (계정 · 틀) ──────────────────────────────────────
+  const loadAccounts = () => askSheet({ action: 'kakaoAccounts' })
+    .then((body) => {
+      accounts = (body.accounts || []).filter((one) => one && one.accountId);
+      if (!state.account && accounts.length) state.account = accounts[0].accountId;
+      save();
+      render();
+      if (state.account) loadTree(false);
+    })
+    .catch((reason) => {
+      treeState = { state: 'error', message: `광고 계정을 못 읽었습니다 — ${reason.message}` };
+      render();
+    });
+
+  const loadTree = (refresh) => {
+    if (!state.account) return;
+    treeState = { state: 'loading', message: '' };
+    render();
+    return askSheet({ action: 'kakaoTree', account: state.account, refresh: !!refresh })
+      .then((body) => {
+        tree = body;
+        treeState = { state: 'done', message: '' };
+        render();
+      })
+      .catch((reason) => {
+        treeState = { state: 'error', message: `캠페인 목록을 못 읽었습니다 — ${reason.message}` };
+        render();
+      });
+  };
+
+  const loadSpec = () => {
+    if (!state.tplCampaign || !state.tplGroup) { spec = null; return render(); }
+    specState = { state: 'loading', message: '' };
+    spec = null;
+    render();
+    return askSheet({
+      action: 'kakaoSpec', account: state.account,
+      campaign: state.tplCampaign, group: state.tplGroup,
+    })
+      .then((body) => {
+        spec = body;
+        specState = { state: 'done', message: '' };
+        // 틀에서 그대로 물려받으면 편한 값을 비어 있을 때만 채워 준다
+        const group = body.group || {};
+        if (!tr(state.budget) && group.dailyBudgetAmount) state.budget = commaNum(group.dailyBudgetAmount);
+        if (!tr(state.bid) && group.bidAmount) state.bid = commaNum(group.bidAmount);
+        const sample = body.sample || {};
+        if (!tr(state.profileName) && sample.profileName) state.profileName = sample.profileName;
+        if (sample.actionButton) state.action = sample.actionButton;
+        save();
+        render();
+      })
+      .catch((reason) => {
+        specState = { state: 'error', message: `틀 설정을 못 읽었습니다 — ${reason.message}` };
+        render();
+      });
+  };
+
+  const tplCampaignOf = () => ((tree && tree.campaigns) || []).find((one) => one.id === state.tplCampaign) || null;
+  const groupsOf = () => (tplCampaignOf() || {}).groups || [];
+  const sampleImage = () => {
+    const image = ((spec || {}).sample || {}).profileImage || null;
+    if (!image || !image.url) return '';
+    return image.url.indexOf('//') === 0 ? `https:${image.url}` : image.url;
+  };
+
+  // ── 실행 스크립트 ────────────────────────────────────────────────
+  const psq = (value) => `'${String(value ?? '').replace(/'/g, "''")}'`;
+  const psJson = (value) => psq(JSON.stringify(value === undefined ? null : value));
+
+  const psHeader = () => {
+    const group = (spec || {}).group || {};
+    const campaign = (spec || {}).campaign || {};
+    const lines = [
+      '# minix 워크스페이스 [광고자동 세팅 > 카카오 광고 세팅] 에서 생성',
+      `# 생성 시각: ${new Date().toLocaleString('ko-KR')}`,
+      '# 광고그룹은 만든 뒤 바로 끕니다(OFF). 소재는 카카오 심사를 통과해야 노출됩니다.',
+      '',
+      'Set-StrictMode -Off',
+      "$ErrorActionPreference = 'Continue'",
+      '$OutputEncoding = [System.Text.Encoding]::UTF8',
+      'try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}',
+      '',
+      '# 토큰과 NAS 비밀번호는 브라우저에 저장하지 않는다. 여기서 .env 를 직접 읽는다.',
+      `$envDir = ${psq(state.envDir)}`,
+      '$envCandidates = @()',
+      'if ($envDir) { $envCandidates += $envDir }',
+      'if ($PSScriptRoot) { $d = $PSScriptRoot; for ($i = 0; $i -lt 5 -and $d; $i++) { $envCandidates += $d; $d = Split-Path $d -Parent } }',
+      "$envFile = ''",
+      'foreach ($c in $envCandidates) {',
+      "    foreach ($n in @('.env','env.txt')) {",
+      '        $p = Join-Path $c $n',
+      '        if (Test-Path -LiteralPath $p) { $envFile = $p; break }',
+      '    }',
+      '    if ($envFile) { break }',
+      '}',
+      'if (-not $envFile) {',
+      "    Write-Host '[.env 없음] 아래 폴더에서 .env 또는 env.txt 를 찾지 못했습니다:'",
+      '    foreach ($c in $envCandidates) { Write-Host "  $c" }',
+      "    Write-Host '워크스페이스 [카카오 광고 세팅] 화면의 .env 폴더 칸에 공유 폴더 경로를 넣고 스크립트를 다시 만들어 주세요.'",
+      '    exit 1',
+      '}',
+      'Write-Host "환경설정: $envFile"',
+      '$envMap = @{}',
+      'foreach ($line in (Get-Content -LiteralPath $envFile -Encoding UTF8)) {',
+      '    $line = $line.TrimStart([char]0xFEFF)',
+      "    if (-not $line -or $line.StartsWith('#')) { continue }",
+      "    $x = $line.IndexOf('=')",
+      '    if ($x -lt 1) { continue }',
+      '    $envMap[$line.Substring(0,$x).Trim()] = $line.Substring($x+1)',
+      '}',
+      "$token = $envMap['KAKAO_BUSINESS_TOKEN']",
+      '# 줄 끝 공백 · 따옴표가 섞여 있으면 헤더에 못 싣는다. 여기서 털어 낸다.',
+      'if ($token) { $token = $token.Trim().Trim([char]34) }',
+      '# .env 에 없으면 같은 폴더의 kakao_business_token.txt 를 본다 (토큰 받는 스크립트가 만드는 파일)',
+      'if (-not $token) {',
+      "    $tokenFile = Join-Path (Split-Path $envFile -Parent) 'kakao_business_token.txt'",
+      '    if (Test-Path -LiteralPath $tokenFile) { $token = (Get-Content -LiteralPath $tokenFile -Encoding UTF8 | Select-Object -First 1).Trim() }',
+      '}',
+      'if (-not $token) {',
+      '    Write-Host "[토큰 없음] $envFile 에 KAKAO_BUSINESS_TOKEN 이 없고, 같은 폴더에 kakao_business_token.txt 도 없습니다."',
+      "    Write-Host '  get_kakao_business_token.py 로 비즈니스 토큰을 받아 둘 중 한 곳에 넣어 주세요.'",
+      '    exit 1',
+      '}',
+      "$nasH = $envMap['NAS_HOST']",
+      "$nasU = $envMap['NAS_ID']",
+      "$nasP = $envMap['NAS_PW']",
+      '',
+      "$api = 'https://apis.moment.kakao.com/openapi/v4'",
+      `$acct = ${psq(state.account)}`,
+      `$kind = ${psq(state.kind)}`,
+      `$format = ${psq(FORMAT[state.kind])}`,
+      `$campaignName = ${psq(tr(state.campaignName))}`,
+      `$groupName = ${psq(tr(state.groupName))}`,
+      `$beginDate = ${psq(tr(state.beginDate))}`,
+      `$endDate = ${psq(tr(state.endDate))}`,
+      `$budget = ${parseInt(digitsOf(state.budget), 10) || 0}`,
+      `$bid = ${parseInt(digitsOf(state.bid), 10) || 0}`,
+      `$altText = ${psq(tr(state.altText))}`,
+      `$title = ${psq(tr(state.title))}`,
+      `$description = ${psq(tr(state.description))}`,
+      `$profileName = ${psq(tr(state.profileName))}`,
+      `$actionButton = ${psq(state.action)}`,
+      `$profileImageUrl = ${psq(sampleImage())}`,
+      `$nasSrc = ${psq(tr(state.nasPath))}`,
+      `$localSrc = ${psq(tr(state.localPath))}`,
+      '',
+      '# 틀로 고른 캠페인 · 광고그룹의 설정. 여기서 타겟팅 · 게재지면 · 입찰을 그대로 가져온다.',
+      `$tplCampaign = ${psJson(campaign)} | ConvertFrom-Json`,
+      `$tplGroup = ${psJson(group)} | ConvertFrom-Json`,
+      '',
+    ];
+
+    // 소재 파일명에 든 메시지코드로 광고명 · 랜딩 URL 을 되찾기 위한 대응표
+    if (!rows.length) lines.push('$adMapping = @()');
+    else {
+      lines.push('$adMapping = @(');
+      rows.forEach((row, i) => {
+        const fields = [`msgCode=${psq(row.msgCode)}`, `adName=${psq(row.adName)}`,
+          `landingUrl=${psq(urlOf(row))}`].join(';');
+        lines.push(`    @{${fields}}${i < rows.length - 1 ? ',' : ''}`);
+      });
+      lines.push(')');
+    }
+    lines.push('');
+    return lines;
+  };
+
+  // 스크립트 본문. 카카오 호출은 계정당 1초에 한 번이라 사이를 띄운다.
+  const PS_BODY = [
+    'Add-Type -AssemblyName System.Drawing,System.Net.Http',
+    '$headers = @{ Authorization = "Bearer $token"; adAccountId = $acct }',
+    '$last = [DateTime]::MinValue',
+    'function Breathe { param([double]$sec = 1.1)',
+    '    $rest = $sec - ([DateTime]::UtcNow - $script:last).TotalSeconds',
+    '    if ($rest -gt 0) { Start-Sleep -Milliseconds ([int]($rest * 1000)) }',
+    '    $script:last = [DateTime]::UtcNow',
+    '}',
+    'function KGet { param($path)',
+    '    Breathe 0.3',
+    '    return Invoke-RestMethod -Method Get -Uri "$api$path" -Headers $headers',
+    '}',
+    '# 한글이 깨지지 않도록 본문을 UTF-8 바이트로 만들어 보낸다 (PowerShell 5.1 기본은 깨진다)',
+    'function KSend { param($method, $path, $body)',
+    '    Breathe 1.1',
+    '    $json = $body | ConvertTo-Json -Depth 12 -Compress',
+    '    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)',
+    '    return Invoke-RestMethod -Method $method -Uri "$api$path" -Headers $headers -Body $bytes -ContentType \'application/json; charset=utf-8\'',
+    '}',
+    'function Fail { param($what, $err)',
+    '    $detail = $err.Exception.Message',
+    '    try {',
+    '        $stream = $err.Exception.Response.GetResponseStream()',
+    '        $reader = [System.IO.StreamReader]::new($stream)',
+    '        $detail = $reader.ReadToEnd()',
+    '    } catch {}',
+    '    Write-Host "[$what 실패] $detail"',
+    '}',
+    '',
+    'Write-Host "=== Step 1. 소재 파일 모으기 ==="',
+    '$fileSrc = \'\'',
+    'if ($localSrc) { $fileSrc = $localSrc }',
+    'elseif ($nasSrc) {',
+    '    $p = $nasSrc -replace \'/\',\'\\\'',
+    '    if ($p.StartsWith(\'\\\\\')) { $fileSrc = $p }',
+    '    else { $ip = [regex]::Match($nasH,\'\\d+\\.\\d+\\.\\d+\\.\\d+\').Value; $fileSrc = \'\\\\\' + $ip + \'\\\' + $p.TrimStart(\'\\\') }',
+    '}',
+    'if ($fileSrc) {',
+    '    Write-Host "폴더: $fileSrc"',
+    '    if ($fileSrc.StartsWith(\'\\\\\')) {',
+    '        $srv = $fileSrc.Substring(2).Split(\'\\\')[0]',
+    '        $parts = $fileSrc.Substring(2).Split(\'\\\')',
+    '        $shareRoot = if ($parts.Count -ge 2) { \'\\\\\' + $parts[0] + \'\\\' + $parts[1] } else { \'\\\\\' + $srv }',
+    '        # 열리면 인증이 아예 필요 없다. 안 열릴 때만 인증한다 (남의 NAS 연결을 건드리지 않는다).',
+    '        if (-not (Test-Path -LiteralPath $shareRoot)) {',
+    '            $nasCred = [pscredential]::new($nasU, (ConvertTo-SecureString $nasP -AsPlainText -Force))',
+    '            try { New-PSDrive -Name KAKAOSETUP -PSProvider FileSystem -Root $shareRoot -Credential $nasCred -Scope Script -ErrorAction Stop | Out-Null }',
+    '            catch { Write-Host "[NAS 인증 실패] $($_.Exception.Message)"; exit 1 }',
+    '        }',
+    '    }',
+    '    $srcResolved = $null',
+    '    foreach ($cand in @($fileSrc, $fileSrc.Normalize([Text.NormalizationForm]::FormC), $fileSrc.Normalize([Text.NormalizationForm]::FormD))) { if (Test-Path -LiteralPath $cand) { $srcResolved = $cand; break } }',
+    '    if (-not $srcResolved) { Write-Host \'[경로 없음] 탐색기 주소창에 아래 경로가 열리는지 먼저 확인하세요:\'; Write-Host "  $fileSrc"; exit 1 }',
+    '    $allFiles = @(Get-ChildItem -LiteralPath $srcResolved -File | Where-Object { $_.Name -match \'\\.(jpg|jpeg|png)$\' } | Select-Object @{n=\'name\';e={$_.Name}},@{n=\'localFull\';e={$_.FullName}},@{n=\'path\';e={\'\'}})',
+    '} else {',
+    '    Write-Host "NAS 로그인: $nasH / $nasU"',
+    '    try { $authRaw = Invoke-RestMethod "$nasH/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=$([Uri]::EscapeDataString($nasU))&passwd=$([Uri]::EscapeDataString($nasP))&session=FileStation&format=sid" }',
+    '    catch { Write-Host "NAS 접속 오류(주소/네트워크 확인): $_"; exit 1 }',
+    '    $sid = $authRaw.data.sid',
+    '    if (-not $sid) { Write-Host "NAS 로그인 실패(계정/비밀번호 확인)"; exit 1 }',
+    '    $listResp = Invoke-RestMethod "$nasH/webapi/entry.cgi?api=SYNO.FileStation.List&version=2&method=list&folder_path=$([Uri]::EscapeDataString($nasSrc))&_sid=$sid"',
+    '    if (-not $listResp.success) { Write-Host "소재 목록 조회 실패 — 경로를 확인하세요: $nasSrc"; exit 1 }',
+    '    try { $apiInfo = Invoke-RestMethod "$nasH/webapi/query.cgi?api=SYNO.API.Info&version=1&method=query&query=SYNO.FileStation.Download"; $dlPath = $apiInfo.data.\'SYNO.FileStation.Download\'.path; $dlVer = $apiInfo.data.\'SYNO.FileStation.Download\'.maxVersion } catch {}',
+    '    if (-not $dlPath) { $dlPath = \'entry.cgi\'; $dlVer = 2 }',
+    '    $allFiles = @($listResp.data.files | Where-Object { $_.name -match \'\\.(jpg|jpeg|png)$\' } | Select-Object @{n=\'name\';e={$_.name}},@{n=\'localFull\';e={\'\'}},@{n=\'path\';e={$_.path}})',
+    '}',
+    'if ($allFiles.Count -eq 0) { Write-Host \'[소재 없음] 폴더에 jpg/png 가 없습니다.\'; exit 1 }',
+    'Write-Host "소재 $($allFiles.Count)개"',
+    'foreach ($f in $allFiles) { Write-Host "  $($f.name)" }',
+    '',
+    'Write-Host \'=== Step 2. 캠페인 ===\'',
+    '$campaignId = \'\'',
+    'try {',
+    '    $found = (KGet \'/campaigns?config=ON,OFF\').content | Where-Object { $_.name -eq $campaignName } | Select-Object -First 1',
+    '    if ($found) { $campaignId = $found.id; Write-Host "기존 캠페인을 씁니다: $campaignId" }',
+    '} catch { Fail \'캠페인 조회\' $_ }',
+    'if (-not $campaignId) {',
+    '    $campBody = @{ name = $campaignName; campaignTypeGoal = @{ campaignType = $tplCampaign.campaignTypeGoal.campaignType; goal = $tplCampaign.campaignTypeGoal.goal } }',
+    '    if ($tplCampaign.objective) { $campBody.objective = $tplCampaign.objective }',
+    '    if ($tplCampaign.trackId) { $campBody.trackId = $tplCampaign.trackId }',
+    '    if ($null -ne $tplCampaign.kclid) { $campBody.kclid = $tplCampaign.kclid }',
+    '    try {',
+    '        $made = KSend \'POST\' \'/campaigns\' $campBody',
+    '        $campaignId = if ($made.id) { $made.id } else { $made }',
+    '        Write-Host "캠페인을 만들었습니다: $campaignId ($($tplCampaign.campaignTypeGoal.campaignType) × $($tplCampaign.campaignTypeGoal.goal))"',
+    '    } catch { Fail \'캠페인 생성\' $_; exit 1 }',
+    '}',
+    '',
+    'Write-Host \'=== Step 3. 광고그룹 (틀을 본떠서) ===\'',
+    '$groupBody = @{',
+    '    campaign = @{ id = [int64]$campaignId }',
+    '    name = $groupName',
+    '    placements = $tplGroup.placements',
+    '    deviceTypes = $tplGroup.deviceTypes',
+    '    targeting = $tplGroup.targeting',
+    '    pricingType = $tplGroup.pricingType',
+    '    bidStrategy = $tplGroup.bidStrategy',
+    '    bidAmount = $bid',
+    '    dailyBudgetAmount = $budget',
+    '    pacing = $tplGroup.pacing',
+    '}',
+    '# 타겟팅은 틀 그대로 쓰되, 그 광고그룹에만 붙는 값은 뗀다',
+    'if ($groupBody.targeting) { $groupBody.targeting = $groupBody.targeting | Select-Object -Property * -ExcludeProperty adAccountId }',
+    '$sched = @{ beginDate = $beginDate }',
+    'if ($endDate) { $sched.endDate = $endDate }',
+    'foreach ($day in @(\'mondayTime\',\'tuesdayTime\',\'wednesdayTime\',\'thursdayTime\',\'fridayTime\',\'saturdayTime\',\'sundayTime\')) {',
+    '    if ($tplGroup.schedule.$day) { $sched[$day] = $tplGroup.schedule.$day }',
+    '}',
+    'if ($null -ne $tplGroup.schedule.detailTime) { $sched.detailTime = $tplGroup.schedule.detailTime }',
+    '$groupBody.schedule = $sched',
+    'Write-Host "본뜬 값 — 게재지면 $($tplGroup.placements -join \',\') / 기기 $($tplGroup.deviceTypes -join \',\') / 입찰 $($tplGroup.bidStrategy) $($tplGroup.pricingType)"',
+    '$groupId = \'\'',
+    'try {',
+    '    $made = KSend \'POST\' \'/adGroups\' $groupBody',
+    '    $groupId = if ($made.id) { $made.id } else { $made }',
+    '    Write-Host "광고그룹을 만들었습니다: $groupId"',
+    '} catch { Fail \'광고그룹 생성\' $_; exit 1 }',
+    '',
+    '# 만들자마자 끈다. 심사가 끝나고 사람이 확인한 뒤 모먼트에서 켜세요.',
+    '$turnedOff = $false',
+    'try { KSend \'PUT\' \'/adGroups/onOff\' @{ adGroupId = [int64]$groupId; config = \'OFF\' } | Out-Null; $turnedOff = $true }',
+    'catch {',
+    '    try { KSend \'PUT\' \'/adGroups/onOff\' @{ id = [int64]$groupId; config = \'OFF\' } | Out-Null; $turnedOff = $true }',
+    '    catch { Fail \'광고그룹 끄기\' $_ }',
+    '}',
+    'if ($turnedOff) { Write-Host \'광고그룹을 꺼 두었습니다 (OFF).\' }',
+    'else { Write-Host \'[주의] 광고그룹을 끄지 못했습니다. 모먼트에서 직접 꺼 주세요.\' }',
+    '',
+    'Write-Host \'=== Step 4. 소재 ===\'',
+    '$okCount = 0',
+    '$badCount = 0',
+    '$hc = [System.Net.Http.HttpClient]::new()',
+    '$hc.DefaultRequestHeaders.Add(\'Authorization\', "Bearer $token")',
+    '$hc.DefaultRequestHeaders.Add(\'adAccountId\', $acct)',
+    'foreach ($sf in $allFiles) {',
+    '    if ($sf.localFull) { $byt = [System.IO.File]::ReadAllBytes($sf.localFull) }',
+    '    else {',
+    '        $ep = [Uri]::EscapeDataString(\'["\' + $sf.path + \'"]\')',
+    '        $dlUrl = "$nasH/webapi/$dlPath?api=SYNO.FileStation.Download&version=$dlVer&method=download&path=$ep&mode=download&_sid=$sid"',
+    '        try { $byt = (Invoke-WebRequest -Uri $dlUrl -UseBasicParsing).Content } catch { Write-Host "  [NAS 다운로드 실패] $($sf.name)"; $badCount++; continue }',
+    '    }',
+    '    if (-not $byt -or $byt.Length -lt 100) { Write-Host "  [빈 파일 - 건너뜀] $($sf.name)"; $badCount++; continue }',
+    '    # 규격을 미리 본다. 카카오는 규격이 틀리면 그냥 400 을 준다.',
+    '    try {',
+    '        $bmp = [System.Drawing.Bitmap]::new([System.IO.MemoryStream]::new($byt))',
+    '        $w = $bmp.Width; $h = $bmp.Height',
+    '        $bmp.Dispose()',
+    '    } catch { $w = 0; $h = 0 }',
+    '    if ($kind -eq \'bizboard\' -and ($w -ne 1029 -or $h -ne 258)) {',
+    '        Write-Host "  [규격 다름 - 건너뜀] $($sf.name) — $($w)x$($h) (비즈보드는 1029x258 이어야 합니다)"',
+    '        $badCount++; continue',
+    '    }',
+    '    if ($byt.Length -gt 500000) { Write-Host "  [용량 주의] $($sf.name) — $([int]($byt.Length/1024))KB" }',
+    '',
+    '    $base = $sf.name -replace \'\\.[^.]+$\',\'\'',
+    '    $landing = \'\'',
+    '    foreach ($m in $adMapping) {',
+    '        if ($m.msgCode -and $sf.name -like "*$($m.msgCode)*") { if ($m.landingUrl) { $landing = $m.landingUrl }; break }',
+    '    }',
+    '    if (-not $landing -and $adMapping.Count -gt 0) { $landing = $adMapping[0].landingUrl }',
+    '    if (-not $landing) { Write-Host "  [랜딩 URL 없음 - 건너뜀] $($sf.name)"; $badCount++; continue }',
+    '',
+    '    $mime = if ($sf.name -match \'\\.png$\') { \'image/png\' } else { \'image/jpeg\' }',
+    '    $fm = [System.Net.Http.MultipartFormDataContent]::new()',
+    '    $ic = [System.Net.Http.ByteArrayContent]::new($byt)',
+    '    $ic.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new($mime)',
+    '    $fm.Add($ic, \'imageFile\', $sf.name)',
+    '    $fm.Add([System.Net.Http.StringContent]::new($groupId.ToString()), \'adGroupId\')',
+    '    $fm.Add([System.Net.Http.StringContent]::new($format), \'format\')',
+    '    $fm.Add([System.Net.Http.StringContent]::new($base, [System.Text.Encoding]::UTF8), \'name\')',
+    '    $fm.Add([System.Net.Http.StringContent]::new($altText, [System.Text.Encoding]::UTF8), \'altText\')',
+    '    if ($kind -eq \'bizboard\') {',
+    '        # 비즈보드는 랜딩을 landingInfo 로 넣는다 (계정에 있는 소재가 그 모양이다)',
+    '        $fm.Add([System.Net.Http.StringContent]::new(\'URL\'), \'landingInfo.landingType\')',
+    '        $fm.Add([System.Net.Http.StringContent]::new($landing), \'landingInfo.url\')',
+    '        $fm.Add([System.Net.Http.StringContent]::new($landing), \'mobileLandingUrl\')',
+    '    } else {',
+    '        $fm.Add([System.Net.Http.StringContent]::new($landing), \'rspvLandingUrl\')',
+    '        $fm.Add([System.Net.Http.StringContent]::new($title, [System.Text.Encoding]::UTF8), \'title\')',
+    '        $fm.Add([System.Net.Http.StringContent]::new($description, [System.Text.Encoding]::UTF8), \'description\')',
+    '        $fm.Add([System.Net.Http.StringContent]::new($profileName, [System.Text.Encoding]::UTF8), \'profileName\')',
+    '        $fm.Add([System.Net.Http.StringContent]::new($actionButton), \'actionButton\')',
+    '        if ($profileImageUrl) { $fm.Add([System.Net.Http.StringContent]::new($profileImageUrl), \'profileImageFileUrl\') }',
+    '    }',
+    '    Breathe 1.1',
+    '    $resp = $hc.PostAsync("$api/creatives", $fm).GetAwaiter().GetResult()',
+    '    $raw = [System.Text.Encoding]::UTF8.GetString($resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult())',
+    '    if ($resp.IsSuccessStatusCode) {',
+    '        $okCount++',
+    '        $body = $null',
+    '        try { $body = $raw | ConvertFrom-Json } catch {}',
+    '        $newId = if ($body -and $body.id) { $body.id } elseif ($body -and $body.Count -ge 1 -and $body[0].id) { $body[0].id } else { \'\' }',
+    '        Write-Host "  올렸습니다: $base -> 소재 $newId (심사 대기)"',
+    '    } else {',
+    '        $badCount++',
+    '        Write-Host "  [소재 실패] $base — $($resp.StatusCode) $raw"',
+    '    }',
+    '}',
+    '',
+    'Write-Host \'\'',
+    'Write-Host \'=== 끝 ===\'',
+    'Write-Host "캠페인 $campaignId / 광고그룹 $groupId ($groupName)"',
+    'Write-Host "소재 성공 $okCount 개 · 실패·건너뜀 $badCount 개"',
+    'Write-Host \'소재는 카카오 심사를 거칩니다. 모먼트 > 소재에서 심사 상태와 반려 사유를 확인하고,\'',
+    'Write-Host \'승인된 뒤에 광고그룹을 켜 주세요.\'',
+  ];
+
+  const problems = () => {
+    const list = [];
+    if (!state.account) list.push('광고 계정을 고르세요.');
+    if (!state.tplGroup || !spec) list.push('본뜰 광고그룹을 고르세요 (설정을 다 읽어야 만들 수 있습니다).');
+    if (!tr(state.campaignName)) list.push('캠페인명을 입력하세요.');
+    if (!tr(state.groupName)) list.push('광고그룹명을 입력하세요.');
+    if (!tr(state.beginDate)) list.push('시작일을 입력하세요.');
+    const budget = parseInt(digitsOf(state.budget), 10) || 0;
+    if (budget < 10000) list.push('일예산은 10,000원 이상이어야 합니다.');
+    if (!tr(state.altText)) list.push('대체 텍스트(altText)를 입력하세요 — 카카오 필수값입니다.');
+    if (!isBoard()) {
+      if (!tr(state.title)) list.push('제목을 입력하세요 (디스플레이 필수).');
+      if (!tr(state.description)) list.push('설명을 입력하세요 (디스플레이 필수).');
+      if (!tr(state.profileName)) list.push('프로필 이름을 입력하세요 (디스플레이 필수).');
+      if (!sampleImage()) list.push('프로필 이미지를 못 가져왔습니다 — 프로필 이미지가 있는 광고그룹을 틀로 고르세요.');
+    }
+    if (!rows.length) list.push('소재 목록을 시트에서 조회하세요 (랜딩 URL 이 필요합니다).');
+    if (!tr(state.nasPath) && !tr(state.localPath)) list.push('NAS 소재 경로 또는 로컬 소재 경로를 입력하세요.');
+    return list;
+  };
+
+  const stampName = () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const safe = tr(state.groupName).replace(/[\\/:*?"<>|\s]/g, '-').slice(0, 40) || 'kakao';
+    return `kakao-setup_${safe}_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}.ps1`;
+  };
+
+  const buildScript = () => psHeader().concat(PS_BODY).join('\r\n');
+
+  const makeScript = () => {
+    attempted = true;
+    if (problems().length) return render();
+    script = {
+      filename: stampName(),
+      text: buildScript(),
+      at: new Date().toLocaleString('ko-KR'),
+      ads: rows.length,
+      stale: false,
+    };
+    history = [{ name: tr(state.groupName), at: script.at, kind: KIND_MEDIA[state.kind] },
+      ...history].slice(0, 20);
+    saveHistory();
+    render();
+  };
+
+  const runCommand = () => `powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\\Downloads\\${script.filename}"`;
+
+  const download = () => {
+    const blob = new Blob([`\uFEFF${script.text}`], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = script.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const copyText = (text, button) => {
+    const done = () => {
+      if (!button) return;
+      button.classList.add('is-copied');
+      window.setTimeout(() => button.classList.remove('is-copied'), 1200);
+    };
+    if (window.navigator.clipboard?.writeText) window.navigator.clipboard.writeText(text).then(done, () => window.prompt('복사하세요', text));
+    else window.prompt('복사하세요', text);
+    done();
+  };
+
+  const markStale = () => {
+    if (!script || script.stale) return;
+    script.stale = true;
+    kakaoSetup.querySelector('.setup-done')?.classList.add('is-stale');
+    const warn = kakaoSetup.querySelector('.setup-stale');
+    if (warn) warn.hidden = false;
+  };
+
+  // ── 화면 ─────────────────────────────────────────────────────────
+  const pills = (attr, items, current) => `<div class="setup-pills">${items
+    .map(([label, value]) => `<button type="button" class="setup-pill${value === current ? ' is-on' : ''}" data-${attr}="${escapeHtml(value)}">${escapeHtml(label)}</button>`)
+    .join('')}</div>`;
+
+  const textField = (field, label, { hint = '', required = false, placeholder = '', wide = false } = {}) => `
+    <label${wide ? ' class="tool-wide"' : ''}><span${required ? ' class="setup-req"' : ''}>${escapeHtml(label)}</span>${hint ? `<small class="setup-hint">${escapeHtml(hint)}</small>` : ''}
+      <input type="text" data-field="${field}" value="${escapeHtml(state[field])}" placeholder="${escapeHtml(placeholder)}">
+    </label>`;
+
+  const tplBox = () => {
+    if (treeState.state === 'loading') return '<p class="tool-empty">캠페인을 읽는 중… (처음 한 번은 10초쯤 걸립니다)</p>';
+    if (treeState.state === 'error') return `<p class="setup-alert">${escapeHtml(treeState.message)}</p>`;
+    if (!tree) return '<p class="tool-empty">광고 계정을 고르면 캠페인을 읽어 옵니다.</p>';
+
+    // 고른 종류에 맞는 캠페인만 보여 준다 (비즈보드 ↔ 디스플레이)
+    const want = isBoard() ? 'TALK_BIZ_BOARD' : 'DISPLAY';
+    const mine = (tree.campaigns || []).filter((one) => one.type === want && one.groups.length);
+    if (!mine.length) return `<p class="tool-empty">${escapeHtml(isBoard() ? '비즈보드' : '디스플레이')} 캠페인이 없습니다 — 틀로 쓸 광고그룹이 있는 캠페인이 필요합니다.</p>`;
+
+    return `<div class="tool-grid setup-grid">
+      <label class="tool-wide"><span class="setup-req">틀 캠페인</span>
+        <small class="setup-hint">${escapeHtml(isBoard() ? '비즈보드' : '디스플레이')} 캠페인 ${mine.length}개</small>
+        <select data-field="tplCampaign">
+          <option value="">고르세요</option>
+          ${mine.map((one) => `<option value="${escapeHtml(one.id)}"${one.id === state.tplCampaign ? ' selected' : ''}>${escapeHtml(one.name)} · 광고그룹 ${one.groups.length}</option>`).join('')}
+        </select></label>
+      <label class="tool-wide"><span class="setup-req">틀 광고그룹</span>
+        <small class="setup-hint">이 광고그룹의 타겟팅 · 게재지면 · 입찰을 그대로 씁니다</small>
+        <select data-field="tplGroup"${groupsOf().length ? '' : ' disabled'}>
+          <option value="">고르세요</option>
+          ${groupsOf().map((one) => `<option value="${escapeHtml(one.id)}"${one.id === state.tplGroup ? ' selected' : ''}>${escapeHtml(one.name)}</option>`).join('')}
+        </select></label>
+    </div>
+    ${specBox()}`;
+  };
+
+  const specBox = () => {
+    if (specState.state === 'loading') return '<p class="tool-empty">틀 설정을 읽는 중…</p>';
+    if (specState.state === 'error') return `<p class="setup-alert">${escapeHtml(specState.message)}</p>`;
+    if (!spec) return '';
+    const group = spec.group || {};
+    const target = group.targeting || {};
+    const ages = (target.ages || []).slice().sort((a, b) => Number(a) - Number(b));
+    const sample = spec.sample || {};
+    return `<div class="setup-tnd">
+      <div><b>게재지면</b><span>${escapeHtml((group.placements || []).join(' · ')) || '<i>없음</i>'}</span></div>
+      <div><b>기기</b><span>${escapeHtml((group.deviceTypes || []).join(' · ')) || '<i>없음</i>'}</span></div>
+      <div><b>타겟</b><span>${escapeHtml(target.ageType === 'ALL' ? '나이 전체' : `${ages.join('·')}세`)} · ${escapeHtml(target.genderType === 'ALL' ? '성별 전체' : (target.genders || []).join('·'))} · ${escapeHtml(target.locationType === 'ALL' ? '지역 전체' : '지역 지정')}</span></div>
+      <div><b>입찰</b><span>${escapeHtml(group.bidStrategy || '')} · ${escapeHtml(group.pricingType || '')}${group.bidAmount ? ` · ${commaNum(group.bidAmount)}원` : ''}</span></div>
+      ${sample.profileName ? `<div><b>본보기 소재</b><span>${escapeHtml(sample.name || '')} · 프로필 ${escapeHtml(sample.profileName)}${sample.actionButton ? ` · ${escapeHtml(sample.actionButton)}` : ''}</span></div>` : ''}
+    </div>`;
+  };
+
+  const sheetTable = () => {
+    if (lookup.state === 'loading') return '<p class="tool-empty">시트를 읽는 중…</p>';
+    if (lookup.state === 'error') return `<p class="setup-alert">${escapeHtml(lookup.message)}</p>`;
+    if (lookup.state === 'idle') return '';
+    if (!rows.length) return `<p class="tool-empty">${escapeHtml(lookup.message || '일치하는 데이터 없음')}</p>`;
+    return `<div class="tool-table-wrap"><table class="tool-table setup-table">
+      <thead><tr><th>메시지코드</th><th>광고소재명</th><th>${escapeHtml(urlTypeLabel())}</th></tr></thead>
+      <tbody>${rows.map((row, i) => `<tr>
+        <td><span class="setup-code">${i + 1}. ${escapeHtml(row.msgCode)}</span></td>
+        <td>${escapeHtml(row.adName) || '<span class="tool-blank">-</span>'}</td>
+        <td class="setup-url">${escapeHtml(urlOf(row)) || '<span class="tool-blank">-</span>'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    <p class="setup-note">소재 파일 이름에 든 메시지코드로 랜딩 URL 을 짝지어 올립니다. 짝이 없으면 첫 줄의 URL 을 씁니다.</p>`;
+  };
+
+  const scriptBox = () => {
+    const list = attempted ? problems() : [];
+    if (list.length) return `<div class="setup-issues"><b>아래를 먼저 채워주세요</b><ul>${list.map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}</ul></div>`;
+    if (!script) return '';
+    return `<div class="setup-done${script.stale ? ' is-stale' : ''}">
+      <p class="setup-stale"${script.stale ? '' : ' hidden'}>입력값이 바뀌었습니다. [실행 스크립트 만들기] 를 다시 눌러주세요.</p>
+      <div class="setup-done-head">
+        <span class="setup-done-name"><b>${escapeHtml(script.filename)}</b><small>${escapeHtml(script.at)} 생성 · 소재 대응 ${script.ads}건</small></span>
+        <span class="setup-done-actions">
+          <button type="button" class="tool-add setup-download"><i data-lucide="download"></i>내려받기</button>
+          <button type="button" class="tool-copy setup-copy-cmd"><i data-lucide="terminal"></i>실행 명령 복사</button>
+          <button type="button" class="tool-copy setup-copy-script"><i data-lucide="copy"></i>스크립트 복사</button>
+        </span>
+      </div>
+      <ol class="setup-steps">
+        <li>내려받은 <code>${escapeHtml(script.filename)}</code> 를 <b>우클릭 → PowerShell에서 실행</b> 합니다.</li>
+        <li>또는 <b>Win+R</b> 실행창에 붙여넣습니다 · <code class="setup-cmd">${escapeHtml(runCommand())}</code></li>
+        <li>NAS 소재를 쓴다면 사내망 또는 VPN 에 연결된 상태여야 합니다.</li>
+      </ol>
+      <button type="button" class="setup-toggle-script">${scriptOpen ? '스크립트 접기' : '스크립트 미리보기'}<i data-lucide="${scriptOpen ? 'chevron-up' : 'chevron-down'}"></i></button>
+      ${scriptOpen ? `<pre class="setup-script">${escapeHtml(script.text)}</pre>` : ''}
+    </div>`;
+  };
+
+  const render = () => {
+    kakaoSetup.innerHTML = `
+      <div class="tool-head">
+        <h2>카카오 광고 세팅</h2>
+        <p>이미 있는 광고그룹 하나를 <b>틀</b>로 골라 타겟팅 · 게재지면 · 입찰을 그대로 본뜨고,
+        이름 · 기간 · 예산만 새로 받아 캠페인 · 광고그룹을 만든 뒤 NAS 소재를 한꺼번에 올립니다.
+        NAS 접근과 카카오 API 호출은 내려받은 PowerShell 스크립트가 하고, 토큰은 <b>.env</b> 에서 직접 읽습니다.
+        만든 광고그룹은 <b>꺼진 상태(OFF)</b> 로 두고, 소재는 <b>카카오 심사</b>를 거쳐야 노출됩니다.</p>
+      </div>
+
+      <section class="tool-card">
+        <h3><span class="setup-req">광고 계정</span>${accounts.length ? `<small>${escapeHtml((accounts.find((one) => one.accountId === state.account) || {}).name || '')}</small>` : ''}</h3>
+        ${accounts.length
+    ? pills('account', accounts.map((one) => [one.name, one.accountId]), state.account)
+    : '<p class="tool-empty">광고 계정을 읽는 중…</p>'}
+        <div class="setup-field"><span>소재 종류<small class="setup-hint">${escapeHtml(KIND_SIZE[state.kind])}</small></span>${pills('kind', KINDS, state.kind)}</div>
+      </section>
+
+      <section class="tool-card">
+        <div class="tool-list-head">
+          <h3>본뜰 광고그룹</h3>
+          <div class="tool-list-actions">
+            <button type="button" class="tool-copy-all setup-tree-refresh"><i data-lucide="refresh-cw"></i>목록 새로고침</button>
+          </div>
+        </div>
+        ${tplBox()}
+      </section>
+
+      <section class="tool-card">
+        <h3>새로 만들 캠페인 · 광고그룹</h3>
+        <div class="tool-grid setup-grid">
+          ${textField('campaignName', '캠페인명', { required: true, hint: '같은 이름이 이미 있으면 그 캠페인을 씁니다', placeholder: 'moment_미닉스 더 플렌더(mini)_purchase_bizboard', wide: true })}
+          ${textField('groupName', '광고그룹명', { required: true, placeholder: '[프로모션]25-54_관심사_비즈보드', wide: true })}
+        </div>
+        <div class="tool-grid setup-grid">
+          <label><span class="setup-req">시작일</span><input type="date" data-field="beginDate" value="${escapeHtml(state.beginDate)}"></label>
+          <label>종료일<small class="setup-hint">비우면 계속 게재</small><input type="date" data-field="endDate" value="${escapeHtml(state.endDate)}"></label>
+          <label><span class="setup-req">일예산</span><small class="setup-hint">10,000원 이상 · 10원 단위</small>
+            <input type="text" data-field="budget" inputmode="numeric" value="${escapeHtml(state.budget)}" placeholder="1,000,000"></label>
+          <label>입찰금액<small class="setup-hint">자동입찰이면 0 으로 둡니다</small>
+            <input type="text" data-field="bid" inputmode="numeric" value="${escapeHtml(state.bid)}" placeholder="0"></label>
+        </div>
+      </section>
+
+      <section class="tool-card">
+        <h3>소재</h3>
+        <div class="setup-row">
+          <div class="setup-field"><span>URL 유형<small class="setup-hint">랜딩 URL 로 쓸 열</small></span>${pills('urltype', URL_TYPES.map(([value, label]) => [label, value]), state.urlType)}</div>
+        </div>
+        <div class="setup-field setup-promo">
+          <span class="setup-req">프로모션</span>
+          <div class="setup-promo-row">
+            <input type="text" data-field="promo" value="${escapeHtml(state.promo)}" placeholder="예: always, cjonstyle …">
+            <button type="button" class="tool-add setup-lookup"${lookup.state === 'loading' ? ' disabled' : ''}><i data-lucide="search"></i>시트 조회</button>
+          </div>
+        </div>
+        ${sheetTable()}
+        <div class="tool-grid setup-grid">
+          ${textField('altText', '대체 텍스트', { required: true, hint: '30자 이내 · 카카오 필수값 (음성 안내에 쓰입니다)', placeholder: '미닉스 더 플렌더mini 론칭특가', wide: true })}
+        </div>
+        ${isBoard() ? '' : `<div class="tool-grid setup-grid">
+          ${textField('title', '제목', { required: true, hint: '25자 이내', placeholder: '오늘만! 스타벅스 1만원권 이벤트', wide: true })}
+          ${textField('description', '설명', { required: true, hint: '45자 이내', placeholder: '미닉스 미니 김치냉장고 파격특가', wide: true })}
+          ${textField('profileName', '프로필 이름', { required: true, hint: '20자 이내 · 틀 소재에서 가져옵니다', placeholder: '미닉스' })}
+          <label>행동 버튼
+            <select data-field="action">${ACTIONS.map(([value, label]) => `<option value="${value}"${value === state.action ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
+        </div>
+        <p class="setup-note">프로필 이미지는 틀 광고그룹의 소재에서 그대로 물려받습니다${sampleImage() ? '' : ' — 아직 못 가져왔습니다'}.</p>`}
+        <div class="tool-grid setup-grid">
+          ${textField('nasPath', 'NAS 소재 경로', { hint: '/앳홈_공유폴더/… 또는 \\\\192.168.1.100\\… · 슬래시 방향 무관', placeholder: '/앳홈_공유폴더/3. 마케팅팀/미닉스/…', wide: true })}
+          ${textField('localPath', '로컬 소재 경로', { hint: '입력하면 NAS 대신 이 폴더를 씁니다', placeholder: 'C:\\Users\\…\\소재폴더', wide: true })}
+        </div>
+      </section>
+
+      <section class="tool-card">
+        <h3>실행 스크립트</h3>
+        <div class="tool-grid setup-grid">
+          ${textField('envDir', '.env 폴더', { hint: '토큰·NAS 정보가 든 공유 폴더. 비우면 .ps1 이 있는 폴더부터 위로 찾습니다', placeholder: 'C:\\Users\\…\\공유_NAS수정판', wide: true })}
+        </div>
+        <div class="setup-run">
+          <button type="button" class="tool-add setup-make"><i data-lucide="file-cog"></i>실행 스크립트 만들기</button>
+          <small>브라우저는 NAS 와 PowerShell 에 닿지 못해서, 같은 일을 하는 .ps1 을 만들어 드립니다.</small>
+        </div>
+        ${scriptBox()}
+      </section>
+
+      <section class="tool-card">
+        <div class="tool-list-head">
+          <h3>만든 광고그룹 <small>${history.length}건</small></h3>
+          <div class="tool-list-actions"><button type="button" class="tool-clear setup-hist-clear"${history.length ? '' : ' disabled'}>기록 비우기</button></div>
+        </div>
+        ${history.length
+    ? `<ul class="setup-hist">${history.map((entry) => `<li><b>${escapeHtml(entry.name)}</b><small>${escapeHtml(entry.kind || '')} · ${escapeHtml(entry.at)}</small></li>`).join('')}</ul>`
+    : '<p class="tool-empty">아직 만든 스크립트가 없습니다.</p>'}
+      </section>`;
+    lucide.createIcons();
+  };
+
+  // 텍스트 칸은 다시 그리지 않는다 (입력 중 커서가 튀지 않도록)
+  kakaoSetup.addEventListener('input', (event) => {
+    const field = event.target.closest('[data-field]');
+    if (!field || field.tagName === 'SELECT' || field.type === 'date') return;
+    if (field.dataset.field === 'budget' || field.dataset.field === 'bid') {
+      const raw = digitsOf(field.value);
+      field.value = raw ? commaNum(parseInt(raw, 10)) : '';
+    }
+    state[field.dataset.field] = field.value;
+    save();
+    markStale();
+  });
+
+  kakaoSetup.addEventListener('change', (event) => {
+    const field = event.target.closest('[data-field]');
+    if (!field || (field.tagName !== 'SELECT' && field.type !== 'date')) return;
+    state[field.dataset.field] = field.value;
+    save();
+    if (script) script.stale = true;
+    if (field.dataset.field === 'tplCampaign') { state.tplGroup = ''; spec = null; save(); render(); return; }
+    if (field.dataset.field === 'tplGroup') return loadSpec();
+    render();
+  });
+
+  kakaoSetup.addEventListener('click', (event) => {
+    const account = event.target.closest('[data-account]');
+    const kind = event.target.closest('[data-kind]');
+    const urlType = event.target.closest('[data-urltype]');
+
+    if (account || kind || urlType) {
+      if (account) { state.account = account.dataset.account; state.tplCampaign = ''; state.tplGroup = ''; spec = null; }
+      if (kind) { state.kind = kind.dataset.kind; state.tplCampaign = ''; state.tplGroup = ''; spec = null; rows = []; lookup = { state: 'idle', message: '' }; }
+      if (urlType) state.urlType = urlType.dataset.urltype;
+      save();
+      if (script) script.stale = true;
+      render();
+      if (account) loadTree(false);
+      return;
+    }
+
+    if (event.target.closest('.setup-tree-refresh')) return loadTree(true);
+    if (event.target.closest('.setup-lookup')) return lookupSheet();
+    if (event.target.closest('.setup-make')) return makeScript();
+    if (event.target.closest('.setup-download')) return download();
+    if (event.target.closest('.setup-copy-cmd')) return copyText(runCommand(), event.target.closest('.setup-copy-cmd'));
+    if (event.target.closest('.setup-copy-script')) return copyText(script?.text || '', event.target.closest('.setup-copy-script'));
+    if (event.target.closest('.setup-toggle-script')) { scriptOpen = !scriptOpen; return render(); }
+
+    if (event.target.closest('.setup-hist-clear')) {
+      if (!window.confirm(`기록 ${history.length}건을 지울까요?`)) return;
+      history = [];
+      saveHistory();
+      return render();
+    }
+  });
+
+  kakaoSetup.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && event.target.dataset.field === 'promo') {
+      event.preventDefault();
+      lookupSheet();
+    }
+  });
+
+  render();
+
+  // 계정 · 캠페인은 이 화면을 처음 열 때만 읽는다 (안 쓰는 사람에게 카카오를 부르지 않는다)
+  let woke = false;
+  const wake = () => {
+    if (woke) return;
+    woke = true;
+    loadAccounts();
+  };
+  new MutationObserver(() => { if (!kakaoSetup.hidden) wake(); })
+    .observe(kakaoSetup, { attributes: true, attributeFilter: ['hidden'] });
+  if (!kakaoSetup.hidden) wake();
 }
 
 // ── 광고자동 세팅 · UTM 빌더 ────────────────────────────────────────

@@ -1580,6 +1580,8 @@ function handleAction_(payload) {
     if (payload.action === 'metaBreakdown') return metaBreakdown_(payload);
     if (payload.action === 'googleBreakdown') return adsBreakdown_(payload);
     if (payload.action === 'kakaoBreakdown') return kakaoBreakdown_(payload);
+    if (payload.action === 'kakaoTree') return kakaoTree_(payload);
+    if (payload.action === 'kakaoSpec') return kakaoSpec_(payload);
     // 네이버 GFA 는 공개 API 가 없어 PC 의 스크래퍼가 적재하고, 화면은 그 시트를 읽는다.
     if (payload.action === 'naverAccounts') return { ok: true, accounts: naverAccounts_() };
     if (payload.action === 'naverReport') return naverReport_(payload);
@@ -3623,6 +3625,82 @@ function checkKakaoToken() {
   Logger.log(message);
   try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
   return message;
+}
+
+// 캠페인 · 광고그룹을 한 번에 훑어 준다 (카카오 광고 세팅의 '틀' 고르개).
+// 목록 응답에는 유형 · 목표가 없어서 캠페인 단건을 한꺼번에 더 부른다 (kakaoMany_ 는 묶음 조회).
+var KAKAO_TREE_CACHE_SECONDS = 1800;   // 30분. 새로 만든 캠페인은 새로고침으로 다시 읽는다.
+
+function kakaoTree_(payload) {
+  var account = String(payload.account || '').replace(/[^0-9]/g, '');
+  if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
+
+  var cache = CacheService.getScriptCache();
+  var key = 'kakaoTree:' + account;
+  if (!payload.refresh) {
+    var hit = cacheGet_(cache, key);
+    if (hit) return JSON.parse(hit);
+  }
+
+  var campaigns = kakaoList_(kakao_('/campaigns', { config: 'ON,OFF' }, account, 0));
+
+  var detailJobs = campaigns.map(function (one) {
+    return { key: 'c' + one.id, path: '/campaigns/' + one.id };
+  });
+  var groupJobs = campaigns.map(function (one) {
+    return { key: 'g' + one.id, path: '/adGroups', params: { campaignId: one.id, config: 'ON,OFF' } };
+  });
+  var details = kakaoMany_(detailJobs, account);
+  var groups = kakaoMany_(groupJobs, account);
+
+  var rows = campaigns.map(function (one) {
+    var detail = details['c' + one.id] || {};
+    var goal = detail.campaignTypeGoal || {};
+    return {
+      id: String(one.id),
+      name: one.name || String(one.id),
+      config: one.config || '',
+      type: goal.campaignType || '',
+      goal: goal.goal || '',
+      groups: kakaoList_(groups['g' + one.id]).map(function (group) {
+        return { id: String(group.id), name: group.name || String(group.id), config: group.config || '' };
+      })
+    };
+  });
+
+  var result = { ok: true, source: 'kakao', account: account, campaigns: rows };
+  cachePut_(cache, key, JSON.stringify(result), KAKAO_TREE_CACHE_SECONDS);
+  return result;
+}
+
+// 틀로 고른 캠페인 · 광고그룹의 설정을 그대로 돌려준다 (타겟팅 · 게재지면 · 입찰까지).
+function kakaoSpec_(payload) {
+  var account = String(payload.account || '').replace(/[^0-9]/g, '');
+  var campaignId = String(payload.campaign || '').replace(/[^0-9]/g, '');
+  var groupId = String(payload.group || '').replace(/[^0-9]/g, '');
+  if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
+  if (!campaignId || !groupId) throw new Error('본뜰 캠페인과 광고그룹을 고르지 않았습니다.');
+
+  var got = kakaoMany_([
+    { key: 'campaign', path: '/campaigns/' + campaignId },
+    { key: 'group', path: '/adGroups/' + groupId },
+    { key: 'creatives', path: '/creatives', params: { adGroupId: groupId, config: 'ON,OFF' } }
+  ], account);
+
+  if (!got.campaign) throw new Error('캠페인 설정을 못 읽었습니다 (번호 ' + campaignId + ').');
+  if (!got.group) throw new Error('광고그룹 설정을 못 읽었습니다 (번호 ' + groupId + ').');
+
+  // 소재 하나를 같이 준다 — 프로필 이름 · 프로필 이미지 · 행동버튼처럼
+  // 화면에서 일일이 적기 번거로운 값을 그대로 물려받기 위해서다.
+  var sample = null;
+  var made = kakaoList_(got.creatives);
+  for (var i = 0; i < made.length; i += 1) {
+    var one = kakaoMany_([{ key: 'one', path: '/creatives/' + made[i].id }], account).one;
+    if (one) { sample = one; break; }
+  }
+
+  return { ok: true, source: 'kakao', account: account,
+    campaign: got.campaign, group: got.group, sample: sample };
 }
 
 function kakaoTokenShape_() {
