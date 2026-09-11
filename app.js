@@ -8673,13 +8673,13 @@ if (mediaPerformance) {
       madeAt: new Date().toISOString(),
       note: `제품 '${file.product}' 만 담은 파일입니다. `
         + '카카오모먼트 · 메타 · 구글은 매체가 준 값 그대로, 네이버 GFA 는 부가세 10% 를 뺀 값입니다.',
-      // 단계(사전 · 당일 · 사후)를 담았으면 조회 기간 전체는 넣지 않는다 —
-      // 같은 줄이 받는 쪽에서 '조회 기간' 으로 한 번 더 나와 광고비가 겹쳐 보였다.
-      // 단계 날짜를 안 채운 파일은 이 줄이 전부라, 그때만 담는다.
-      searched: file.phases.length ? [] : file.searched.map((one) => salesRow(one.key, one.row)),
+      // 조회 기간 전체는 담지 않는다. 받는 쪽(행사별 결과 → 매체결과)에서 '조회 기간'
+      // 블록으로 한 번 더 나와 같은 광고비가 겹쳐 보였다. 이 파일은 단계(사전 · 당일 ·
+      // 사후) 만 담는다 — 그래서 단계를 안 받은 제품은 아예 내려받지 않게 해 둔다 (mixCard).
+      searched: [],
       accounts: Object.keys(SOURCES).map((key) => ({
         source: key, name: SOURCES[key].name,
-        // 이 파일에 실제로 담긴 줄만 센다 (단계를 담았으면 단계 줄, 아니면 조회 기간 줄)
+        // 이 파일에 실제로 담긴 줄(단계 줄)만 센다
         found: file.rows.filter((one) => one.key === key).length,
         account: (cross[key] || {}).accountName || '',
         tried: (cross[key] || {}).tried || 0,
@@ -8763,29 +8763,34 @@ if (mediaPerformance) {
   );
 
   const mixCard = () => {
-    const files = productFiles();
-    if (!files.length) return '';
+    const all = productFiles();
+    if (!all.length) return '';
+    // 단계(사전 · 당일 · 사후)를 받아 둔 제품만 내놓는다. 파일에 조회 기간 줄을 담지 않으니
+    // 단계가 없는 제품은 빈 파일이 된다 — 받을 것이 없는 단추는 아예 두지 않는다.
+    const files = all.filter((one) => one.phases.length);
     return `<div class="perf-mix">
       <div class="perf-mix-head"><b>행사별 결과로 보내기 (제품별)</b>
-        <small>제품마다 파일 하나입니다. 매체는 가르지 않고 <b>단계(사전 · 당일 · 사후)</b>까지 한 파일에
+        <small>제품마다 파일 하나입니다. 매체는 가르지 않고 <b>단계(사전 · 당일 · 사후)</b>로만
           담습니다 — 받는 쪽이 매체 · 캠페인으로 다시 묶어 보여 줍니다.
           세일즈 워크스페이스 <b>행사별 결과 → 매체결과</b> 에서 그 <b>상품</b>을 고르고 이 파일을 올리세요.
           캠페인명이 규칙(<b>소스_제품_목적</b>)을 안 따르는 줄은
           <b>${escapeHtml(NO_PRODUCT)}</b> 로 묶입니다.</small></div>
-      <div class="perf-mix-list">
+      ${files.length ? `<div class="perf-mix-list">
         ${files.map((one) => `<button type="button" class="perf-mix-btn" data-cross="mix"
           data-product="${escapeHtml(one.product)}">
           <i data-lucide="download"></i>
           <span><b>${escapeHtml(one.product)}</b>
-          <small>${one.phases.length
-    ? one.phases.map((each) => `${escapeHtml(each.name)} ${count(each.rows.length)}줄`).join(' · ')
-    : `조회 기간 ${count(one.searched.length)}줄`} · ${money(one.spend)}</small></span>
+          <small>${one.phases.map((each) => `${escapeHtml(each.name)} ${count(each.rows.length)}줄`).join(' · ')}
+            · ${money(one.spend)}</small></span>
         </button>`).join('')}
-      </div>
-      <p class="perf-mix-note">단계를 담은 파일에는 <b>조회 기간 전체</b>를 넣지 않습니다 — 같은 줄이
-        받는 쪽에서 한 번 더 나와 광고비가 겹쳐 보이기 때문입니다. 단계 날짜를 안 넣었으면
-        조회 기간 줄만 담기니, 단계별로 보여 주려면 위에서 <b>단계 날짜</b>를 먼저 채우세요.
-        파일 모양은 <b>세일즈용 파일</b>과 같습니다 (제품별로 갈라 담은 것만 다릅니다).</p>
+      </div>` : ''}
+      <p class="perf-mix-note">${files.length
+    ? `파일에는 <b>단계 줄만</b> 담깁니다 — 조회 기간 전체는 넣지 않습니다. 같은 줄이 받는 쪽에서
+        '조회 기간' 으로 한 번 더 나와 광고비가 겹쳐 보이기 때문입니다.
+        ${all.length > files.length
+    ? `<b>${count(all.length - files.length)}개 제품</b>은 단계를 안 받아 단추를 두지 않았습니다.`
+    : ''}`
+    : '아직 내려받을 제품이 없습니다 — 위에서 <b>단계 날짜</b>를 채우고 단계별로 받아 주세요.'}</p>
     </div>`;
   };
 
@@ -9282,7 +9287,8 @@ if (mediaPerformance) {
     const mixBtn = event.target.closest('[data-cross="mix"]');
     if (mixBtn) {
       const one = productFiles().find((x) => x.product === mixBtn.dataset.product);
-      if (one) jsonDownload(productName(one), productPayload(one));
+      // 단계가 없으면 담을 줄이 없다 (조회 기간은 파일에 넣지 않는다)
+      if (one && one.phases.length) jsonDownload(productName(one), productPayload(one));
       return;
     }
 
