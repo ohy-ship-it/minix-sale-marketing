@@ -1590,6 +1590,9 @@ function handleAction_(payload) {
     if (payload.action === 'naverReport') return naverReport_(payload);
     if (payload.action === 'naverCreatives') return naverCreatives_(payload);
     if (payload.action === 'naverAppend') return naverAppend_(payload);
+    // 네이버 검색광고(브랜드검색) — GFA 와 달리 공개 API 가 있어 여기서 바로 부른다
+    if (payload.action === 'saBrandReport') return saBrandReport_(payload);
+    if (payload.action === 'saPeek') return saPeek_(payload);
     // 페이지 결과 (Microsoft Clarity)
     if (payload.action === 'clarityReport') return clarityReport_(payload);
     if (payload.action === 'clarityPages') return clarityPages_(payload);
@@ -4548,6 +4551,287 @@ function naverCoverage_(since, until, days) {
     at.setDate(at.getDate() + 1);
   }
   return { loaded: loaded, missing: missing };
+}
+
+// ── 네이버 검색광고 (브랜드검색) ──────────────────────────────────
+// 지금은 **브랜드검색만** 본다 (캠페인 유형 BRAND_SEARCH).
+// GFA 와 달리 공개 API 가 있어 여기서 바로 부른다 (적재 시트를 거치지 않는다).
+//
+// 인증은 토큰이 아니라 **요청마다 서명**이다 — 만료도 재발급도 없다.
+//   X-API-KEY   = 액세스 라이선스 (NAVER_SA_API_KEY)
+//   X-Customer  = 고객 ID        (NAVER_SA_CUSTOMER_ID)
+//   X-Timestamp = 밀리초
+//   X-Signature = base64(HMAC-SHA256(비밀키, '<timestamp>.<METHOD>.<경로>'))
+// 서명에 쓰는 경로는 **쿼리를 뺀** 경로다 ('/ncc/campaigns?x=1' → '/ncc/campaigns').
+var SA_URL = 'https://api.searchad.naver.com';
+
+// 받아 올 지표. 전환(ccnt · convAmt)은 프리미엄로그분석이 붙어 있어야 온다 —
+// 없으면 400 이 오므로 그때는 핵심 지표만 다시 부른다.
+var SA_FIELDS = ['impCnt', 'clkCnt', 'salesAmt', 'ctr', 'cpc', 'ccnt', 'crto', 'convAmt', 'ror'];
+var SA_FIELDS_PLAIN = ['impCnt', 'clkCnt', 'salesAmt', 'ctr', 'cpc'];
+var SA_ID_CHUNK = 100;            // /stats 는 한 번에 id 를 이만큼 받는다
+var SA_CACHE_SECONDS = 600;       // 10분
+
+function saProp_(name) {
+  var value = String(PropertiesService.getScriptProperties().getProperty(name) || '').trim();
+  if (!value) {
+    throw new Error(name + ' 스크립트 속성이 없습니다. 검색광고 관리자센터 → 도구 → API 사용 관리에서 '
+      + '발급한 값을 Apps Script 프로젝트 설정 → 스크립트 속성에 넣어 주세요.');
+  }
+  return value;
+}
+
+function saHeaders_(method, path) {
+  var stamp = String(Date.now());
+  var message = stamp + '.' + method.toUpperCase() + '.' + path;
+  var sign = Utilities.base64Encode(
+    Utilities.computeHmacSha256Signature(message, saProp_('NAVER_SA_SECRET_KEY')));
+  return {
+    'X-Timestamp': stamp,
+    'X-API-KEY': saProp_('NAVER_SA_API_KEY'),
+    'X-Customer': saProp_('NAVER_SA_CUSTOMER_ID'),
+    'X-Signature': sign
+  };
+}
+
+function saQuery_(params) {
+  var query = [];
+  Object.keys(params || {}).forEach(function (key) {
+    var value = params[key];
+    if (value === undefined || value === null || value === '') return;
+    query.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+  });
+  return query.length ? '?' + query.join('&') : '';
+}
+
+function saAsk_(path, params) {
+  var response = UrlFetchApp.fetch(SA_URL + path + saQuery_(params), {
+    method: 'get',
+    muteHttpExceptions: true,
+    contentType: 'application/json; charset=UTF-8',
+    headers: saHeaders_('GET', path)
+  });
+  return saAnswer_(response, path);
+}
+
+// 여러 개를 한꺼번에 부른다 (서명은 경로마다 따로 만든다)
+function saMany_(jobs) {
+  var out = {};
+  for (var at = 0; at < jobs.length; at += 25) {
+    var chunk = jobs.slice(at, at + 25);
+    var answers = [];
+    try {
+      answers = UrlFetchApp.fetchAll(chunk.map(function (job) {
+        return {
+          url: SA_URL + job.path + saQuery_(job.params),
+          method: 'get',
+          muteHttpExceptions: true,
+          contentType: 'application/json; charset=UTF-8',
+          headers: saHeaders_('GET', job.path)
+        };
+      }));
+    } catch (error) {
+      answers = [];
+    }
+    chunk.forEach(function (job, i) {
+      var response = answers[i];
+      if (!response || response.getResponseCode() >= 400) return;
+      try { out[job.key] = JSON.parse(response.getContentText() || 'null'); } catch (ignore) { /* 이 줄만 건너뛴다 */ }
+    });
+  }
+  return out;
+}
+
+function saAnswer_(response, where) {
+  var text = response.getContentText() || '';
+  var code = response.getResponseCode();
+  var body = null;
+  try { body = JSON.parse(text || 'null'); } catch (error) { body = null; }
+  if (code >= 400) {
+    var reason = (body && (body.title || body.detail || body.message)) || text.slice(0, 300);
+    if (code === 401 || code === 403) {
+      reason += ' (액세스 라이선스 · 비밀키 · 고객 ID 를 확인하세요. 세 값이 같은 계정의 것이어야 합니다)';
+    }
+    throw new Error('네이버 검색광고 (HTTP ' + code + ') ' + where + ': ' + reason);
+  }
+  return body;
+}
+
+// /stats 는 id 목록과 지표 이름을 JSON 글자로 받는다.
+function saStats_(ids, since, until) {
+  var got = {};
+  var fields = SA_FIELDS;
+  for (var at = 0; at < ids.length; at += SA_ID_CHUNK) {
+    var chunk = ids.slice(at, at + SA_ID_CHUNK);
+    var body = null;
+    try {
+      body = saAsk_('/stats', { ids: JSON.stringify(chunk), fields: JSON.stringify(fields),
+        timeRange: JSON.stringify({ since: since, until: until }) });
+    } catch (error) {
+      // 전환 지표를 안 주는 계정이면 핵심 지표만 다시 묻는다
+      if (fields === SA_FIELDS) {
+        fields = SA_FIELDS_PLAIN;
+        body = saAsk_('/stats', { ids: JSON.stringify(chunk), fields: JSON.stringify(fields),
+          timeRange: JSON.stringify({ since: since, until: until }) });
+      } else {
+        throw error;
+      }
+    }
+    var rows = (body && (body.data || body)) || [];
+    if (!Array.isArray(rows)) rows = [];
+    rows.forEach(function (row) { if (row && row.id) got[String(row.id)] = row; });
+  }
+  return { stats: got, fields: fields };
+}
+
+// 두 덩이를 합친다 (Object.assign 을 쓰지 않는다 — 이 파일은 ES5 로 맞춰 둔다)
+function saJoin_(base, more) {
+  var out = {};
+  Object.keys(base || {}).forEach(function (key) { out[key] = base[key]; });
+  Object.keys(more || {}).forEach(function (key) { out[key] = more[key]; });
+  return out;
+}
+
+function saNums_(stat) {
+  var one = stat || {};
+  var num = function (value) { return Number(value) || 0; };
+  return {
+    spend: num(one.salesAmt),          // 광고비 (부가세 별도)
+    impressions: num(one.impCnt),
+    clicks: num(one.clkCnt),
+    conv: num(one.ccnt),
+    revenue: num(one.convAmt)
+  };
+}
+
+/* 브랜드검색 성과. 캠페인 · 광고그룹 · 키워드를 한 번에 준다.
+   브랜드검색은 정액(CPT) 상품이라 광고비가 기간에 걸쳐 나뉘어 들어온다 —
+   화면은 고른 기간의 합으로 보여 준다. */
+function saBrandReport_(payload) {
+  var since = String((payload && payload.since) || '').slice(0, 10);
+  var until = String((payload && payload.until) || '').slice(0, 10);
+  if (!since || !until) throw new Error('기간을 주지 않았습니다.');
+
+  var cache = CacheService.getScriptCache();
+  var key = 'saBrand:' + since + ':' + until;
+  if (!(payload && payload.refresh)) {
+    var hit = cacheGet_(cache, key);
+    if (hit) return JSON.parse(hit);
+  }
+
+  var campaigns = saAsk_('/ncc/campaigns', { campaignType: 'BRAND_SEARCH' }) || [];
+  if (!Array.isArray(campaigns)) campaigns = [];
+  if (!campaigns.length) {
+    return { ok: true, source: 'naverSa', since: since, until: until,
+      campaigns: [], adgroups: [], keywords: [], fields: SA_FIELDS_PLAIN,
+      note: '브랜드검색 캠페인이 없습니다.' };
+  }
+
+  var mine = {};
+  campaigns.forEach(function (one) { mine[String(one.nccCampaignId)] = true; });
+
+  // 광고그룹은 한 번에 다 받아 브랜드검색 것만 남긴다 (캠페인마다 부르지 않는다)
+  var allGroups = saAsk_('/ncc/adgroups', null) || [];
+  if (!Array.isArray(allGroups)) allGroups = [];
+  var groups = allGroups.filter(function (one) { return mine[String(one.nccCampaignId)]; });
+
+  // 키워드는 광고그룹마다 부른다 (브랜드검색은 키워드가 곧 검색어다)
+  var words = [];
+  var packs = saMany_(groups.map(function (one) {
+    return { key: String(one.nccAdgroupId), path: '/ncc/keywords',
+      params: { nccAdgroupId: one.nccAdgroupId } };
+  }));
+  Object.keys(packs).forEach(function (groupId) {
+    var list = packs[groupId];
+    if (!Array.isArray(list)) return;
+    list.forEach(function (one) { words.push(one); });
+  });
+
+  var ids = campaigns.map(function (one) { return String(one.nccCampaignId); })
+    .concat(groups.map(function (one) { return String(one.nccAdgroupId); }))
+    .concat(words.map(function (one) { return String(one.nccKeywordId); }));
+  var got = saStats_(ids, since, until);
+  var stats = got.stats;
+
+  var result = {
+    ok: true,
+    source: 'naverSa',
+    since: since,
+    until: until,
+    fields: got.fields,
+    hasConv: got.fields.indexOf('ccnt') >= 0,
+    note: '광고비는 부가세 별도입니다. 브랜드검색은 정액(CPT) 상품이라 고른 기간에 걸친 금액입니다.',
+    campaigns: campaigns.map(function (one) {
+      return saJoin_({
+        id: String(one.nccCampaignId),
+        name: one.name || String(one.nccCampaignId),
+        status: one.status || '',
+        active: String(one.status || '') === 'ELIGIBLE',
+        begin: (one.periodStartDt || '').slice(0, 10),
+        end: (one.periodEndDt || '').slice(0, 10)
+      }, saNums_(stats[String(one.nccCampaignId)]));
+    }),
+    adgroups: groups.map(function (one) {
+      return saJoin_({
+        id: String(one.nccAdgroupId),
+        campaignId: String(one.nccCampaignId),
+        name: one.name || String(one.nccAdgroupId),
+        type: one.adgroupType || '',
+        status: one.status || '',
+        active: String(one.status || '') === 'ELIGIBLE'
+      }, saNums_(stats[String(one.nccAdgroupId)]));
+    }),
+    keywords: words.map(function (one) {
+      return saJoin_({
+        id: String(one.nccKeywordId),
+        adgroupId: String(one.nccAdgroupId),
+        name: one.keyword || String(one.nccKeywordId),
+        status: one.status || '',
+        active: String(one.status || '') === 'ELIGIBLE'
+      }, saNums_(stats[String(one.nccKeywordId)]));
+    })
+  };
+
+  cachePut_(cache, key, JSON.stringify(result), SA_CACHE_SECONDS);
+  return result;
+}
+
+/* 맨 처음 붙일 때 쓰는 확인용. 응답을 손대지 않고 그대로 돌려준다 —
+   필드 이름이 문서와 다르면 이걸로 바로 안다. */
+function saPeek_(payload) {
+  var since = String((payload && payload.since) || '').slice(0, 10);
+  var until = String((payload && payload.until) || '').slice(0, 10);
+  var out = { ok: true, source: 'naverSa' };
+  var campaigns = saAsk_('/ncc/campaigns', { campaignType: 'BRAND_SEARCH' }) || [];
+  out.campaignCount = Array.isArray(campaigns) ? campaigns.length : 0;
+  out.campaignFirst = Array.isArray(campaigns) ? campaigns[0] : campaigns;
+  if (out.campaignCount) {
+    var groups = (saAsk_('/ncc/adgroups', null) || []).filter(function (one) {
+      return String(one.nccCampaignId) === String(campaigns[0].nccCampaignId);
+    });
+    out.groupCount = groups.length;
+    out.groupFirst = groups[0] || null;
+    if (groups.length) {
+      var words = saAsk_('/ncc/keywords', { nccAdgroupId: groups[0].nccAdgroupId }) || [];
+      out.keywordCount = Array.isArray(words) ? words.length : 0;
+      out.keywordFirst = Array.isArray(words) ? words[0] : words;
+    }
+    if (since && until) {
+      try {
+        out.stats = saAsk_('/stats', { ids: JSON.stringify([String(campaigns[0].nccCampaignId)]),
+          fields: JSON.stringify(SA_FIELDS),
+          timeRange: JSON.stringify({ since: since, until: until }) });
+        out.statFields = SA_FIELDS;
+      } catch (error) {
+        out.statsError = error.message;
+        out.stats = saAsk_('/stats', { ids: JSON.stringify([String(campaigns[0].nccCampaignId)]),
+          fields: JSON.stringify(SA_FIELDS_PLAIN),
+          timeRange: JSON.stringify({ since: since, until: until }) });
+        out.statFields = SA_FIELDS_PLAIN;
+      }
+    }
+  }
+  return out;
 }
 
 // ── 페이지 결과 (Microsoft Clarity) ──────────────────────────────────
