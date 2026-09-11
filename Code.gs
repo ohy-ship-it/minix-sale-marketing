@@ -1599,7 +1599,8 @@ function handleAction_(payload) {
     if (payload.action === 'clarityReport') return clarityReport_(payload);
     if (payload.action === 'clarityPages') return clarityPages_(payload);
     if (payload.action === 'clarityPage') return clarityPage_(payload);
-    if (payload.action === 'budgetPlan') return budgetPlan_(payload);
+    if (payload.action === 'budgetGet') return budgetGet_(payload);
+    if (payload.action === 'budgetPut') return budgetPut_(payload);
     if (payload.action === 'promoCalendar') return promoCalendar_(payload);
     if (payload.action === 'kolLive') return kolLive_(payload);
     if (payload.action === 'weeksGet') return weeksGet_();
@@ -4769,7 +4770,9 @@ function saNums_(stat) {
 // 브랜드검색 캠페인은 계정에 한두 개뿐이라 층을 하나 줄여 보여 주는 게 읽기 좋다.
 var SA_AD_LIMIT = 60;             // 광고그룹 하나에서 볼 소재 수 (브랜드검색은 몇 개뿐이다)
 
-// 소재 이름 — 브랜드검색 소재에는 사람이 정한 이름이 없다. 소재 속 문구에서 골라 쓴다.
+// 소재 이름 · 미리보기. 실제 응답을 받아 보고 맞춘 자리다:
+//   { nccAdId, name: '미로 맑음 공기청정기', ad: { thumbnail: 'https://ssl.pstatic.net/…' }, adAttr: {} }
+// 이름은 맨 위 name, 그림은 ad.thumbnail 에 있다. adAttr 은 비어 오는 계정이 많아 뒤로 둔다.
 var SA_NAME_KEYS = ['headline', 'title', 'mainTitle', 'subTitle', 'description', 'name', 'brandName'];
 var SA_IMAGE_KEYS = ['imageUrl', 'image', 'mainImageUrl', 'thumbnailUrl', 'logoImageUrl'];
 
@@ -4791,16 +4794,36 @@ function saPick_(attr, keys) {
 }
 
 function saAdName_(ad, at) {
-  var attr = saAttr_(ad);
-  var found = saPick_(attr, SA_NAME_KEYS);
+  var plain = String((ad && ad.name) || '').trim();
+  if (plain) return plain;
+  var found = saPick_(saAttr_(ad), SA_NAME_KEYS);
   if (found) return found;
   return '소재 ' + (at + 1);
 }
 
 function saAdImage_(ad) {
-  var attr = saAttr_(ad);
-  var found = saPick_(attr, SA_IMAGE_KEYS);
+  var inside = (ad && ad.ad) || {};
+  var found = String(inside.thumbnail || inside.imageUrl || '').trim()
+    || saPick_(saAttr_(ad), SA_IMAGE_KEYS);
   return /^https?:\/\//.test(found) ? found : '';
+}
+
+/* 표에 올릴 줄인가. 계정에는 몇 해 전에 멈춘 광고그룹 · 소재가 잔뜩 남아 있다
+   (광고그룹 130 · 소재 457 중 실제로 도는 것은 열 몇 개뿐이었다).
+   숫자가 있거나 지금 돌고 있는 줄만 보여 준다. */
+function saAlive_(row) {
+  return row.impressions > 0 || row.clicks > 0 || row.results > 0 || row.active;
+}
+
+/* 브랜드검색은 정액(CPT) 이라 광고비(salesAmt)가 늘 0 으로 온다 — 파워링크는 제대로 온다.
+   광고비로 줄을 세우면 뜻이 없으므로 클릭 · 노출 차례로 세운다. */
+function saSort_(rows) {
+  return rows.sort(function (a, b) {
+    if (b.spend !== a.spend) return b.spend - a.spend;
+    if (b.clicks !== a.clicks) return b.clicks - a.clicks;
+    if (b.impressions !== a.impressions) return b.impressions - a.impressions;
+    return String(a.name).localeCompare(String(b.name));
+  });
 }
 
 /* 브랜드검색의 짜임새 — 캠페인 · 광고그룹 · 소재. 숫자는 담지 않는다.
@@ -5000,17 +5023,13 @@ function naverSaReport_(payload) {
     range: when,
     fields: got.fields,
     hasConv: got.fields.indexOf('ccnt') >= 0,
-    campaigns: sortBySpend_(saIndex_(groupRows)),
-    adsets: sortBySpend_(saIndex_(adRows)),
+    // 광고비가 0 인 까닭을 화면이 알 수 있게 함께 보낸다
+    notice: '브랜드검색은 정액(CPT) 상품이라 검색광고 API 가 광고비를 주지 않습니다 — '
+      + '노출 · 클릭 · 전환만 매체에서 옵니다.',
+    campaigns: saSort_(groupRows.filter(saAlive_)),
+    adsets: saSort_(adRows.filter(saAlive_)),
     fetchedAt: new Date().toISOString()
   };
-}
-
-// sortBySpend_ 는 { id: 줄 } 모양을 받는다. 배열을 그 모양으로 바꿔 준다.
-function saIndex_(rows) {
-  var out = {};
-  rows.forEach(function (one) { out[one.id] = one; });
-  return out;
 }
 
 // 소재별 결과. 브랜드검색 소재를 그대로 준다 (미리보기는 소재 속 이미지가 있을 때만).
@@ -5044,11 +5063,13 @@ function naverSaCreatives_(payload) {
       end: camp.end || ''
     }, got.stats[one.id]);
   }).filter(function (row) {
+    if (!saAlive_(row)) return false;   // 몇 해 전에 멈춘 소재는 빼고 본다
     // 매체별 성과에서 넘어올 때는 광고그룹(= 그쪽 화면의 캠페인) 번호로 걸러 준다
     if (wantGroup) return row.adsetId === wantGroup;
     if (wantCampaign) return row.adsetId === wantCampaign || row.campaignId === wantCampaign;
     return true;
-  }).sort(function (a, b) { return b.spend - a.spend; });
+  });
+  rows = saSort_(rows);
 
   return {
     ok: true,
@@ -5477,29 +5498,11 @@ function naverAccounts_() {
   return out;
 }
 
-// ── 월별 예산 (퍼포먼스 마스터 시트) ─────────────────────────────────
-// 세일즈 퍼포먼스 예산은 사람이 이 시트에 손으로 짠다. 화면은 그 시트를 읽어 그림으로 다시 그린다.
-// 적재하지 않는다 — 시트가 원본이고, 우리는 읽어 보여 주기만 한다.
-//
-// **줄 번호로 잡지 않는다.** 달마다 프로모션 줄이 늘고 줄어들기 때문에, 머리글 낱말로 찾는다.
-//   [26년 9월] …            제목
-//   카테고리별              카테고리 표 (더 플렌더 · 생활가전 · 종합)
-//   상세) SKU별 …           SKU 표
-//   *고정비                 고정비 표 (SKU × 항목)
-//   (3) 프로모션/ 더플렌더   프로모션 표. (숫자) 로 시작하는 덩어리는 모두 프로모션으로 읽는다
-var BUDGET_SHEET_ID = '1s8NpUIburD1t7dY6BVz-DwZwihPSQnwWRZKeXjd6-nY';
-var BUDGET_CACHE_SECONDS = 600;
-
-// 달이 바뀌어 시트를 새로 만들면 스크립트 속성 BUDGET_SHEET_ID 에 새 주소만 넣으면 된다.
-// (다시 배포하지 않아도 바뀐다. 속성이 없으면 위에 적어 둔 시트를 쓴다)
-function budgetSheetId_() {
-  var found = cleanToken_(PropertiesService.getScriptProperties().getProperty('BUDGET_SHEET_ID'));
-  var picked = found || BUDGET_SHEET_ID;
-  // 주소를 통째로 붙여 넣어도 받는다
-  var inside = String(picked).match(/\/d\/([a-zA-Z0-9_-]{20,})/);
-  return inside ? inside[1] : picked;
-}
-
+// ── 시트 표 읽기 (여러 화면이 함께 쓴다) ────────────────────────────
+// 사람이 손으로 짠 시트는 달마다 줄이 늘고 준다. 그래서 줄 · 열 번호로 잡지 않고
+// 머리글 낱말로 찾아 표 하나를 { columns, groups, rows, total } 로 읽는다.
+// 지금은 KOL 라이브 · 프로모션 캘린더가 쓴다.
+// (월별 예산도 이 길로 시트를 읽었으나, 화면 안에서 짜는 형태로 바뀌어 떼어 냈다)
 function budgetText_(value) {
   if (value instanceof Date) return Utilities.formatDate(value, 'Asia/Seoul', 'M/d');
   return String(value === null || value === undefined ? '' : value).trim();
@@ -5602,84 +5605,131 @@ function budgetTable_(grid, headRow) {
   return { columns: columns, groups: groups, rows: rows, total: total };
 }
 
-function budgetPlan_(payload) {
-  var cache = CacheService.getScriptCache();
-  var key = 'budget|' + budgetSheetId_();
-  if (!payload || !payload.refresh) {
-    var hit = cacheGet_(cache, key);
-    if (hit) {
-      try {
-        var kept = JSON.parse(hit);
-        kept.cached = true;
-        return kept;
-      } catch (error) { /* 깨졌으면 다시 읽는다 */ }
-    }
+// ── 월별 예산 (화면 안에서 짠다) ───────────────────────────────────
+// 예전에는 사람이 짜 둔 '퍼포먼스 마스터 시트' 를 읽어 그림으로만 보여 줬다. 그래서
+// 고칠 일은 늘 시트에서 하고, 시트 모양이 조금만 바뀌어도 화면이 못 읽었다.
+// 이제는 **화면에서 짜고 여기에 담는다.** 시트는 담아 두는 곳일 뿐이라 모양을 지킨다.
+//
+// 한 달이 한 줄이다. 값은 칸 하나에 JSON 으로 둔다 (칸이 늘어도 시트를 안 고치게).
+//   총예산   그 달에 받은 퍼포먼스 예산 (사람이 맨 위에 적는다)
+//   내용     SKU 배정 · 행사 줄 — 화면이 짜는 것 전부
+//   사용액   매체별 성과에서 긁어 온 실제 광고비 (화면이 계정을 차례로 불러 모아 보낸다)
+//
+// 사용액을 여기에 함께 담는 까닭: 매체를 다 부르면 몇 분이 걸린다. 한 사람이 한 번 받아
+// 두면 나머지 사람은 그 값을 그냥 본다. '언제 받은 값' 인지도 같이 적어 둔다.
+var MONTH_BUDGET_SHEET_NAME = '월별예산';
+var MONTH_BUDGET_HEADERS = ['월', '총예산', '내용(JSON)', '사용액(JSON)', '수정자', '수정시각'];
+
+function monthBudgetSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(MONTH_BUDGET_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(MONTH_BUDGET_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, MONTH_BUDGET_HEADERS.length)
+      .setValues([MONTH_BUDGET_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 90);
+    sheet.setColumnWidth(2, 120);
+    sheet.setColumnWidth(3, 520);
+    sheet.setColumnWidth(4, 320);
   }
-
-  var book = SpreadsheetApp.openById(budgetSheetId_());
-  var sheet = book.getSheets()[0];
-  var grid = sheet.getDataRange().getValues();
-
-  var titleRow = budgetFindRow_(grid, 0, function (line) {
-    return line.some(function (cell) { return /^\[/.test(budgetText_(cell)); });
-  });
-  var title = '';
-  if (titleRow >= 0) {
-    grid[titleRow].forEach(function (cell) {
-      var text = budgetText_(cell);
-      if (!title && /^\[/.test(text)) title = text;
-    });
-  }
-
-  var categoryHead = budgetFindRow_(grid, 0, function (line) {
-    return line.some(function (cell) { return budgetText_(cell) === '카테고리별'; });
-  });
-  var skuHead = budgetFindRow_(grid, categoryHead + 1, function (line) {
-    return line.some(function (cell) { return budgetText_(cell) === 'SKU'; })
-      && line.some(function (cell) { return budgetText_(cell).indexOf('총 퍼포먼스 예산') >= 0; });
-  });
-  var fixedMark = budgetFindRow_(grid, 0, function (line) {
-    return budgetText_(line[budgetFirst_(line)] || '').indexOf('*고정비') === 0;
-  });
-  var fixedHead = fixedMark < 0 ? -1 : budgetFindRow_(grid, fixedMark + 1, function (line) {
-    return line.some(function (cell) { return budgetText_(cell) === 'SKU'; });
-  });
-
-  // (숫자) 로 시작하는 덩어리는 모두 프로모션 표다. 머리글은 '프로모션명' 이 든 줄이다.
-  var promos = [];
-  for (var r = 0; r < grid.length; r += 1) {
-    var at = budgetFirst_(grid[r] || []);
-    if (at < 0) continue;
-    var name = budgetText_(grid[r][at]);
-    if (!/^\(\s*\d+\s*\)/.test(name)) continue;
-    var head = budgetFindRow_(grid, r + 1, function (line) {
-      return line.some(function (cell) { return budgetText_(cell) === '프로모션명'; });
-    });
-    if (head < 0) continue;
-    var table = budgetTable_(grid, head);
-    if (!table) continue;
-    table.name = name.replace(/^\(\s*\d+\s*\)\s*/, '').replace(/\s*\/\s*/, ' · ');
-    promos.push(table);
-  }
-
-  var result = {
-    ok: true,
-    source: 'budget',
-    title: title,
-    bookName: book.getName(),
-    sheetName: sheet.getName(),
-    url: 'https://docs.google.com/spreadsheets/d/' + budgetSheetId_() + '/edit',
-    category: categoryHead < 0 ? null : budgetTable_(grid, categoryHead),
-    sku: skuHead < 0 ? null : budgetTable_(grid, skuHead),
-    fixed: fixedHead < 0 ? null : budgetTable_(grid, fixedHead),
-    promos: promos,
-    fetchedAt: new Date().toISOString()
-  };
-
-  cachePut_(cache, key, JSON.stringify(result), BUDGET_CACHE_SECONDS);
-  return result;
+  return sheet;
 }
 
+// 월 칸은 시트가 날짜로 바꿔 둘 수도 있다. 늘 YYYY-MM 으로 읽는다.
+function monthBudgetKey_(value) {
+  if (value instanceof Date) return Utilities.formatDate(value, 'Asia/Seoul', 'yyyy-MM');
+  return String(value || '').trim().slice(0, 7);
+}
+
+function monthBudgetParse_(text, fallback) {
+  try {
+    var found = JSON.parse(String(text || 'null'));
+    return found && typeof found === 'object' ? found : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function monthBudgetRow_(line) {
+  return {
+    month: monthBudgetKey_(line[0]),
+    total: Number(line[1] || 0),
+    plan: monthBudgetParse_(line[2], { skus: [], rows: [] }),
+    spend: monthBudgetParse_(line[3], null),
+    updatedBy: String(line[4] || ''),
+    updatedAt: line[5] instanceof Date ? line[5].toISOString() : String(line[5] || '')
+  };
+}
+
+// 고른 달 하나를 준다. 어떤 달이 있는지도 함께 준다 (화면의 달 고르개가 쓴다).
+function budgetGet_(payload) {
+  var want = monthBudgetKey_((payload && payload.month) || '')
+    || Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM');
+  var sheet = monthBudgetSheet_();
+  var last = sheet.getLastRow();
+  var months = [];
+  var found = null;
+  if (last > 1) {
+    sheet.getRange(2, 1, last - 1, MONTH_BUDGET_HEADERS.length).getValues().forEach(function (line) {
+      var month = monthBudgetKey_(line[0]);
+      if (!month) return;
+      if (months.indexOf(month) < 0) months.push(month);
+      if (month === want && !found) found = monthBudgetRow_(line);
+    });
+  }
+  months.sort();
+  return {
+    ok: true,
+    month: want,
+    months: months,
+    // 그 달을 아직 안 짰으면 빈 판을 준다 (화면이 바로 적기 시작할 수 있게)
+    budget: found || { month: want, total: 0, plan: { skus: [], rows: [] }, spend: null,
+      updatedBy: '', updatedAt: '' },
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+// 한 달의 줄만 고친다. 다른 달은 건드리지 않는다 (달마다 짜는 사람이 다르다).
+// spend 를 안 보내면 이미 담아 둔 사용액을 그대로 살려 둔다 — 예산을 고칠 때마다
+// 몇 분 걸려 받아 둔 사용액이 지워지면 안 된다.
+function budgetPut_(payload) {
+  var month = monthBudgetKey_((payload && payload.month) || '');
+  if (!month) throw new Error('저장할 달이 비어 있습니다.');
+  var who = String((payload && payload.by) || '');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = monthBudgetSheet_();
+    var last = sheet.getLastRow();
+    var at = 0;
+    var kept = null;
+    if (last > 1) {
+      var have = sheet.getRange(2, 1, last - 1, MONTH_BUDGET_HEADERS.length).getValues();
+      for (var i = 0; i < have.length; i++) {
+        if (monthBudgetKey_(have[i][0]) !== month) continue;
+        at = i + 2;
+        kept = monthBudgetRow_(have[i]);
+        break;
+      }
+    }
+
+    var plan = (payload && payload.plan) || (kept ? kept.plan : { skus: [], rows: [] });
+    var total = payload && payload.total !== undefined && payload.total !== null
+      ? Number(payload.total) || 0 : (kept ? kept.total : 0);
+    var spend = payload && payload.spend !== undefined ? payload.spend : (kept ? kept.spend : null);
+
+    if (!at) at = sheet.getLastRow() + 1;
+    sheet.getRange(at, 1, 1, MONTH_BUDGET_HEADERS.length).setValues([[
+      month, total, JSON.stringify(plan), spend ? JSON.stringify(spend) : '', who, new Date()
+    ]]);
+    return { ok: true, month: month, savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
 // ── 프로모션 (세일즈팀 미닉스 워크스페이스 · 행사 캘린더 시트 미러) ──────────
 // 프로모션 등록·수정은 세일즈팀 도구(미닉스)에서 한다. 그쪽이 저장할 때마다
 // 이 시트에 월별 탭(YYYY-MM)으로 그대로 복사해 두므로, 여기서는 읽기만 한다.
