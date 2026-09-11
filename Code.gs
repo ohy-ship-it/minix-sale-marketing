@@ -4603,12 +4603,22 @@ function saHeaders_(method, path) {
   };
 }
 
+// 값이 목록이면 **같은 이름을 여러 번** 적는다 (ids=A&ids=B).
+// 네이버 검색광고의 ids 가 그 모양이다 — JSON 글자로 보내면
+// '["grp-…"]' 통째를 id 하나로 읽어 '유효하지 않은 ID 형식입니다' 로 막는다.
 function saQuery_(params) {
   var query = [];
-  Object.keys(params || {}).forEach(function (key) {
-    var value = params[key];
+  var add = function (key, value) {
     if (value === undefined || value === null || value === '') return;
     query.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+  };
+  Object.keys(params || {}).forEach(function (key) {
+    var value = params[key];
+    if (Object.prototype.toString.call(value) === '[object Array]') {
+      value.forEach(function (one) { add(key, one); });
+      return;
+    }
+    add(key, value);
   });
   return query.length ? '?' + query.join('&') : '';
 }
@@ -4682,14 +4692,14 @@ function saStatChunks_(ids, fields, since, until) {
     fields: JSON.stringify(fields),
     timeRange: JSON.stringify({ since: since, until: until })
   });
-  var fixed = SA_URL.length + '/stats'.length + tail.length + '&ids=%5B%5D'.length;
+  var fixed = SA_URL.length + '/stats'.length + tail.length;
   var room = Math.max(SA_URL_LIMIT - fixed, 60);
 
   var out = [];
   var now = [];
   var used = 0;
   ids.forEach(function (id) {
-    var cost = encodeURIComponent('"' + id + '",').length;
+    var cost = ('&ids=' + encodeURIComponent(id)).length;
     if (now.length && (used + cost > room || now.length >= SA_ID_CHUNK)) {
       out.push(now);
       now = [];
@@ -4714,14 +4724,14 @@ function saStats_(ids, since, until, want) {
     var chunk = chunks[at];
     var body = null;
     try {
-      body = saAsk_('/stats', { ids: JSON.stringify(chunk), fields: JSON.stringify(fields),
+      body = saAsk_('/stats', { ids: chunk, fields: JSON.stringify(fields),
         timeRange: JSON.stringify({ since: since, until: until }) });
     } catch (error) {
       // 전환 지표를 안 주는 계정이면 핵심 지표만 다시 묻는다
       if (fields === SA_FIELDS) {
         // 지표를 줄이면 주소도 짧아지므로 같은 묶음으로 다시 물어도 넘치지 않는다
         fields = SA_FIELDS_PLAIN;
-        body = saAsk_('/stats', { ids: JSON.stringify(chunk), fields: JSON.stringify(fields),
+        body = saAsk_('/stats', { ids: chunk, fields: JSON.stringify(fields),
           timeRange: JSON.stringify({ since: since, until: until }) });
       } else {
         throw error;
@@ -5051,9 +5061,30 @@ function naverSaCreatives_(payload) {
   };
 }
 
+// 확인용으로 부를 수 있는 길. **읽기(GET)만** 하고, 이 앞자리로 시작하는 길만 받는다.
+var SA_PEEK_PATHS = ['/ncc/', '/stats', '/master-reports', '/stat-reports'];
+
+function saPeekOne_(one) {
+  var path = String((one && one.path) || '');
+  var ok = false;
+  SA_PEEK_PATHS.forEach(function (head) { if (path.indexOf(head) === 0) ok = true; });
+  if (!ok) return { ok: false, path: path, error: '확인용으로 열어 둔 길이 아닙니다.' };
+  try {
+    return { ok: true, path: path, params: one.params || null, body: saAsk_(path, one.params) };
+  } catch (error) {
+    return { ok: false, path: path, params: one.params || null,
+      error: String(error && error.message ? error.message : error) };
+  }
+}
+
 /* 맨 처음 붙일 때 쓰는 확인용. 응답을 손대지 않고 그대로 돌려준다 —
-   필드 이름이 문서와 다르면 이걸로 바로 안다. */
+   필드 이름이 문서와 다르면 이걸로 바로 안다.
+   tries 를 주면 그 길들을 차례로 읽어 본다 (한 번 배포해 두면 모양 확인에 다시 안 고쳐도 된다). */
 function saPeek_(payload) {
+  var tries = (payload && payload.tries) || null;
+  if (tries && tries.length) {
+    return { ok: true, source: 'naverSa', tries: tries.map(saPeekOne_) };
+  }
   var since = String((payload && payload.since) || '').slice(0, 10);
   var until = String((payload && payload.until) || '').slice(0, 10);
   var out = { ok: true, source: 'naverSa' };
@@ -5073,13 +5104,13 @@ function saPeek_(payload) {
     }
     if (since && until) {
       try {
-        out.stats = saAsk_('/stats', { ids: JSON.stringify([String(campaigns[0].nccCampaignId)]),
+        out.stats = saAsk_('/stats', { ids: [String(campaigns[0].nccCampaignId)],
           fields: JSON.stringify(SA_FIELDS),
           timeRange: JSON.stringify({ since: since, until: until }) });
         out.statFields = SA_FIELDS;
       } catch (error) {
         out.statsError = error.message;
-        out.stats = saAsk_('/stats', { ids: JSON.stringify([String(campaigns[0].nccCampaignId)]),
+        out.stats = saAsk_('/stats', { ids: [String(campaigns[0].nccCampaignId)],
           fields: JSON.stringify(SA_FIELDS_PLAIN),
           timeRange: JSON.stringify({ since: since, until: until }) });
         out.statFields = SA_FIELDS_PLAIN;
