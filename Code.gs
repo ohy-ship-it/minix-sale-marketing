@@ -1582,6 +1582,8 @@ function handleAction_(payload) {
     if (payload.action === 'kakaoBreakdown') return kakaoBreakdown_(payload);
     if (payload.action === 'kakaoTree') return kakaoTree_(payload);
     if (payload.action === 'kakaoSpec') return kakaoSpec_(payload);
+    if (payload.action === 'kakaoMake') return kakaoMake_(payload);
+    if (payload.action === 'kakaoCreative') return kakaoCreative_(payload);
     // 네이버 GFA 는 공개 API 가 없어 PC 의 스크래퍼가 적재하고, 화면은 그 시트를 읽는다.
     if (payload.action === 'naverAccounts') return { ok: true, accounts: naverAccounts_() };
     if (payload.action === 'naverReport') return naverReport_(payload);
@@ -3701,6 +3703,212 @@ function kakaoSpec_(payload) {
 
   return { ok: true, source: 'kakao', account: account,
     campaign: got.campaign, group: got.group, sample: sample };
+}
+
+// ── 카카오 광고 만들기 ───────────────────────────────────────────
+// 화면에서 [만들기] 를 누르면 여기가 캠페인 · 광고그룹 · 소재를 실제로 만든다.
+// 소재 파일은 브라우저가 골라 base64 로 실어 보낸다 — 예전처럼 PowerShell 을 거치지 않는다.
+// 카카오는 광고계정마다 1초에 한 번만 받아 주므로 쓰기 앞에서는 꼭 쉰다.
+var KAKAO_WRITE_GAP = 1200;
+
+function kakaoSend_(method, path, body, account) {
+  kakaoWait_(KAKAO_WRITE_GAP, false);
+  var response = UrlFetchApp.fetch(KAKAO_URL + path, {
+    method: method,
+    contentType: 'application/json; charset=utf-8',
+    payload: JSON.stringify(body),
+    muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + kakaoToken_(), adAccountId: String(account) }
+  });
+  return kakaoAnswer_(response, method.toUpperCase() + ' ' + path);
+}
+
+function kakaoAnswer_(response, where) {
+  var text = response.getContentText() || '';
+  var body = {};
+  try { body = JSON.parse(text || '{}'); } catch (error) { body = {}; }
+  var code = response.getResponseCode();
+  if (code >= 400) {
+    var extras = body.extras || {};
+    var reason = extras.detailMsg || body.msg || body.message || text.slice(0, 300);
+    if (code === 401) reason += ' (비즈니스 토큰이 만료됐거나 잘못됐습니다)';
+    if (code === 403) reason += ' (이 광고계정에 광고를 만들 권한이 없습니다)';
+    throw new Error('카카오모먼트 (HTTP ' + code + ') ' + where + ': ' + reason);
+  }
+  return body;
+}
+
+// 응답은 { id: 123 } 이기도 하고 숫자 하나이기도 하다. 번호만 뽑는다.
+function kakaoNewId_(body) {
+  if (body === null || body === undefined) return '';
+  if (typeof body === 'number' || typeof body === 'string') return String(body);
+  if (body.id) return String(body.id);
+  if (Array.isArray(body) && body.length && body[0].id) return String(body[0].id);
+  return '';
+}
+
+/* 캠페인과 광고그룹을 만든다.
+   - 캠페인은 이름이 같은 것이 있으면 그것을 쓴다 (두 번 눌러도 캠페인이 겹치지 않게)
+   - 광고그룹은 '틀' 로 고른 기존 광고그룹의 타겟팅 · 게재지면 · 입찰을 그대로 본뜨고
+     이름 · 기간 · 예산만 새로 넣는다
+   - 만든 광고그룹은 바로 끈다. 심사가 끝나고 사람이 켜야 한다. */
+function kakaoMake_(payload) {
+  var account = String(payload.account || '').replace(/[^0-9]/g, '');
+  var campaignName = String(payload.campaignName || '').trim();
+  var groupName = String(payload.groupName || '').trim();
+  var tplCampaignId = String(payload.tplCampaign || '').replace(/[^0-9]/g, '');
+  var tplGroupId = String(payload.tplGroup || '').replace(/[^0-9]/g, '');
+  var budget = Math.round(Number(payload.budget) || 0);
+  var bid = Math.round(Number(payload.bid) || 0);
+  var beginDate = String(payload.beginDate || '').trim();
+  var endDate = String(payload.endDate || '').trim();
+
+  if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
+  if (!campaignName) throw new Error('캠페인명이 비어 있습니다.');
+  if (!groupName) throw new Error('광고그룹명이 비어 있습니다.');
+  if (!tplCampaignId || !tplGroupId) throw new Error('본뜰 캠페인 · 광고그룹을 고르지 않았습니다.');
+  if (!beginDate) throw new Error('시작일이 비어 있습니다.');
+  if (budget < 10000) throw new Error('일예산은 10,000원 이상이어야 합니다.');
+
+  var tpl = kakaoMany_([
+    { key: 'campaign', path: '/campaigns/' + tplCampaignId },
+    { key: 'group', path: '/adGroups/' + tplGroupId }
+  ], account);
+  if (!tpl.campaign || !tpl.group) throw new Error('틀 설정을 못 읽었습니다. 목록을 새로고침하고 다시 골라 주세요.');
+
+  var log = [];
+
+  // ① 캠페인
+  var campaignId = '';
+  var already = kakaoList_(kakao_('/campaigns', { config: 'ON,OFF' }, account, 0));
+  for (var i = 0; i < already.length; i += 1) {
+    if (String(already[i].name || '') === campaignName) { campaignId = String(already[i].id); break; }
+  }
+  if (campaignId) {
+    log.push('캠페인은 이미 있는 것을 씁니다 (' + campaignId + ')');
+  } else {
+    var goal = tpl.campaign.campaignTypeGoal || {};
+    var campaignBody = { name: campaignName,
+      campaignTypeGoal: { campaignType: goal.campaignType, goal: goal.goal } };
+    if (tpl.campaign.objective) campaignBody.objective = tpl.campaign.objective;
+    if (tpl.campaign.trackId) campaignBody.trackId = tpl.campaign.trackId;
+    if (tpl.campaign.kclid !== null && tpl.campaign.kclid !== undefined) campaignBody.kclid = tpl.campaign.kclid;
+    campaignId = kakaoNewId_(kakaoSend_('post', '/campaigns', campaignBody, account));
+    if (!campaignId) throw new Error('캠페인을 만들었는데 번호를 못 받았습니다.');
+    log.push('캠페인을 만들었습니다 (' + campaignId + ' · '
+      + goal.campaignType + ' × ' + goal.goal + ')');
+  }
+
+  // ② 광고그룹 — 틀 그대로, 이름 · 기간 · 예산만 새로
+  var from = tpl.group;
+  var targeting = {};
+  Object.keys(from.targeting || {}).forEach(function (key) {
+    // adAccountId 는 그 광고그룹에만 붙는 값이라 뗀다
+    if (key === 'adAccountId') return;
+    if (from.targeting[key] === null) return;
+    targeting[key] = from.targeting[key];
+  });
+
+  var schedule = { beginDate: beginDate };
+  if (endDate) schedule.endDate = endDate;
+  ['mondayTime', 'tuesdayTime', 'wednesdayTime', 'thursdayTime',
+    'fridayTime', 'saturdayTime', 'sundayTime'].forEach(function (day) {
+    if ((from.schedule || {})[day]) schedule[day] = from.schedule[day];
+  });
+  if ((from.schedule || {}).detailTime !== undefined && from.schedule.detailTime !== null) {
+    schedule.detailTime = from.schedule.detailTime;
+  }
+
+  var groupBody = {
+    campaign: { id: Number(campaignId) },
+    name: groupName,
+    placements: from.placements,
+    deviceTypes: from.deviceTypes,
+    targeting: targeting,
+    pricingType: from.pricingType,
+    bidStrategy: from.bidStrategy,
+    bidAmount: bid,
+    dailyBudgetAmount: budget,
+    pacing: from.pacing,
+    schedule: schedule
+  };
+  var groupId = kakaoNewId_(kakaoSend_('post', '/adGroups', groupBody, account));
+  if (!groupId) throw new Error('광고그룹을 만들었는데 번호를 못 받았습니다.');
+  log.push('광고그룹을 만들었습니다 (' + groupId + ') — 게재지면 '
+    + (from.placements || []).join(' · ') + ' / 입찰 ' + from.bidStrategy + ' ' + from.pricingType);
+
+  // ③ 바로 끈다. 심사를 통과한 뒤 사람이 켠다.
+  var off = false;
+  try {
+    kakaoSend_('put', '/adGroups/onOff', { adGroupId: Number(groupId), config: 'OFF' }, account);
+    off = true;
+  } catch (error) {
+    try {
+      kakaoSend_('put', '/adGroups/onOff', { id: Number(groupId), config: 'OFF' }, account);
+      off = true;
+    } catch (second) {
+      log.push('[주의] 광고그룹을 끄지 못했습니다 — 모먼트에서 직접 꺼 주세요. ' + second.message);
+    }
+  }
+  if (off) log.push('광고그룹을 꺼 두었습니다 (OFF)');
+
+  return { ok: true, source: 'kakao', account: account,
+    campaign: campaignId, group: groupId, off: off, log: log };
+}
+
+/* 소재 하나를 만든다. 그림은 브라우저가 base64 로 보낸다.
+   UrlFetchApp 은 payload 안에 Blob 이 있으면 multipart/form-data 로 보낸다 —
+   카카오가 요구하는 모양이 그것이다. */
+function kakaoCreative_(payload) {
+  var account = String(payload.account || '').replace(/[^0-9]/g, '');
+  var groupId = String(payload.group || '').replace(/[^0-9]/g, '');
+  var format = String(payload.format || '').trim();
+  var name = String(payload.name || '').trim();
+  var altText = String(payload.altText || '').trim();
+  var landing = String(payload.landing || '').trim();
+  var fileName = String(payload.fileName || 'creative.png').trim();
+  var mime = /\.png$/i.test(fileName) ? 'image/png' : 'image/jpeg';
+
+  if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
+  if (!groupId) throw new Error('광고그룹 번호가 없습니다.');
+  if (!format) throw new Error('소재 형식이 없습니다.');
+  if (!landing) throw new Error('랜딩 URL 이 없습니다: ' + name);
+  if (!payload.image) throw new Error('그림이 실려 오지 않았습니다: ' + name);
+
+  var bytes = Utilities.base64Decode(String(payload.image));
+  var blob = Utilities.newBlob(bytes, mime, fileName);
+
+  var form = {
+    adGroupId: groupId,
+    format: format,
+    name: name,
+    altText: altText,
+    imageFile: blob
+  };
+  if (format === 'IMAGE_BANNER') {
+    // 비즈보드는 랜딩을 landingInfo 로 넣는다 (계정에 있는 소재가 그 모양이다)
+    form['landingInfo.landingType'] = 'URL';
+    form['landingInfo.url'] = landing;
+    form.mobileLandingUrl = landing;
+  } else {
+    // 반응형 랜딩은 다른 URL 과 같이 못 쓴다 — 이것 하나만 보낸다
+    form.rspvLandingUrl = landing;
+    form.title = String(payload.title || '').trim();
+    form.description = String(payload.description || '').trim();
+    form.profileName = String(payload.profileName || '').trim();
+    form.actionButton = String(payload.actionButton || 'PURCHASE').trim();
+    if (payload.profileImageUrl) form.profileImageFileUrl = String(payload.profileImageUrl);
+  }
+
+  kakaoWait_(KAKAO_WRITE_GAP, false);
+  var response = UrlFetchApp.fetch(KAKAO_URL + '/creatives', {
+    method: 'post',
+    payload: form,
+    muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + kakaoToken_(), adAccountId: String(account) }
+  });
+  var body = kakaoAnswer_(response, 'POST /creatives (' + name + ')');
+  return { ok: true, source: 'kakao', creative: kakaoNewId_(body), name: name };
 }
 
 function kakaoTokenShape_() {
