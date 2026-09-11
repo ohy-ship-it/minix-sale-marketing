@@ -4663,6 +4663,9 @@ function saAnswer_(response, where) {
     if (code === 401 || code === 403) {
       reason += ' (액세스 라이선스 · 비밀키 · 고객 ID 를 확인하세요. 세 값이 같은 계정의 것이어야 합니다)';
     }
+    if (code === 400 && /ID/i.test(reason)) {
+      reason += ' (/stats 는 한 번에 한 종류의 id 만 받습니다 — 캠페인 · 광고그룹 · 소재를 섞으면 막힙니다)';
+    }
     throw new Error('네이버 검색광고 (HTTP ' + code + ') ' + where + ': ' + reason);
   }
   return body;
@@ -4696,10 +4699,13 @@ function saStatChunks_(ids, fields, since, until) {
   return out;
 }
 
-// /stats 는 id 목록과 지표 이름을 JSON 글자로 받는다.
-function saStats_(ids, since, until) {
+/* /stats 는 id 목록과 지표 이름을 JSON 글자로 받는다.
+   **한 번에 한 종류의 id 만 받는다** — 광고그룹과 소재를 섞으면
+   '유효하지 않은 ID 형식입니다' 로 막힌다. 그래서 부르는 쪽에서 종류별로 갈라 부른다.
+   want 를 주면 그 지표로 먼저 묻는다 (앞 호출에서 전환이 안 온 것을 알았을 때 쓴다). */
+function saStats_(ids, since, until, want) {
   var got = {};
-  var fields = SA_FIELDS;
+  var fields = want || SA_FIELDS;
   var chunks = saStatChunks_(ids, fields, since, until);
   for (var at = 0; at < chunks.length; at += 1) {
     var chunk = chunks[at];
@@ -4838,9 +4844,23 @@ function saGather_(since, until, refresh) {
     });
   }
 
-  var ids = groups.map(function (one) { return String(one.nccAdgroupId); })
-    .concat(ads.map(function (one) { return one.id; }));
-  var got = ids.length ? saStats_(ids, since, until) : { stats: {}, fields: SA_FIELDS_PLAIN };
+  // 광고그룹과 소재는 id 종류가 달라 따로 묻는다 (섞으면 400 이 온다)
+  var groupIds = groups.map(function (one) { return String(one.nccAdgroupId); });
+  var adIds = ads.map(function (one) { return one.id; });
+  var stats = {};
+  var fields = SA_FIELDS_PLAIN;
+  if (groupIds.length) {
+    var gotGroups = saStats_(groupIds, since, until);
+    fields = gotGroups.fields;
+    Object.keys(gotGroups.stats).forEach(function (id) { stats[id] = gotGroups.stats[id]; });
+  }
+  if (adIds.length) {
+    // 광고그룹에서 쓴 지표를 그대로 쓴다 (전환이 안 오는 계정에서 두 번 헛걸음하지 않게)
+    var gotAds = saStats_(adIds, since, until, groupIds.length ? fields : null);
+    if (!groupIds.length) fields = gotAds.fields;
+    Object.keys(gotAds.stats).forEach(function (id) { stats[id] = gotAds.stats[id]; });
+  }
+  var got = { stats: stats, fields: fields };
 
   var result = {
     campaignOf: campaignOf,
