@@ -1365,6 +1365,36 @@ const GOOGLE_ACCOUNTS = [['앳홈_미닉스', '4112908407']];
 // (카카오모먼트 화면 왼쪽 위 계정 이름 옆의 숫자가 광고계정 번호다)
 const KAKAO_ACCOUNTS = [];
 
+
+// 캠페인명에서 제품을 발라낸다.
+// 이름 규칙은 시트의 UTM 수식과 같다 — `소스_제품정식명_목적(영문)_…`
+//   google_미닉스 더 플렌더(mini)_purchase              → 더 플렌더(mini)
+//   facebook_미닉스 더 플렌더_더 플렌더(MAX)_traffic_…    → 더 플렌더(MAX)
+//   google_미닉스 더 플렌더_더 플렌더(MAX)_branding-vvc #2 → 더 플렌더(MAX)
+// 제품 정식명 안에도 _ 가 있어서(미닉스 더 플렌더_더 플렌더(MAX)) 목적 낱말을 찾아
+// 그 앞까지를 제품으로 보고, 그 **마지막 토막**만 쓴다 ('미닉스 ' 는 뗀다).
+// 규칙을 안 따르는 이름(옛 캠페인 · 네이버 수기 이름)은 발라내지 않는다 — 섞이면 더 헷갈린다.
+// 목적 낱말은 '-' 앞까지만 보므로 sign-up 은 'sign' 으로 적는다
+//
+// 매체별 성과(제품별 파일)와 월별 예산(SKU 사용액)이 **같은 규칙**을 써야 한다.
+// 따로 두면 같은 캠페인이 화면마다 다른 제품으로 붙어 숫자가 어긋난다.
+const PERF_PURPOSE_WORDS = ['purchase', 'traffic', 'branding', 'reach', 'participation', 'prospect',
+  'sign', 'signup', 'message', 'friend', 'view', 'engagement', 'conversion', 'lead',
+  'awareness', 'install', 'app', 'retarget', 'crm'];
+const PERF_NO_PRODUCT = '(제품 미상)';
+
+const perfProductOf = (name) => {
+  const parts = String(name || '').split('_').map((one) => one.trim()).filter(Boolean);
+  if (parts.length < 3) return '';
+  let at = -1;
+  for (let i = 1; i < parts.length; i += 1) {
+    const head = parts[i].toLowerCase().split(/[-\s#(]/)[0];
+    if (PERF_PURPOSE_WORDS.indexOf(head) >= 0) { at = i; break; }
+  }
+  if (at < 2) return '';                       // 목적을 못 찾았거나 제품 자리가 없다
+  const last = parts.slice(1, at).pop() || '';
+  return last.replace(/^미닉스\s*/, '').trim();
+};
 const PERF_SOURCES = {
   meta: {
     name: 'Meta Ads',
@@ -1474,9 +1504,11 @@ const PERF_SOURCES = {
     clicks: '클릭',
     // 층을 하나 줄여 본다 — 캠페인 자리에 광고그룹, 광고그룹 자리에 소재를 넣는다.
     // 브랜드검색 캠페인은 계정에 한두 개뿐이라 그 층은 볼 것이 없다.
-    note: '검색광고 API 로 바로 받습니다. 브랜드검색은 정액(CPT) 상품이라 광고비가 고른 기간에 '
-      + '걸친 금액이고, **부가세 별도**입니다 (다른 매체와 더할 때 유의하세요). '
+    note: '검색광고 API 로 노출 · 클릭 · 전환을 바로 받습니다. '
+      + '**광고비는 매체가 주지 않습니다** — 브랜드검색은 정액(CPT) 이라 계약 금액이라서, '
+      + '아래 <b>브랜드검색 광고비</b> 칸에 적어 두면 기간에 맞춰 나눠 넣습니다 (부가세 별도로 적습니다). '
       + '캠페인 자리에 **광고그룹**, 광고그룹 자리에 **소재** 를 넣어 두 단으로 봅니다. '
+      + '몇 해 전에 멈춘 광고그룹 · 소재는 표에서 뺍니다. '
       + '전환 · 전환값은 프리미엄로그분석이 붙어 있어야 옵니다 — 안 오면 그 칸은 0 으로 보입니다.',
     fallback: [],
     token: '네이버 검색광고 API 키',
@@ -1632,7 +1664,7 @@ const SHEET_TIMEOUT = 60000;
 // (계정 전체는 4~12초). 60초에서 끊으면 화면은 실패로 보이는데 시트 쪽은 그 요청을 계속 돌리고 있고,
 // 다시 물을 때마다 Apps Script 가 같은 사람의 실행을 줄 세워 더 느려진다 — 끊을수록 나빠진다.
 // Apps Script 자체 한도가 6분이라 3분까지 기다려 준다.
-const SHEET_SLOW = /(Creatives|Report|Breakdown|budgetPlan|kolLive|promoCalendar|clarity)/;
+const SHEET_SLOW = /(Creatives|Report|Breakdown|kolLive|promoCalendar|clarity)/;
 const askBudget = (payload) => (SHEET_SLOW.test(String((payload && payload.action) || '')) ? 180000 : SHEET_TIMEOUT);
 
 const askSheetOnce = (payload) => {
@@ -7729,6 +7761,15 @@ if (mediaPerformance) {
   let query = '';        // 캠페인 · 광고그룹 이름 검색
   let picked = [];       // 고른 목적 · 유형 (여럿이면 OR)
 
+  /* 브랜드검색 광고비 — 정액(CPT) 이라 매체가 광고비를 주지 않는다. 계약 금액이라 사람만 안다.
+     여기서 적으면 시트 '브랜드검색비용' 탭에 담기고, 조회한 기간에 걸친 만큼 나뉘어
+     표의 광고비로 들어간다. 담는 곳이 시트라 다른 사람 화면에도 똑같이 보인다. */
+  let costRows = null;    // null = 아직 안 읽었다
+  let costStatus = '';    // '' · loading · saving · error
+  let costError = '';
+  let costOpen = false;
+  let costUrl = '';
+
   // 전매체 검색 — 광고그룹 이름으로 네 매체를 한 번에 훑는다.
   // 이름 규칙이 매체마다 같아서([cj-260901]_none_cj) 이름만으로 같은 행사를 모을 수 있다.
   let crossText = '';     // 입력 중인 검색어
@@ -8584,33 +8625,9 @@ if (mediaPerformance) {
     return lines.join('\n');
   };
 
-  // 캠페인명에서 제품을 발라낸다.
-  // 이름 규칙은 시트의 UTM 수식과 같다 — `소스_제품정식명_목적(영문)_…`
-  //   google_미닉스 더 플렌더(mini)_purchase              → 더 플렌더(mini)
-  //   facebook_미닉스 더 플렌더_더 플렌더(MAX)_traffic_…    → 더 플렌더(MAX)
-  //   google_미닉스 더 플렌더_더 플렌더(MAX)_branding-vvc #2 → 더 플렌더(MAX)
-  // 제품 정식명 안에도 _ 가 있어서(미닉스 더 플렌더_더 플렌더(MAX)) 목적 낱말을 찾아
-  // 그 앞까지를 제품으로 보고, 그 **마지막 토막**만 쓴다 ('미닉스 ' 는 뗀다).
-  // 규칙을 안 따르는 이름(옛 캠페인 · 네이버 수기 이름)은 발라내지 않는다 — 섞이면 더 헷갈린다.
-  // 목적 낱말은 '-' 앞까지만 보므로 sign-up 은 'sign' 으로 적는다
-  const PURPOSE_WORDS = ['purchase', 'traffic', 'branding', 'reach', 'participation', 'prospect',
-    'sign', 'signup', 'message', 'friend', 'view', 'engagement', 'conversion', 'lead',
-    'awareness', 'install', 'app', 'retarget', 'crm'];
-  const NO_PRODUCT = '(제품 미상)';
-
-  const productOf = (name) => {
-    const parts = String(name || '').split('_').map((one) => one.trim()).filter(Boolean);
-    if (parts.length < 3) return '';
-    let at = -1;
-    for (let i = 1; i < parts.length; i += 1) {
-      const head = parts[i].toLowerCase().split(/[-\s#(]/)[0];
-      if (PURPOSE_WORDS.indexOf(head) >= 0) { at = i; break; }
-    }
-    if (at < 2) return '';                       // 목적을 못 찾았거나 제품 자리가 없다
-    const last = parts.slice(1, at).pop() || '';
-    return last.replace(/^미닉스\s*/, '').trim();
-  };
-
+  // 캠페인명에서 제품을 발라낸다 (월별 예산도 같은 규칙을 쓴다 — perfProductOf)
+  const NO_PRODUCT = PERF_NO_PRODUCT;
+  const productOf = perfProductOf;
   /* 제품으로 묶는다 (묶음 하나가 파일 하나).
      매체로는 가르지 않는다 — 받는 쪽(행사별 결과 → 매체결과)이 매체 · 캠페인으로 다시 묶어
      보여 주기 때문이다. 단계는 파일 **안에서** 갈라 담는다. 행사별 결과는 제품마다 파일
@@ -9038,6 +9055,107 @@ if (mediaPerformance) {
     </ol>
   </div>`;
 
+  // ── 브랜드검색 광고비 ───────────────────────────────────────────
+  const costBlank = () => ({ target: '', since: '', until: '', cost: 0, note: '' });
+
+  const costLoad = () => {
+    costStatus = 'loading';
+    costError = '';
+    render();
+    ask({ action: 'naverSaCostGet' })
+      .then((body) => {
+        costRows = (body.rows || []).map((one) => ({
+          target: one.target || '',
+          since: one.since || '',
+          until: one.until || '',
+          cost: Number(one.cost) || 0,
+          note: one.note || '',
+        }));
+        costUrl = body.url || '';
+        costStatus = '';
+        render();
+      })
+      .catch((reason) => { costStatus = 'error'; costError = reason.message; render(); });
+  };
+
+  // 대상과 시작일이 빈 줄은 보내지 않는다 (적다 만 줄이다)
+  const costSave = () => {
+    const rows = (costRows || []).filter((one) => one.target.trim() && one.since);
+    costStatus = 'saving';
+    costError = '';
+    render();
+    ask({ action: 'naverSaCostPut', rows: rows })
+      .then(() => {
+        costRows = rows;
+        costStatus = '';
+        // 적은 금액이 표에 바로 보이게 성과를 다시 받는다 (숫자는 담아 둔 것을 쓰므로 빠르다)
+        loadReport(false);
+      })
+      .catch((reason) => { costStatus = 'error'; costError = reason.message; render(); });
+  };
+
+  /* 광고비를 적는 칸. 브랜드검색에서만 보인다.
+     대상 칸에는 지금 표에 있는 광고그룹 · 캠페인 이름을 목록으로 깔아 준다 —
+     골라도 되고 직접 적어도 된다 (id 로 적어도 찾는다). */
+  const costCard = () => {
+    if (state.source !== 'naverSa' || !report) return '';
+    const summary = report.cost || {};
+    const sheet = report.costUrl || costUrl;
+    const head = `<div class="tool-list-head">
+      <h3>브랜드검색 광고비 <small>정액(CPT) 이라 매체가 주지 않습니다 · 부가세 별도</small></h3>
+      <div class="tool-list-actions">
+        ${sheet ? `<a class="tool-copy" href="${escapeHtml(sheet)}" target="_blank" rel="noopener">시트에서 보기</a>` : ''}
+        <button type="button" class="tool-copy" data-cost="open">${costOpen ? '접기' : '적기'}</button>
+      </div>
+    </div>
+    <p class="perf-note">${summary.used
+    ? `이 기간에 <b>${money(Math.round(summary.total || 0))}</b> 를 넣었습니다 · 적어 둔 ${count(summary.rows || 0)}줄 중 ${count(summary.used)}줄`
+    : (summary.rows
+      ? `적어 둔 ${count(summary.rows)}줄이 있지만 <b>이 기간과 겹치지 않습니다</b>.`
+      : '아직 적어 둔 것이 없습니다. <b>적기</b> 를 눌러 대상 · 기간 · 금액을 넣어 주세요.')}</p>`;
+
+    if (!costOpen) return `<div class="tool-card">${head}</div>`;
+    if (costRows === null) {
+      return `<div class="tool-card">${head}
+        <p class="perf-note">${costStatus === 'error' ? escapeHtml(costError) : '적어 둔 줄을 읽는 중…'}</p></div>`;
+    }
+
+    const names = [];
+    (report.campaigns || []).forEach((row) => {
+      [row.name, row.campaignName].forEach((one) => {
+        if (one && names.indexOf(one) < 0) names.push(one);
+      });
+    });
+    const rows = costRows.length ? costRows : [costBlank()];
+    const busy = costStatus === 'saving';
+
+    return `<div class="tool-card">${head}
+      <div class="tool-table-wrap"><table class="tool-table perf-cost">
+        <thead><tr><th>대상 (광고그룹 · 캠페인)</th><th>시작일</th><th>종료일</th>
+          <th>광고비 (VAT 별도)</th><th>메모</th><th></th></tr></thead>
+        <tbody>${rows.map((one, at) => `<tr>
+          <td><input list="perf-cost-names" data-cost="target" data-at="${at}"
+            value="${escapeHtml(one.target)}" placeholder="광고그룹명 · 캠페인명"></td>
+          <td><input type="date" data-cost="since" data-at="${at}" value="${escapeHtml(one.since)}"></td>
+          <td><input type="date" data-cost="until" data-at="${at}" value="${escapeHtml(one.until)}"></td>
+          <td><input type="number" min="0" step="1000" data-cost="cost" data-at="${at}" value="${one.cost || ''}"></td>
+          <td><input data-cost="note" data-at="${at}" value="${escapeHtml(one.note)}" placeholder="9월 정액"></td>
+          <td><button type="button" class="tool-copy" data-cost="drop" data-at="${at}">빼기</button></td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      <datalist id="perf-cost-names">${names.map((one) => `<option value="${escapeHtml(one)}"></option>`).join('')}</datalist>
+      <div class="tool-list-actions" style="margin-top:10px">
+        <button type="button" class="tool-copy" data-cost="add">줄 추가</button>
+        <button type="button" class="tool-add" data-cost="save"${busy ? ' disabled' : ''}>${busy ? '저장하는 중…' : '저장'}</button>
+      </div>
+      ${costStatus === 'error' ? `<p class="perf-warn">${escapeHtml(costError)}</p>` : ''}
+      <p class="perf-note">기간은 <b>그 금액을 산 기간</b>입니다. 조회 기간과 겹친 날수만큼만 들어갑니다 —
+        9/1~9/30 에 300만원을 적어 두고 9/1~9/10 을 보면 100만원이 잡힙니다.
+        종료일을 비우면 아직 도는 중으로 봅니다.
+        캠페인명을 적으면 그 아래 광고그룹에, 광고그룹 금액은 다시 소재에 <b>클릭 비중</b>으로 나눕니다.</p>
+    </div>`;
+  };
+
   const render = () => {
     const body = () => {
       if (isAll()) return crossCard();
@@ -9051,7 +9169,7 @@ if (mediaPerformance) {
           + (missing ? guide() : '');
       }
       if (!report) return '<div class="tool-card perf-loading">광고 계정을 고르면 성과를 불러옵니다.</div>';
-      return stats() + delivery();
+      return stats() + costCard() + delivery();
     };
     mediaPerformance.innerHTML = `<div class="tool-head">
         <h2>매체별 성과 <small>${source().name}</small></h2>
@@ -9178,6 +9296,14 @@ if (mediaPerformance) {
   });
 
   mediaPerformance.addEventListener('change', (event) => {
+    // 브랜드검색 광고비 칸. 여기서 다시 그리면 글자마다 커서를 잃는다 — 값만 담아 둔다.
+    const cost = event.target.dataset.cost;
+    if (cost && costRows) {
+      const at = Number(event.target.dataset.at);
+      if (!costRows[at]) costRows[at] = costBlank();
+      costRows[at][cost] = cost === 'cost' ? (Number(event.target.value) || 0) : event.target.value;
+      return;
+    }
     const span = event.target.closest('[data-cross="span"]');
     if (span) {
       const name = span.dataset.phase;
@@ -9244,6 +9370,25 @@ if (mediaPerformance) {
   });
 
   mediaPerformance.addEventListener('click', (event) => {
+    const costBtn = event.target.closest('[data-cost]');
+    if (costBtn && costBtn.tagName === 'BUTTON') {
+      const what = costBtn.dataset.cost;
+      if (what === 'open') {
+        costOpen = !costOpen;
+        if (costOpen && costRows === null && costStatus !== 'loading') costLoad();
+        else render();
+        return;
+      }
+      if (what === 'add') { costRows = (costRows || []).concat(costBlank()); render(); return; }
+      if (what === 'drop') {
+        const at = Number(costBtn.dataset.at);
+        costRows = (costRows || []).filter((one, i) => i !== at);
+        render();
+        return;
+      }
+      if (what === 'save') { costSave(); return; }
+      return;
+    }
     const basis = event.target.closest('[data-perf="window"]');
     if (basis) {
       const key = basis.dataset.window || '';
@@ -10523,20 +10668,40 @@ if (pagePerformance) {
   loadList(false);
 }
 
-// ── 월별 예산 (퍼포먼스 마스터 시트) ─────────────────────────────────
-// 예산은 사람이 시트에 손으로 짠다. 이 화면은 그 시트를 **그림으로 다시 그린다** —
-// 숫자를 여기서 고치지 않는다. 고칠 일은 시트에서 하고, 여기서는 다시 받기만 누른다.
-// 값은 열 이름으로 찾는다. 달마다 줄이 늘고 줄어도 그대로 그려지게 하려는 것이다.
+// ── 월별 예산 (화면 안에서 짠다) ────────────────────────────────────
+// 예전에는 사람이 짜 둔 '퍼포먼스 마스터 시트' 를 읽어 그림으로만 보여 줬다. 고칠 일은 늘
+// 시트에서 해야 했고, 시트 모양이 조금만 바뀌어도 화면이 못 읽었다.
+// 이제는 **여기서 짜고 적재 시트(월별예산 탭)에 담는다.**
+//
+// 흐름은 위에서 아래로 하나다 — 아래에서 적은 것이 위로 합쳐 올라간다.
+//   ① 총 예산    그 달에 받은 예산을 사람이 적는다. 사용 · 잔여가 여기서 갈린다.
+//   ② 요약       고정비 · 세일즈 · 퍼포프젝 · 기타. 다른 메뉴에서 짤 값이라 자리만 잡아 둔다.
+//   ③ 카테고리별  더 플렌더 · 생활 가전. **적는 칸이 없다** — ④ 의 SKU 를 묶은 합이다.
+//   ④ 행사별     여기만 손으로 적는다. SKU 하나에 판매채널 줄이 여럿이고,
+//                줄마다 목표수량 × 목표 CPS = 광고비다. 그 합이 SKU 예산이 된다.
+//
+// 사용액은 손으로 적지 않는다. [사용액 불러오기] 를 누르면 매체별 성과가 쓰는 그 길로
+// 매체 · 계정을 차례로 불러 캠페인 광고비를 모으고, 캠페인명에서 제품을 발라내(perfProductOf)
+// SKU 에 붙인다. 한 번 받아 두면 시트에 담겨 다른 사람은 그냥 본다.
 const budgetPlanView = document.querySelector('#budget-plan');
 if (budgetPlanView) {
   const escape = perfEscape;
   const won = perfMoney('KRW');
   const num = perfCount;
+  const digitsOf = (value) => String(value ?? '').replace(/[^0-9]/g, '');
+  const commaNum = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
-  let plan = null;
-  let status = 'idle';
-  let error = '';
-  let folded = [];   // 접어 둔 프로모션 묶음 (처음에는 다 펴져 있다)
+  // 카테고리는 두 개로 고정한다. 늘릴 일이 생기면 여기만 고치면 된다 —
+  // 시트에는 SKU 마다 카테고리 이름이 글자로 담기므로 코드를 고쳐도 옛 값이 그대로 읽힌다.
+  const CATEGORIES = ['더 플렌더', '생활 가전'];
+
+  // 판매채널 고르개. 늘 쓰는 곳은 박아 두고, 설정 탭의 행사채널을 뒤에 잇는다.
+  // (설정 탭에 새 채널이 늘면 다시 배포하지 않아도 목록에 나온다)
+  const CHANNELS = [
+    ['온라인', ['네이버', '오늘의집', '카카오', '컬리', 'CJ온스타일', 'G마켓', '11번가', '29CM', '쿠팡', '자사몰']],
+    ['오프라인', ['e마트', '트레이더스', '전자랜드', '신세계백화점', '하이마트']],
+  ];
+  const KINDS = ['온라인', '오프라인'];
 
   // 억 · 만으로 줄여 적는다. '345,000,000' 만 두면 볼 때마다 자리 수를 세게 되고,
   // 반대로 억으로만 쓰면 45만원이 '0.00억' 이 되어 없는 돈처럼 보인다.
@@ -10551,331 +10716,564 @@ if (budgetPlanView) {
     if (size >= 10000) return `${num(number / 10000)}만`;
     return num(number);
   };
+  const pct = (part, whole) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : '—');
 
-  // 돈이 아닌 칸. 여기에 억 · 만을 붙이면 'CPS 7만' 처럼 되어 견줄 수 없다.
-  const PLAIN_COLUMNS = ['목표수량', 'CPS', '가중치', '비고', '실 판매수량', 'ROAS', 'CVR', 'CPC', 'CPA'];
-  const isPlain = (name) => PLAIN_COLUMNS.some((one) => String(name || '').indexOf(one) >= 0);
+  // 제품 이름은 곳마다 조금씩 다르게 적힌다 — 설정 탭은 '더플렌더MAX', 캠페인명은
+  // '더 플렌더(MAX)'. 띄어쓰기 · 괄호 · 대소문자를 지워 같은 열쇠로 만든다.
+  const skuKey = (name) => String(name || '').toLowerCase().replace(/[\s()_·\-.]/g, '');
 
-  // 값이 없는 칸('-' · 빈 칸)과 0 을 가른다. 0 은 '안 쓴다'고 적어 둔 것이라 그대로 보여 준다.
-  const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
-  const columnAt = (table, ...names) => {
-    for (const name of names) {
-      const at = table.columns.findIndex((one) => one === name);
-      if (at >= 0) return at;
-    }
-    for (const name of names) {
-      const at = table.columns.findIndex((one) => one.indexOf(name) >= 0);
-      if (at >= 0) return at;
-    }
-    return -1;
+  const today = new Date();
+  const thisMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+
+  let month = thisMonth;
+  let months = [];
+  let plan = { skus: [], rows: [] };
+  let total = 0;                 // 그 달 총 예산 (사람이 적는다)
+  let spend = null;              // 매체에서 받아 온 사용액
+  let saved = { at: '', by: '' };
+  let skuList = [];              // 설정 탭 상품명 (SKU 고르개)
+  let sheetChannels = [];        // 설정 탭 행사채널
+  let picked = '';               // 지금 보고 있는 SKU ('' 면 전부)
+  let status = 'idle';
+  let error = '';
+  let note = '';                 // 저장 · 불러오기 알림 한 줄
+  let pulling = null;            // 사용액 받는 중 { done, all, now }
+  let sheetUrl = '';
+
+  const uid = () => `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+  // ── 계산 ────────────────────────────────────────────────────────
+  // 적는 곳은 ④ 뿐이라 나머지 숫자는 모두 여기서 만든다. 한 군데서 만들어야
+  // 카드 · 표가 서로 다른 값을 말하지 않는다.
+  const skuOf = (name) => plan.skus.find((one) => one.name === name);
+  const brandOn = (name) => Boolean((skuOf(name) || {}).brand);
+
+  const rowCost = (row) => {
+    const base = (Number(row.goal) || 0) * (Number(row.cps) || 0);
+    return base + (brandOn(row.sku) ? (Number(row.brand) || 0) : 0);
   };
-  const cellOf = (table, row, ...names) => {
-    const at = columnAt(table, ...names);
-    return at < 0 ? undefined : row[at];
-  };
-  const numberOf = (table, row, ...names) => {
-    const found = cellOf(table, row, ...names);
-    return isNumber(found) ? found : null;
-  };
-  const textOf = (table, row, ...names) => {
-    const found = cellOf(table, row, ...names);
-    return found === undefined || found === null ? '' : String(found);
+  const rowsOf = (name) => plan.rows.filter((row) => row.sku === name);
+
+  const skuSum = (name) => {
+    const rows = rowsOf(name);
+    const budget = rows.reduce((sum, row) => sum + rowCost(row), 0);
+    const goal = rows.reduce((sum, row) => sum + (Number(row.goal) || 0), 0);
+    return { rows: rows.length, budget, goal, cps: goal > 0 ? budget / goal : 0 };
   };
 
-  // 막대 한 줄. 마이너스(예산을 넘긴 예비비)는 빨강으로 그린다 —
-  // 크기로만 그리면 '-6,450만' 이 '+6,450만' 과 똑같이 보인다.
-  const barRow = (label, value, peak, note) => {
-    const number = Number(value) || 0;
-    const size = peak > 0 ? Math.min(100, (Math.abs(number) / peak) * 100) : 0;
-    return `<div class="budget-bar${number < 0 ? ' is-minus' : ''}">
-      <span class="budget-bar-name">${escape(label)}</span>
-      <span class="budget-bar-track"><i style="width:${size.toFixed(1)}%"></i></span>
-      <b class="budget-bar-value" title="${escape(isNumber(value) ? won(value) : '')}">${isNumber(value) ? eok(number) : '—'}</b>
-      <small>${escape(note || '')}</small>
-    </div>`;
-  };
-
-  // 한 줄을 항목별 막대로 그린다 (고정비 · 세일즈 · 마케팅팀 · 기타 · 퍼포 프로젝트 · 예비비)
-  const PART_NAMES = ['고정비', '세일즈', '행사', '마케팅팀', '기타', '퍼포 프로젝트', '퍼포프로젝트', '예비비'];
-  const partBars = (table, row) => {
-    const parts = [];
-    table.columns.forEach((name, at) => {
-      if (PART_NAMES.indexOf(name) < 0) return;
-      if (!isNumber(row[at])) return;
-      parts.push({ name, value: row[at] });
+  // 이 SKU 로 잡힌 실제 광고비. 캠페인명에서 발라낸 제품 이름을 열쇠로 견준다.
+  const skuSpend = (name) => {
+    if (!spend || !spend.byProduct) return null;
+    const want = skuKey(name);
+    let found = 0;
+    Object.keys(spend.byProduct).forEach((product) => {
+      if (skuKey(product) === want) found += spend.byProduct[product];
     });
-    if (!parts.length) return '';
-    const peak = Math.max(...parts.map((part) => Math.abs(part.value)), 0);
-    const total = parts.reduce((sum, part) => sum + (part.value > 0 ? part.value : 0), 0);
-    return `<div class="budget-bars">${parts.map((part) => barRow(part.name, part.value, peak,
-      part.value > 0 && total ? `${Math.round((part.value / total) * 100)}%`
-        : (part.value < 0 ? '예산 초과' : ''))).join('')}</div>`;
+    return found;
   };
 
-  // ── 종합 ────────────────────────────────────────────────────────
-  const hero = () => {
-    const table = plan.category;
-    if (!table || !table.total) return '';
-    const row = table.total;
-    const budget = numberOf(table, row, '총 퍼포먼스 예산', '예산');
-    const goal = numberOf(table, row, '총 목표수량', '목표수량');
-    const cps = numberOf(table, row, 'CPS');
-    return `<div class="tool-card budget-hero">
-      <div class="budget-hero-main">
-        <div class="budget-hero-big">
-          <small>총 퍼포먼스 예산</small>
-          <strong>${eok(budget)}</strong>
-          <em>${budget === null ? '—' : won(budget)}</em>
-        </div>
-        <div class="budget-hero-side">
-          <span><small>총 목표수량</small><b>${goal === null ? '—' : `${num(goal)}대`}</b></span>
-          <span><small>CPS</small><b>${cps === null ? '—' : won(cps)}</b></span>
-        </div>
+  const planned = () => plan.skus.reduce((sum, one) => sum + skuSum(one.name).budget, 0);
+
+  const categorySum = (category) => {
+    const mine = plan.skus.filter((one) => one.category === category);
+    const budget = mine.reduce((sum, one) => sum + skuSum(one.name).budget, 0);
+    const goal = mine.reduce((sum, one) => sum + skuSum(one.name).goal, 0);
+    const used = spend ? mine.reduce((sum, one) => sum + (skuSpend(one.name) || 0), 0) : null;
+    return { skus: mine, budget, goal, used };
+  };
+
+  // ── 그리기 ──────────────────────────────────────────────────────
+  const statBox = (label, value, hint, klass) => `<span class="bg-stat${klass ? ` ${klass}` : ''}">
+    <small>${escape(label)}</small><b>${value}</b>${hint ? `<em>${hint}</em>` : ''}</span>`;
+
+  // ① 총 예산 — 위에서 적는 칸은 이것 하나뿐이다
+  const heroCard = () => {
+    const used = spend ? spend.total : null;
+    const left = used === null ? null : total - used;
+    const plan1 = planned();
+    return `<div class="tool-card bg-hero">
+      <div class="bg-hero-head">
+        <h3>퍼포먼스 ${escape(month.slice(2, 4))}년 ${escape(String(Number(month.slice(5, 7))))}월 총 예산</h3>
+        <label class="bg-total">받은 예산
+          <input type="text" inputmode="numeric" data-bg="total" value="${escape(total ? commaNum(total) : '')}"
+            placeholder="0"></label>
       </div>
-      ${partBars(table, row)}
+      <div class="bg-stats">
+        ${statBox('총 예산', eok(total), total ? won(total) : '적어 주세요')}
+        ${statBox('총 잔여', left === null ? '—' : eok(left),
+    used === null ? '사용액을 아직 안 받았습니다' : won(left), left !== null && left < 0 ? 'is-over' : '')}
+        ${statBox('사용(%)', used === null ? '—' : pct(used, total), used === null ? '' : `${eok(used)} 사용`)}
+        ${statBox('잔여(%)', left === null ? '—' : pct(left, total), used === null ? '' : `계획 ${eok(plan1)}`)}
+      </div>
+      <p class="bg-line bg-hero-line${total && plan1 > total ? ' is-over' : ''}">${!total || !plan1 ? ''
+    : `아래 행사별로 짜 둔 예산은 <b>${eok(plan1)}</b> 입니다 — ${plan1 > total
+      ? `받은 예산보다 <b>${eok(plan1 - total)}</b> 많습니다.`
+      : `아직 <b>${eok(total - plan1)}</b> 안 짰습니다.`}`}</p>
     </div>`;
   };
 
-  // ── 카테고리 (더 플렌더 · 생활가전) ───────────────────────────────
-  const categories = () => {
-    const table = plan.category;
-    if (!table || !table.rows.length) return '';
-    return `<div class="budget-grid">${table.rows.map((row) => {
-      const budget = numberOf(table, row, '총 퍼포먼스 예산', '예산');
-      const goal = numberOf(table, row, '총 목표수량', '목표수량');
-      const cps = numberOf(table, row, 'CPS');
-      return `<div class="tool-card budget-card">
-        <div class="budget-card-head">
-          <h3>${escape(String(row[0] || ''))}</h3>
-          <span><b>${eok(budget)}</b><small>${budget === null ? '' : won(budget)}</small></span>
-        </div>
-        <div class="budget-chips">
-          <span><small>목표수량</small><b>${goal === null ? '—' : `${num(goal)}대`}</b></span>
-          <span><small>CPS</small><b>${cps === null ? '—' : won(cps)}</b></span>
-        </div>
-        ${partBars(table, row)}
-      </div>`;
-    }).join('')}</div>`;
+  // ② 요약 — 값이 다른 메뉴에서 온다. 자리만 잡고 무엇이 들어올지 적어 둔다.
+  // (빈 도넛에 0 을 그려 두면 '안 쓴 돈' 으로 잘못 읽힌다. 그래서 숫자를 그리지 않는다)
+  const SUMMARY_PARTS = ['고정비', '세일즈', '퍼포프젝', '기타'];
+  const summaryCard = () => `<div class="tool-card bg-summary">
+    <div class="tool-list-head"><h3>요약 <small>회색 = 부여된 비용 · 색 = 사용한 비용</small></h3></div>
+    <div class="bg-rings">${SUMMARY_PARTS.map((name) => `<div class="bg-ring">
+      <span class="bg-ring-mark"></span><b>${escape(name)}</b><small>연결 예정</small></div>`).join('')}</div>
+    <p class="perf-note">이 네 항목은 <b>다른 메뉴에서 짤 값</b>이라 아직 이어 두지 않았습니다.
+      그 화면이 생기면 여기에 부여 · 사용 금액을 그립니다.</p>
+  </div>`;
+
+  // ③ 카테고리별 — 적는 칸이 없다. ④ 의 SKU 를 묶은 합이다.
+  const categoryCards = () => `<div class="bg-grid">${CATEGORIES.map((name) => {
+    const one = categorySum(name);
+    const left = one.used === null ? null : one.budget - one.used;
+    return `<div class="tool-card bg-card">
+      <div class="bg-card-head"><h3>${escape(name)}</h3>
+        <small>${one.skus.length ? `SKU ${num(one.skus.length)}개` : 'SKU 없음'}</small></div>
+      <div class="bg-stats">
+        ${statBox('총 예산', eok(one.budget), one.budget ? won(one.budget) : '')}
+        ${statBox('총 잔여', left === null ? '—' : eok(left), '', left !== null && left < 0 ? 'is-over' : '')}
+        ${statBox('총 목표수량', one.goal ? `${num(one.goal)}대` : '—', '')}
+        ${statBox('사용(%)', one.used === null ? '—' : pct(one.used, one.budget), '')}
+        ${statBox('잔여(%)', left === null ? '—' : pct(left, one.budget), '')}
+      </div>
+      ${one.skus.length ? `<ul class="bg-card-skus">${one.skus.map((sku) => {
+    const sum = skuSum(sku.name);
+    return `<li><b>${escape(sku.name)}</b><span>${eok(sum.budget)}</span>
+      <span>${sum.goal ? `${num(sum.goal)}대` : '—'}</span></li>`;
+  }).join('')}</ul>` : ''}
+    </div>`;
+  }).join('')}</div>`;
+
+  // ④ 행사별 — 여기만 손으로 적는다
+  const channelOptions = (value) => {
+    const extra = sheetChannels.filter((one) => !CHANNELS.some(([, list]) => list.indexOf(one) >= 0));
+    const groups = CHANNELS.concat(extra.length ? [['그 밖', extra]] : []);
+    return `<option value=""${value ? '' : ' selected'}>선택</option>${groups.map(([label, list]) =>
+    `<optgroup label="${escape(label)}">${list.map((one) => `<option${one === value ? ' selected' : ''}>${escape(one)}</option>`).join('')}</optgroup>`).join('')}`;
   };
 
-  // ── 표 (SKU별 · 고정비) ─────────────────────────────────────────
-  // 첫 숫자 칸에는 막대를 겹쳐 둔다. 어디에 몰려 있는지 숫자만으로는 안 보인다.
-  const matrix = (table, title, note) => {
-    if (!table || !table.rows.length) return '';
-    // 통째로 빈 열은 뺀다 (그 달에 안 쓴 칸). 점만 찍힌 열이 표를 넓히기만 한다.
-    const filled = (value) => value !== '' && value !== undefined && value !== null;
-    // 종합 줄만 0 인 열(그 달에 안 쓴 CPS · 비고)도 뺀다. 0 만 적힌 열은 읽을 것이 없다.
-    const keep = table.columns.map((name, at) => at === 0
-      || table.rows.some((row) => filled(row[at]))
-      || Boolean(table.total && filled(table.total[at]) && table.total[at] !== 0));
-    const columns = table.columns.filter((name, at) => keep[at]);
-    const groups = table.groups ? table.groups.filter((name, at) => keep[at]) : null;
-    const pick = (row) => row.filter((value, at) => keep[at]);
+  const eventRow = (row, skuBudget) => {
+    const cost = rowCost(row);
+    const id = escape(row.id);
+    return `<tr>
+      <td><select data-bg="kind" data-row="${id}">${KINDS.map((one) =>
+    `<option${one === row.kind ? ' selected' : ''}>${escape(one)}</option>`).join('')}</select></td>
+      <td><select data-bg="channel" data-row="${id}">${channelOptions(row.channel)}</select></td>
+      <td class="bg-span"><input type="date" data-bg="since" data-row="${id}" value="${escape(row.since || '')}"><i>~</i><input type="date" data-bg="until" data-row="${id}" value="${escape(row.until || '')}"></td>
+      <td class="perf-num"><input type="text" inputmode="numeric" class="bg-num" data-bg="goal" data-row="${id}" value="${escape(row.goal ? commaNum(row.goal) : '')}" placeholder="0"></td>
+      <td class="perf-num"><span data-calc="weight-${id}">${pct(cost, skuBudget)}</span></td>
+      <td class="perf-num"><input type="text" inputmode="numeric" class="bg-num" data-bg="cps" data-row="${id}" value="${escape(row.cps ? commaNum(row.cps) : '')}" placeholder="0"></td>
+      ${brandOn(row.sku) ? `<td class="perf-num"><input type="text" inputmode="numeric" class="bg-num" data-bg="brand" data-row="${id}" value="${escape(row.brand ? commaNum(row.brand) : '')}" placeholder="0"></td>` : ''}
+      <td class="perf-num bg-cost"><span data-calc="cost-${id}">${cost ? won(cost) : '—'}</span></td>
+      <td class="bg-kill"><button type="button" data-bg="drop" data-row="${id}" title="이 줄을 지웁니다"><i data-lucide="x"></i></button></td>
+    </tr>`;
+  };
 
-    const barAt = columns.findIndex((name, at) => at > 0 && !isPlain(name)
-      && table.rows.some((row) => isNumber(pick(row)[at]) && pick(row)[at] > 0));
-    const peak = barAt < 0 ? 0
-      : Math.max(...table.rows.map((row) => (isNumber(pick(row)[barAt]) ? pick(row)[barAt] : 0)), 0);
-
-    const cell = (value, at) => {
-      if (!isNumber(value)) {
-        return `<td class="perf-num"><span class="tool-blank">${value === '' ? '·' : escape(String(value))}</span></td>`;
-      }
-      const size = at === barAt && peak > 0 ? Math.min(100, (Math.abs(value) / peak) * 100) : 0;
-      const text = isPlain(columns[at]) ? num(value) : eok(value);
-      return `<td class="perf-num${value < 0 ? ' is-minus' : ''}">${size
-        ? `<span class="budget-cell-bar" style="width:${size.toFixed(1)}%"></span>` : ''
-      }<span title="${escape(won(value))}">${escape(text)}</span></td>`;
-    };
-    const line = (row, klass) => `<tr class="${klass || ''}">
-      <td class="perf-name"><span>${escape(String(row[0] || '')) || '·'}</span></td>
-      ${pick(row).slice(1).map((value, at) => cell(value, at + 1)).join('')}</tr>`;
-
-    // 묶음 머리글(세일즈팀 · 마케팅팀 FU)은 이어지는 칸만큼 넓혀 얹는다
-    const groupRow = () => {
-      if (!groups) return '';
-      const cells = [];
-      let at = 0;
-      while (at < groups.length) {
-        const name = groups[at];
-        let span = 1;
-        while (at + span < groups.length && groups[at + span] === name) span += 1;
-        cells.push(`<th colspan="${span}">${escape(name || '')}</th>`);
-        at += span;
-      }
-      return `<tr class="budget-group-row">${cells.join('')}</tr>`;
-    };
-
-    return `<div class="tool-card">
-      <div class="tool-list-head"><h3>${escape(title)}${note ? ` <small>${escape(note)}</small>` : ''}</h3></div>
-      <div class="tool-table-wrap"><table class="tool-table budget-table">
-        <thead>${groupRow()}
-          <tr>${columns.map((name, at) => `<th${at ? ' class="perf-num"' : ''}>${escape(name)}</th>`).join('')}</tr>
-        </thead>
-        <tbody>
-          ${table.rows.map((row) => line(row)).join('')}
-          ${table.total ? line(table.total, 'budget-total') : ''}
-        </tbody>
+  const skuPanel = (sku) => {
+    const sum = skuSum(sku.name);
+    const used = skuSpend(sku.name);
+    const share = planned() > 0 ? sum.budget / planned() : 0;
+    const rows = rowsOf(sku.name);
+    const name = escape(sku.name);
+    return `<div class="tool-card bg-sku" data-sku="${name}">
+      <div class="bg-sku-head">
+        <span class="bg-sku-name">${name}</span>
+        <label class="bg-cat">카테고리
+          <select data-bg="category" data-sku="${name}">${CATEGORIES.map((one) =>
+    `<option${one === sku.category ? ' selected' : ''}>${escape(one)}</option>`).join('')}</select></label>
+        <button type="button" class="bg-drop-sku" data-bg="dropSku" data-sku="${name}"
+          title="이 SKU 를 이 달에서 뺍니다">SKU 빼기</button>
+      </div>
+      <div class="bg-stats">
+        ${statBox('총 행사', `${num(sum.rows)}건`, '')}
+        ${statBox('총 예산', eok(sum.budget), sum.budget ? won(sum.budget) : '')}
+        ${statBox('총 목표수량', sum.goal ? `${num(sum.goal)}대` : '—', '')}
+        ${statBox('총 CPS', sum.cps ? won(sum.cps) : '—', '예산 ÷ 목표수량')}
+        ${statBox('비중(%)', pct(sum.budget, planned()), '전체 계획 대비')}
+      </div>
+      <span class="bg-weight"><i style="width:${Math.min(100, share * 100).toFixed(1)}%"></i></span>
+      <p class="bg-line">${used === null ? '사용액을 아직 안 받았습니다.'
+    : `실제 사용 <b>${eok(used)}</b> · 잔여 <b>${eok(sum.budget - used)}</b> (${pct(used, sum.budget)} 사용)`}</p>
+      <div class="bg-tools">
+        <label class="bg-check"><input type="checkbox" data-bg="brandOn" data-sku="${name}"${sku.brand ? ' checked' : ''}>브검포함</label>
+        <small>체크하면 줄마다 <b>브검비</b> 칸이 생기고 그 값이 광고비 · 예산에 들어갑니다.</small>
+      </div>
+      <div class="tool-table-wrap"><table class="tool-table bg-table">
+        <thead><tr>
+          <th>구분</th><th>판매채널</th><th>광고기간</th><th class="perf-num">목표수량</th>
+          <th class="perf-num">가중치<small>광고비÷총예산</small></th><th class="perf-num">목표 CPS</th>
+          ${sku.brand ? '<th class="perf-num">브검비</th>' : ''}
+          <th class="perf-num">광고비<small>CPS×목표수량</small></th><th></th>
+        </tr></thead>
+        <tbody>${rows.length ? rows.map((row) => eventRow(row, sum.budget)).join('')
+    : `<tr><td colspan="${sku.brand ? 9 : 8}" class="bg-none">아직 행사가 없습니다. 아래에서 줄을 더해 주세요.</td></tr>`}</tbody>
       </table></div>
+      <button type="button" class="tool-add bg-add" data-bg="add" data-sku="${name}">
+        <i data-lucide="plus"></i>행사 줄 추가</button>
     </div>`;
   };
 
-  // 고정비는 '어느 항목에 얼마' 가 먼저 궁금하다. 종합 줄을 큰 것부터 막대로 그린다.
-  const fixedBars = () => {
-    const table = plan.fixed;
-    if (!table || !table.total) return '';
-    const parts = [];
-    table.columns.forEach((name, at) => {
-      if (!at || !isNumber(table.total[at]) || table.total[at] <= 0) return;
-      parts.push({ name, value: table.total[at] });
-    });
-    if (!parts.length) return '';
-    parts.sort((a, b) => b.value - a.value);
-    const total = parts.reduce((sum, part) => sum + part.value, 0);
-    return `<div class="budget-bars budget-bars-wide">${parts.map((part) => barRow(part.name, part.value,
-      parts[0].value, `${Math.round((part.value / total) * 100)}%`)).join('')}</div>`;
-  };
-
-  // ── 프로모션 ────────────────────────────────────────────────────
-  // 시트에서 병합해 둔 칸은 빈 값으로 온다. 같은 프로모션의 둘째 SKU 줄이라
-  // 위 줄의 이름을 물려받아 한 장의 카드로 묶는다 (카카오톡딜 위크 = max + mini).
-  const promoCards = (table) => {
-    const groups = [];
-    let last = null;
-    table.rows.forEach((row) => {
-      const own = textOf(table, row, '프로모션명');
-      const name = own || (last ? last.name : '');
-      const keep = (label, fallback) => textOf(table, row, label) || (own ? '' : fallback);
-      const kind = keep('구분', last ? last.kind : '');
-      const when = keep('라이브/행사일정', last ? last.when : '');
-      const span = keep('광고 기간', last ? last.span : '');
-      if (!last || last.name !== name || last.when !== when) {
-        last = { name, kind, when, span, lines: [] };
-        groups.push(last);
-      }
-      last.lines.push({
-        sku: textOf(table, row, 'SKU'),
-        goal: numberOf(table, row, '실 목표수량', '목표수량'),
-        cps: numberOf(table, row, 'CPS(브검포함기준)', 'CPS'),
-        weight: numberOf(table, row, '가중치'),
-        budget: numberOf(table, row, '예산 (브검포함)') ?? numberOf(table, row, '예산 (미포함)', '예산'),
-        spent: numberOf(table, row, '실 사용비(브검포함)') ?? numberOf(table, row, '실 사용비(브검미포함)'),
-      });
-    });
-
-    return `<div class="budget-promos">${groups.map((group) => {
-      const sum = (key) => group.lines.reduce((total, line) => total + (line[key] || 0), 0);
-      const budget = sum('budget');
-      const goal = sum('goal');
-      const weight = sum('weight');
-      const spent = sum('spent');
-      return `<article class="budget-promo">
-        <div class="budget-promo-head">
-          <span class="budget-tag${group.kind.indexOf('오프') === 0 ? ' is-off' : ''}">${escape(group.kind || '구분 없음')}</span>
-          <small>${escape(group.when || group.span || '')}</small>
-        </div>
-        <h4>${escape(group.name || '(이름 없음)')}</h4>
-        <div class="budget-promo-sum">
-          <span><small>예산</small><b>${budget ? eok(budget) : '—'}</b></span>
-          <span><small>목표</small><b>${goal ? `${num(goal)}대` : '—'}</b></span>
-          <span><small>비중</small><b>${weight ? `${Math.round(weight * 100)}%` : '—'}</b></span>
-        </div>
-        <span class="budget-weight"><i style="width:${Math.min(100, (weight || 0) * 100).toFixed(1)}%"></i></span>
-        <ul class="budget-promo-lines">${group.lines.map((line) => `<li>
-          <b>${escape(line.sku || '·')}</b>
-          <span>${line.goal === null ? '—' : `${num(line.goal)}대`}</span>
-          <span>${line.cps === null ? '—' : won(line.cps)}</span>
-          <span>${line.budget === null ? '—' : eok(line.budget)}</span>
-        </li>`).join('')}</ul>
-        ${spent ? `<p class="budget-promo-real">실 사용 ${eok(spent)}</p>` : ''}
-        ${group.span && group.span !== group.when ? `<p class="budget-promo-span">광고 기간 ${escape(group.span)}</p>` : ''}
-      </article>`;
-    }).join('')}</div>`;
-  };
-
-  const promos = () => (plan.promos || []).map((table) => {
-    const budget = table.total
-      ? (numberOf(table, table.total, '예산 (브검포함)') || 0) + (numberOf(table, table.total, '예산 (미포함)') || 0)
-      : 0;
-    const goal = table.total ? numberOf(table, table.total, '실 목표수량', '목표수량') : null;
-    const open = folded.indexOf(table.name) < 0;
-    return `<div class="tool-card">
-      <div class="tool-list-head budget-promo-title">
-        <h3>${escape(table.name)}
-          <small>예산 ${eok(budget)}${goal ? ` · 목표 ${num(goal)}대` : ''} · ${num(table.rows.length)}줄</small></h3>
-        <button type="button" class="tool-copy-all" data-budget="fold" data-name="${escape(table.name)}">
-          <i data-lucide="${open ? 'chevron-up' : 'chevron-down'}"></i>${open ? '접기' : '펼치기'}</button>
+  const events = () => {
+    const shown = picked ? plan.skus.filter((one) => one.name === picked) : plan.skus;
+    return `<div class="tool-card bg-pick">
+      <div class="perf-filter">
+        <label class="bg-cat">SKU 선택
+          <select data-bg="pick">
+            <option value=""${picked ? '' : ' selected'}>전체 (${num(plan.skus.length)}개)</option>
+            ${plan.skus.map((one) => `<option value="${escape(one.name)}"${one.name === picked ? ' selected' : ''}>${escape(one.name)}</option>`).join('')}
+          </select></label>
+        <label class="bg-cat">SKU 추가
+          <select data-bg="addSku">
+            <option value="" selected>고르기</option>
+            ${skuList.filter((one) => !skuOf(one)).map((one) => `<option>${escape(one)}</option>`).join('')}
+          </select></label>
       </div>
-      ${open ? promoCards(table) : ''}
+      <p class="perf-note">설정 탭의 상품명을 그대로 씁니다. 여기서 고른 SKU 만 이 달의 예산에 들어갑니다.</p>
+    </div>
+    ${shown.length ? shown.map(skuPanel).join('')
+    : '<div class="tool-card page-todo"><h3>SKU 를 먼저 고르세요</h3><ul><li>위 <b>SKU 추가</b> 에서 이 달에 돌릴 상품을 고르면 행사 표가 열립니다.</li></ul></div>'}`;
+  };
+
+  // 사용액 받기 — 몇 분 걸리는 일이라 어디까지 왔는지 계속 보여 준다
+  const spendCard = () => {
+    if (pulling) {
+      return `<div class="tool-card bg-pull">
+        <p class="page-loading">사용액을 받는 중… <b>${num(pulling.done)}/${num(pulling.all)}</b>${pulling.now ? ` · ${escape(pulling.now)}` : ''}</p>
+        <p class="perf-note">매체 · 계정을 하나씩 차례로 부릅니다 (한꺼번에 던지면 구글이 줄을 세워 더 느립니다).
+          몇 분 걸립니다 — 이 화면을 켜 두시면 됩니다.</p>
+      </div>`;
+    }
+    if (!spend) {
+      return `<div class="tool-card bg-pull">
+        <p class="perf-note"><b>사용액을 아직 안 받았습니다.</b> 위 <b>사용액 불러오기</b> 를 누르면
+          메타 · 구글 · 카카오 · GFA · 브랜드검색의 그 달 광고비를 모아,
+          캠페인명(<b>소스_제품_목적</b>)에서 제품을 발라 SKU 에 붙입니다.</p>
+      </div>`;
+    }
+    const bad = (spend.media || []).filter((one) => one.error);
+    const loose = Object.keys(spend.byProduct || {})
+      .filter((name) => !plan.skus.some((one) => skuKey(one.name) === skuKey(name)))
+      .sort((a, b) => spend.byProduct[b] - spend.byProduct[a]);
+    return `<div class="tool-card bg-pull">
+      <div class="tool-list-head"><h3>사용액
+        <small>${escape(spend.range.since)} ~ ${escape(spend.range.until)} · 받은 때 ${escape(new Date(spend.fetchedAt).toLocaleString('ko-KR'))}</small></h3></div>
+      <div class="bg-media">${(spend.media || []).map((one) => `<span class="bg-media-one${one.error ? ' is-bad' : ''}">
+        <small>${escape(one.name)}</small><b>${one.error ? '못 받음' : eok(one.spend)}</b></span>`).join('')}</div>
+      ${bad.length ? `<p class="perf-warn">계정 ${num(bad.length)}개를 못 받았습니다 — 그만큼 사용액이 적게 잡힙니다.
+        <small>${escape(bad.map((one) => `${one.name}: ${one.error}`).join(' · '))}</small></p>` : ''}
+      ${loose.length ? `<p class="perf-note"><b>SKU 에 안 붙은 광고비</b>
+        ${escape(loose.slice(0, 8).map((name) => `${name} ${eok(spend.byProduct[name])}`).join(' · '))}${loose.length > 8 ? ` 외 ${num(loose.length - 8)}개` : ''}
+        <small>캠페인명이 규칙을 안 따르거나, 그 SKU 를 이 달에 안 고른 것입니다.
+          맨 위 총 사용액에는 그대로 들어갑니다.</small></p>` : ''}
     </div>`;
-  }).join('');
+  };
+
+  const monthPick = () => {
+    const list = months.slice();
+    if (list.indexOf(month) < 0) list.push(month);
+    if (list.indexOf(thisMonth) < 0) list.push(thisMonth);
+    list.sort();
+    return `<select data-bg="month">${list.map((one) => `<option${one === month ? ' selected' : ''}>${escape(one)}</option>`).join('')}</select>`;
+  };
+
+  // 저장 알림 한 줄. 이 줄만 따로 갈아 끼운다 — 자동 저장 때마다 화면을 다시 그리면
+  // 지금 치고 있던 칸에서 커서가 튄다.
+  const noteLine = () => `<p class="perf-note bg-note${error ? ' bg-note-bad' : ''}">${error ? escape(error)
+    : `${saved.at ? `마지막 저장 ${escape(new Date(saved.at).toLocaleString('ko-KR'))}${saved.by ? ` · ${escape(saved.by)}` : ''}`
+      : '아직 저장한 적이 없습니다.'}${note ? ` · ${escape(note)}` : ''} · 고친 값은 <b>손을 떼면 저절로</b> 담깁니다.`}</p>`;
+
+  const paintNote = () => {
+    const at = budgetPlanView.querySelector('.bg-note');
+    if (!at) return;
+    const box = document.createElement('div');
+    box.innerHTML = noteLine();
+    at.replaceWith(box.firstElementChild);
+  };
 
   const render = () => {
-    if (!plan) {
+    if (status === 'loading') {
       budgetPlanView.innerHTML = `<div class="tool-head"><h2>월별 예산</h2></div>
-        ${status === 'error' ? `<p class="perf-warn">${escape(error)}</p>
-          <div class="tool-card page-todo"><h3>시트를 읽지 못했습니다</h3>
-            <ul><li>Apps Script 를 <b>새 버전으로 다시 배포</b>했는지 확인해 주세요</li>
-              <li>시트 접근 권한이 있어야 합니다 (링크가 있는 사람 보기 이상)</li></ul></div>`
-    : '<div class="tool-card page-loading">시트를 읽는 중…</div>'}`;
+        <div class="tool-card page-loading">${escape(month)} 예산을 읽는 중…</div>`;
       lucide.createIcons();
       return;
     }
-
     budgetPlanView.innerHTML = `<div class="tool-head">
-        <h2>월별 예산 <small>${escape(plan.title || plan.bookName || '')}</small></h2>
-        <p>세일즈 퍼포먼스 예산 시트를 그림으로 그립니다. 숫자를 고칠 일은 시트에서 하시고,
-          여기서는 <b>다시 받기</b>를 누르면 됩니다.</p>
+        <h2>월별 예산</h2>
+        <p>이 화면에서 <b>직접 짭니다</b>. 아래 <b>행사별</b>에 적으면 카테고리 · 총 예산이 저절로 합쳐 올라갑니다.
+          적은 값은 적재 시트의 <b>월별예산</b> 탭에 담겨 팀이 같이 봅니다.</p>
       </div>
       <div class="tool-card">
         <div class="perf-filter">
-          <a class="tool-add" href="${escape(plan.url)}" target="_blank" rel="noopener">
-            <i data-lucide="external-link"></i>시트 열기</a>
-          <button type="button" class="tool-copy-all" data-budget="refresh"${status === 'loading' ? ' disabled' : ''}>
-            <i data-lucide="refresh-cw"></i>${status === 'loading' ? '받는 중…' : '다시 받기'}</button>
+          <label class="bg-cat">달 ${monthPick()}</label>
+          <button type="button" class="tool-add" data-bg="save"><i data-lucide="save"></i>저장</button>
+          <button type="button" class="tool-copy-all" data-bg="pull"${pulling ? ' disabled' : ''}>
+            <i data-lucide="refresh-cw"></i>${pulling ? '받는 중…' : '사용액 불러오기'}</button>
+          <button type="button" class="tool-copy-all" data-bg="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
+          ${sheetUrl ? `<a class="tool-add" href="${escape(sheetUrl)}" target="_blank" rel="noopener"><i data-lucide="external-link"></i>시트 열기</a>` : ''}
         </div>
-        <p class="perf-note">${escape(plan.bookName || '')}${plan.sheetName ? ` · ${escape(plan.sheetName)} 탭` : ''}${plan.fetchedAt
-    ? ` · 갱신 ${new Date(plan.fetchedAt).toLocaleString('ko-KR')}` : ''}${plan.cached ? ' (담아 둔 값)' : ''}</p>
+        ${noteLine()}
       </div>
-      ${hero()}
-      ${categories()}
-      ${matrix(plan.sku, 'SKU별 퍼포먼스 비용', '막대는 총 예산 기준')}
-      ${plan.fixed ? `<div class="tool-card">
-        <div class="tool-list-head"><h3>고정비 <small>항목별 합계</small></h3></div>
-        ${fixedBars()}
-      </div>` : ''}
-      ${matrix(plan.fixed, '고정비 상세', 'SKU × 항목')}
-      ${promos()}`;
+      ${heroCard()}
+      ${summaryCard()}
+      <div class="tool-list-head bg-title"><h3>카테고리별</h3></div>
+      ${categoryCards()}
+      <div class="tool-list-head bg-title"><h3>행사별</h3></div>
+      ${events()}
+      ${spendCard()}`;
     lucide.createIcons();
   };
 
-  const load = (refresh) => {
+  // 글자를 칠 때마다 화면을 통째로 다시 그리면 칸에서 커서가 튄다.
+  // 그래서 숫자를 적을 때는 **계산해서 보여 주는 자리만** 고쳐 쓰고,
+  // 줄 · SKU 가 늘거나 줄 때만 다시 그린다.
+  const swap = (at, html) => {
+    if (!at) return;
+    const box = document.createElement('div');
+    box.innerHTML = html;
+    at.replaceWith(box.firstElementChild);
+  };
+
+  const repaint = () => {
+    plan.skus.forEach((sku) => {
+      const sum = skuSum(sku.name);
+      rowsOf(sku.name).forEach((row) => {
+        const cost = rowCost(row);
+        const costAt = budgetPlanView.querySelector(`[data-calc="cost-${row.id}"]`);
+        if (costAt) costAt.textContent = cost ? won(cost) : '—';
+        const weightAt = budgetPlanView.querySelector(`[data-calc="weight-${row.id}"]`);
+        if (weightAt) weightAt.textContent = pct(cost, sum.budget);
+      });
+      // SKU 카드 위의 합계 · 막대 · 잔여 줄 (입력 칸이 없는 자리라 통째로 바꿔도 된다)
+      const panel = budgetPlanView.querySelector(`.bg-sku[data-sku="${CSS.escape(sku.name)}"]`);
+      if (!panel) return;
+      const box = document.createElement('div');
+      box.innerHTML = skuPanel(sku);
+      swap(panel.querySelector('.bg-stats'), box.querySelector('.bg-stats').outerHTML);
+      swap(panel.querySelector('.bg-weight'), box.querySelector('.bg-weight').outerHTML);
+      swap(panel.querySelector('.bg-line'), box.querySelector('.bg-line').outerHTML);
+    });
+    // 총 예산 카드는 통째로 갈지 않는다 — 그 안에 지금 치고 있는 칸이 있어 커서가 튄다.
+    // 계산해서 보여 주는 두 자리만 갈아 끼운다.
+    const box = document.createElement('div');
+    box.innerHTML = heroCard();
+    swap(budgetPlanView.querySelector('.bg-hero .bg-stats'), box.querySelector('.bg-stats').outerHTML);
+    swap(budgetPlanView.querySelector('.bg-hero-line'), box.querySelector('.bg-hero-line').outerHTML);
+    swap(budgetPlanView.querySelector('.bg-grid'), categoryCards());
+    lucide.createIcons();
+  };
+
+  // ── 담기 · 읽기 ─────────────────────────────────────────────────
+  let saveTimer = 0;
+  const save = (now) => {
+    window.clearTimeout(saveTimer);
+    const run = () => askSheet({ action: 'budgetPut', month, total, plan, by: '' })
+      .then((body) => {
+        saved = { at: body.savedAt, by: saved.by };
+        note = '저장했습니다';
+        error = '';
+        paintNote();
+      })
+      .catch((reason) => { error = `저장하지 못했습니다 — ${reason.message}`; paintNote(); });
+    // 글자를 칠 때마다 보내지 않는다. 손을 뗀 뒤 잠깐 기다렸다 한 번만 보낸다.
+    if (now) return run();
+    saveTimer = window.setTimeout(run, 1500);
+    return undefined;
+  };
+
+  const load = () => {
     status = 'loading';
     error = '';
+    note = '';
     render();
-    window.fetch(SHEET_ENDPOINT, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'budgetPlan', refresh: Boolean(refresh) }),
-    }).then((response) => response.json()).then((body) => {
-      if (!body.ok) throw new Error(body.error || '시트를 읽지 못했습니다.');
-      plan = body;
-      status = 'ready';
+    askSheet({ action: 'budgetGet', month })
+      .then((body) => {
+        month = body.month;
+        months = body.months || [];
+        sheetUrl = body.url || '';
+        total = Number(body.budget.total) || 0;
+        plan = body.budget.plan && Array.isArray(body.budget.plan.skus)
+          ? body.budget.plan : { skus: [], rows: [] };
+        if (!Array.isArray(plan.rows)) plan.rows = [];
+        spend = body.budget.spend || null;
+        saved = { at: body.budget.updatedAt, by: body.budget.updatedBy };
+        status = 'ready';
+        render();
+      })
+      .catch((reason) => {
+        status = 'ready';
+        error = reason.message;
+        render();
+      });
+    // SKU · 판매채널 고르개는 설정 탭에서 받는다 (못 받아도 화면은 돈다)
+    askSheet({ action: 'configList' }).then((body) => {
+      skuList = (body.product || []).map((one) => one[0]).filter(Boolean);
+      sheetChannels = (body.sales || []).map((one) => one[0]).filter(Boolean);
+      if (status === 'ready') render();
+    }).catch(() => { /* 고르개만 비는 것이라 그냥 둔다 */ });
+  };
+
+  // ── 사용액 불러오기 ─────────────────────────────────────────────
+  // 매체별 성과가 쓰는 그 길(…Accounts → …Report)을 그대로 쓴다. 캠페인 줄의 광고비를
+  // 제품으로 모아 SKU 에 붙인다. **한꺼번에 부르지 않는다** — Apps Script 가 같은 사람의
+  // 실행을 줄 세워서, 동시에 던지면 오히려 느려진다 (매체별 성과에서 겪은 일이다).
+  const monthSpan = () => {
+    const year = Number(month.slice(0, 4));
+    const mon = Number(month.slice(5, 7));
+    const last = new Date(year, mon, 0).getDate();
+    const pad = (n) => String(n).padStart(2, '0');
+    // 이번 달이면 오늘까지만 본다 (앞날은 광고비가 없다)
+    const end = month === thisMonth ? Math.min(last, today.getDate()) : last;
+    return { since: `${month}-01`, until: `${month}-${pad(end)}` };
+  };
+
+  const pullSpend = () => {
+    const range = monthSpan();
+    const keys = Object.keys(PERF_SOURCES);
+    const found = { total: 0, byProduct: {}, media: [], range, fetchedAt: '' };
+    pulling = { done: 0, all: keys.length, now: '' };
+    note = '';
+    error = '';
+    render();
+
+    // 매체 하나: 계정 목록 → 계정마다 보고서. 계정 하나가 막혀도 나머지는 담는다.
+    const oneMedia = (key) => askSheet({ action: `${key}Accounts` })
+      .then((body) => (body.accounts || []).filter((one) => !one.disabled))
+      .catch(() => (PERF_SOURCES[key].fallback || []).map(([name, id]) => ({ id, name })))
+      .then((list) => {
+        pulling.all = pulling.all - 1 + Math.max(list.length, 1);
+        render();
+        return list.reduce((chain, account) => chain.then(() => {
+          pulling.now = `${PERF_SOURCES[key].name} · ${account.name}`;
+          render();
+          return askSheet({
+            action: `${key}Report`, account: account.id, since: range.since, until: range.until,
+          }).then((body) => {
+            let sum = 0;
+            (body.campaigns || []).forEach((row) => {
+              const cost = Number(row.spend) || 0;
+              if (!cost) return;
+              sum += cost;
+              const product = perfProductOf(row.name) || PERF_NO_PRODUCT;
+              found.byProduct[product] = (found.byProduct[product] || 0) + cost;
+            });
+            found.total += sum;
+            found.media.push({ key, name: `${PERF_SOURCES[key].name} · ${account.name}`, spend: sum, error: '' });
+          }).catch((reason) => {
+            found.media.push({
+              key, name: `${PERF_SOURCES[key].name} · ${account.name}`, spend: 0, error: reason.message,
+            });
+          }).then(() => { pulling.done += 1; render(); });
+        }), Promise.resolve());
+      })
+      .catch((reason) => {
+        found.media.push({ key, name: PERF_SOURCES[key].name, spend: 0, error: reason.message });
+        pulling.done += 1;
+        render();
+      });
+
+    keys.reduce((chain, key) => chain.then(() => oneMedia(key)), Promise.resolve()).then(() => {
+      found.fetchedAt = new Date().toISOString();
+      spend = found;
+      pulling = null;
+      note = '사용액을 받았습니다';
       render();
-    }).catch((reason) => {
-      status = 'error';
-      error = reason.message;
-      render();
+      // 받은 값도 시트에 담는다. 다음 사람은 몇 분을 다시 기다리지 않는다.
+      askSheet({ action: 'budgetPut', month, total, plan, spend, by: '' })
+        .then((body) => { saved = { at: body.savedAt, by: saved.by }; render(); })
+        .catch(() => { /* 화면에는 이미 떠 있다 */ });
     });
   };
 
+  // ── 손놀림 ──────────────────────────────────────────────────────
   budgetPlanView.addEventListener('click', (event) => {
-    if (event.target.closest('[data-budget="refresh"]')) { load(true); return; }
-    const fold = event.target.closest('[data-budget="fold"]');
-    if (fold) {
-      const name = fold.dataset.name;
-      folded = folded.indexOf(name) >= 0 ? folded.filter((one) => one !== name) : folded.concat(name);
+    const hit = event.target.closest('[data-bg]');
+    if (!hit || hit.tagName === 'SELECT' || hit.tagName === 'INPUT') return;
+    const what = hit.dataset.bg;
+    if (what === 'save') { save(true); return; }
+    if (what === 'reload') { load(); return; }
+    if (what === 'pull') { if (!pulling) pullSpend(); return; }
+    if (what === 'add') {
+      plan.rows.push({
+        id: uid(), sku: hit.dataset.sku, kind: '온라인', channel: '',
+        since: '', until: '', goal: 0, cps: 0, brand: 0,
+      });
       render();
+      save();
+      return;
     }
+    if (what === 'drop') {
+      plan.rows = plan.rows.filter((row) => row.id !== hit.dataset.row);
+      render();
+      save();
+      return;
+    }
+    if (what === 'dropSku') {
+      const name = hit.dataset.sku;
+      const many = rowsOf(name).length;
+      if (many && !window.confirm(`${name} 의 행사 ${many}줄이 함께 지워집니다. 뺄까요?`)) return;
+      plan.skus = plan.skus.filter((one) => one.name !== name);
+      plan.rows = plan.rows.filter((row) => row.sku !== name);
+      if (picked === name) picked = '';
+      render();
+      save();
+    }
+  });
+
+  budgetPlanView.addEventListener('change', (event) => {
+    const hit = event.target.closest('[data-bg]');
+    if (!hit) return;
+    const what = hit.dataset.bg;
+    if (what === 'month') { month = hit.value; picked = ''; load(); return; }
+    if (what === 'pick') { picked = hit.value; render(); return; }
+    if (what === 'addSku') {
+      const name = hit.value;
+      if (!name || skuOf(name)) return;
+      plan.skus.push({ name, category: CATEGORIES[0], brand: false });
+      picked = name;
+      render();
+      save();
+      return;
+    }
+    if (what === 'brandOn') {
+      const sku = skuOf(hit.dataset.sku);
+      if (sku) sku.brand = hit.checked;
+      render();
+      save();
+      return;
+    }
+    if (what === 'category') {
+      const sku = skuOf(hit.dataset.sku);
+      if (sku) sku.category = hit.value;
+      repaint();
+      save();
+      return;
+    }
+    const row = plan.rows.find((one) => one.id === hit.dataset.row);
+    if (!row) return;
+    if (what === 'kind' || what === 'channel' || what === 'since' || what === 'until') {
+      row[what] = hit.value;
+      save();
+    }
+  });
+
+  budgetPlanView.addEventListener('input', (event) => {
+    const hit = event.target.closest('[data-bg]');
+    if (!hit) return;
+    const what = hit.dataset.bg;
+    if (what !== 'total' && what !== 'goal' && what !== 'cps' && what !== 'brand') return;
+    // 콤마는 화면에서만 붙인다. 값은 늘 숫자로 담는다.
+    const value = parseInt(digitsOf(hit.value), 10) || 0;
+    hit.value = value ? commaNum(value) : '';
+    if (what === 'total') {
+      total = value;
+    } else {
+      const row = plan.rows.find((one) => one.id === hit.dataset.row);
+      if (!row) return;
+      row[what] = value;
+    }
+    repaint();
+    save();
   });
 
   // 메뉴에 들어올 때 한 번만 부른다
@@ -10883,12 +11281,11 @@ if (budgetPlanView) {
   const openBudgetOnce = () => {
     if (budgetLoaded || budgetPlanView.hidden) return;
     budgetLoaded = true;
-    load(false);
+    load();
   };
   new MutationObserver(openBudgetOnce).observe(budgetPlanView, { attributes: true, attributeFilter: ['hidden'] });
   openBudgetOnce();
 }
-
 // ── 프로모션 (세일즈팀 미닉스 워크스페이스 · 행사 캘린더 시트 미러) ────────────
 // 프로모션 등록 · 수정은 세일즈팀 도구(미닉스)에서 한다. 그쪽이 저장할 때마다 이 시트에
 // 월별 탭으로 그대로 복사해 두므로, 여기서는 그 시트를 우리 디자인으로 다시 그리기만 한다.
