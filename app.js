@@ -8918,10 +8918,14 @@ if (mediaPerformance) {
       madeAt: new Date().toISOString(),
       note: `제품 '${file.product}' 만 담은 파일입니다. `
         + '카카오모먼트 · 메타 · 구글은 매체가 준 값 그대로, 네이버 GFA 는 부가세 10% 를 뺀 값입니다.',
-      searched: file.searched.map((one) => salesRow(one.key, one.row)),
+      // 단계(사전 · 당일 · 사후)를 담았으면 조회 기간 전체는 넣지 않는다 —
+      // 같은 줄이 받는 쪽에서 '조회 기간' 으로 한 번 더 나와 광고비가 겹쳐 보였다.
+      // 단계 날짜를 안 채운 파일은 이 줄이 전부라, 그때만 담는다.
+      searched: file.phases.length ? [] : file.searched.map((one) => salesRow(one.key, one.row)),
       accounts: Object.keys(SOURCES).map((key) => ({
         source: key, name: SOURCES[key].name,
-        found: file.searched.filter((one) => one.key === key).length,
+        // 이 파일에 실제로 담긴 줄만 센다 (단계를 담았으면 단계 줄, 아니면 조회 기간 줄)
+        found: file.rows.filter((one) => one.key === key).length,
         account: (cross[key] || {}).accountName || '',
         tried: (cross[key] || {}).tried || 0,
         gap: gapText((cross[key] || {}).coverage) || '',
@@ -9023,9 +9027,10 @@ if (mediaPerformance) {
     : `조회 기간 ${count(one.searched.length)}줄`} · ${money(one.spend)}</small></span>
         </button>`).join('')}
       </div>
-      <p class="perf-mix-note">단계 날짜를 안 넣었으면 조회 기간 줄만 담깁니다 — 단계별로 보여 주려면
-        위에서 <b>단계 날짜</b>를 먼저 채우세요. 파일 모양은 <b>세일즈용 파일</b>과 같습니다
-        (제품별로 갈라 담은 것만 다릅니다).</p>
+      <p class="perf-mix-note">단계를 담은 파일에는 <b>조회 기간 전체</b>를 넣지 않습니다 — 같은 줄이
+        받는 쪽에서 한 번 더 나와 광고비가 겹쳐 보이기 때문입니다. 단계 날짜를 안 넣었으면
+        조회 기간 줄만 담기니, 단계별로 보여 주려면 위에서 <b>단계 날짜</b>를 먼저 채우세요.
+        파일 모양은 <b>세일즈용 파일</b>과 같습니다 (제품별로 갈라 담은 것만 다릅니다).</p>
     </div>`;
   };
 
