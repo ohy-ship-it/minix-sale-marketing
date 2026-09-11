@@ -4576,7 +4576,10 @@ var SA_FIELDS_PLAIN = ['impCnt', 'clkCnt', 'salesAmt', 'ctr', 'cpc'];
 // 그래서 주소 길이를 재어 나누고, 개수로도 넉넉한 끝을 둔다.
 var SA_URL_LIMIT = 1800;
 var SA_ID_CHUNK = 30;
-var SA_CACHE_SECONDS = 600;       // 10분
+var SA_CACHE_SECONDS = 600;       // 10분 (숫자)
+// 캠페인 · 광고그룹 · 소재의 짜임새는 기간과 상관없다. 길게 담아 둔다 —
+// 기간을 바꿀 때마다 이걸 다시 훑어 브랜드검색 조회가 3분을 넘겼다.
+var SA_TREE_CACHE_SECONDS = 3600;
 
 function saProp_(name) {
   var value = String(PropertiesService.getScriptProperties().getProperty(name) || '').trim();
@@ -4790,12 +4793,12 @@ function saAdImage_(ad) {
   return /^https?:\/\//.test(found) ? found : '';
 }
 
-// 광고그룹 · 소재 · 지표를 한 번에 모아 담아 둔다 (매체별 성과 · 소재별 결과가 같이 쓴다)
-function saGather_(since, until, refresh) {
+/* 브랜드검색의 짜임새 — 캠페인 · 광고그룹 · 소재. 숫자는 담지 않는다.
+   기간과 상관없는 값이라 따로 담아 두고, 기간이 바뀌면 숫자만 다시 묻는다. */
+function saTree_(refresh) {
   var cache = CacheService.getScriptCache();
-  var key = ['saAll', since, until].join('|');
   if (!refresh) {
-    var hit = cacheGet_(cache, key);
+    var hit = cacheGet_(cache, 'saTree');
     if (hit) {
       try { return JSON.parse(hit); } catch (error) { /* 깨졌으면 다시 읽는다 */ }
     }
@@ -4814,27 +4817,45 @@ function saGather_(since, until, refresh) {
     };
   });
 
+  // 광고그룹은 **캠페인마다** 묻는다.
+  // 파라미터 없이 /ncc/adgroups 를 부르면 계정의 광고그룹이 전부 온다 — 검색광고 계정에는
+  // 그게 수천 개라 그 한 번으로 3분을 넘겼다. 브랜드검색 캠페인은 한두 개뿐이다.
   var groups = [];
   if (campaigns.length) {
-    var all = saAsk_('/ncc/adgroups', null) || [];
-    if (!Array.isArray(all)) all = [];
-    groups = all.filter(function (one) { return campaignOf[String(one.nccCampaignId)]; });
+    var lists = saMany_(campaigns.map(function (one) {
+      return { key: String(one.nccCampaignId), path: '/ncc/adgroups',
+        params: { nccCampaignId: one.nccCampaignId } };
+    }));
+    campaigns.forEach(function (one) {
+      var list = lists[String(one.nccCampaignId)];
+      if (!Array.isArray(list)) return;
+      list.forEach(function (group) {
+        // 브랜드검색 캠페인의 것만 담는다 (목록이 다른 캠페인 것을 섞어 주더라도)
+        if (!campaignOf[String(group.nccCampaignId)]) return;
+        groups.push({
+          id: String(group.nccAdgroupId),
+          name: group.name || String(group.nccAdgroupId),
+          campaignId: String(group.nccCampaignId),
+          status: String(group.status || ''),
+          type: String(group.adgroupType || '')
+        });
+      });
+    });
   }
 
-  // 소재는 광고그룹마다 부른다
+  // 소재는 광고그룹마다 부른다 (한꺼번에 묶어 부른다)
   var ads = [];
   if (groups.length) {
     var packs = saMany_(groups.map(function (one) {
-      return { key: String(one.nccAdgroupId), path: '/ncc/ads',
-        params: { nccAdgroupId: one.nccAdgroupId } };
+      return { key: one.id, path: '/ncc/ads', params: { nccAdgroupId: one.id } };
     }));
     groups.forEach(function (group) {
-      var list = packs[String(group.nccAdgroupId)];
+      var list = packs[group.id];
       if (!Array.isArray(list)) return;
       list.slice(0, SA_AD_LIMIT).forEach(function (ad, at) {
         ads.push({
           id: String(ad.nccAdId),
-          groupId: String(group.nccAdgroupId),
+          groupId: group.id,
           name: saAdName_(ad, at),
           thumbnail: saAdImage_(ad),
           status: String(ad.status || ''),
@@ -4844,8 +4865,29 @@ function saGather_(since, until, refresh) {
     });
   }
 
+  var tree = { campaignOf: campaignOf, groups: groups, ads: ads };
+  cachePut_(cache, 'saTree', JSON.stringify(tree), SA_TREE_CACHE_SECONDS);
+  return tree;
+}
+
+// 짜임새에 기간별 숫자를 붙여 담아 둔다 (매체별 성과 · 소재별 결과가 같이 쓴다)
+function saGather_(since, until, refresh) {
+  var cache = CacheService.getScriptCache();
+  var key = ['saAll', since, until].join('|');
+  if (!refresh) {
+    var hit = cacheGet_(cache, key);
+    if (hit) {
+      try { return JSON.parse(hit); } catch (error) { /* 깨졌으면 다시 읽는다 */ }
+    }
+  }
+
+  var tree = saTree_(refresh);
+  var campaignOf = tree.campaignOf;
+  var groups = tree.groups;
+  var ads = tree.ads;
+
   // 광고그룹과 소재는 id 종류가 달라 따로 묻는다 (섞으면 400 이 온다)
-  var groupIds = groups.map(function (one) { return String(one.nccAdgroupId); });
+  var groupIds = groups.map(function (one) { return one.id; });
   var adIds = ads.map(function (one) { return one.id; });
   var stats = {};
   var fields = SA_FIELDS_PLAIN;
@@ -4864,15 +4906,7 @@ function saGather_(since, until, refresh) {
 
   var result = {
     campaignOf: campaignOf,
-    groups: groups.map(function (one) {
-      return {
-        id: String(one.nccAdgroupId),
-        name: one.name || String(one.nccAdgroupId),
-        campaignId: String(one.nccCampaignId),
-        status: String(one.status || ''),
-        type: String(one.adgroupType || '')
-      };
-    }),
+    groups: groups,
     ads: ads,
     stats: got.stats,
     fields: got.fields
@@ -5027,9 +5061,9 @@ function saPeek_(payload) {
   out.campaignCount = Array.isArray(campaigns) ? campaigns.length : 0;
   out.campaignFirst = Array.isArray(campaigns) ? campaigns[0] : campaigns;
   if (out.campaignCount) {
-    var groups = (saAsk_('/ncc/adgroups', null) || []).filter(function (one) {
-      return String(one.nccCampaignId) === String(campaigns[0].nccCampaignId);
-    });
+    var groups = saAsk_('/ncc/adgroups',
+      { nccCampaignId: campaigns[0].nccCampaignId }) || [];
+    if (!Array.isArray(groups)) groups = [];
     out.groupCount = groups.length;
     out.groupFirst = groups[0] || null;
     if (out.groupCount) {
