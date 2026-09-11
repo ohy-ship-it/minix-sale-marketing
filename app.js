@@ -923,7 +923,6 @@ const VIEWS = {
   'UTM 빌더': { section: '#utm-builder', hash: '#utm' },
   '매체별 성과': { section: '#media-performance', hash: '#media-report' },
   '소재별 결과': { section: '#creative-performance', hash: '#creative-result' },
-  '브랜드검색': { section: '#brand-search', hash: '#brand-search-result' },
   '페이지 결과': { section: '#page-performance', hash: '#page-result' },
   '월별 예산': { section: '#budget-plan', hash: '#budget' },
   'KOL라이브': { section: '#kol-live', hash: '#kol' },
@@ -1467,6 +1466,28 @@ const PERF_SOURCES = {
     properties: [],
     // 지면 · 연령 · 성별은 적재 쪽에 아직 넣지 않았다. 넣으면 여기에 더한다.
   },
+  naverSa: {
+    name: '네이버 브랜드검색',
+    // 브랜드검색은 목적이 하나다 (정액 노출). CPA 에서 뺄 것이 없다.
+    skip: [],
+    skipLabel: '',
+    clicks: '클릭',
+    // 층을 하나 줄여 본다 — 캠페인 자리에 광고그룹, 광고그룹 자리에 소재를 넣는다.
+    // 브랜드검색 캠페인은 계정에 한두 개뿐이라 그 층은 볼 것이 없다.
+    note: '검색광고 API 로 바로 받습니다. 브랜드검색은 정액(CPT) 상품이라 광고비가 고른 기간에 '
+      + '걸친 금액이고, **부가세 별도**입니다 (다른 매체와 더할 때 유의하세요). '
+      + '캠페인 자리에 **광고그룹**, 광고그룹 자리에 **소재** 를 넣어 두 단으로 봅니다. '
+      + '전환 · 전환값은 프리미엄로그분석이 붙어 있어야 옵니다 — 안 오면 그 칸은 0 으로 보입니다.',
+    fallback: [],
+    token: '네이버 검색광고 API 키',
+    properties: ['NAVER_SA_API_KEY', 'NAVER_SA_SECRET_KEY', 'NAVER_SA_CUSTOMER_ID'],
+    // 브랜드검색은 소재가 몇 개뿐이라 상세(지면 · 연령)는 API 에 없다.
+    breakdowns: [],
+    wait: 8,
+    waitNote: '캠페인 · 광고그룹 · 소재를 차례로 읽고 지표를 한 번에 받습니다.',
+    adWait: 3,
+    adWaitNote: '매체별 성과에서 받아 둔 값을 그대로 씁니다.',
+  },
 };
 
 // 네이버 GFA 는 보고서 광고비가 부가세를 포함한 금액이라 Code.gs 가 10% 를 뺀 값을
@@ -1497,6 +1518,8 @@ const PERF_OBJECTIVES = {
   // (SHOPPING · CONVERSION 은 위 구글 · 메타 것과 이름이 같아 함께 쓴다)
   // PMAX 는 애드부스트다. 이 캠페인은 광고그룹이 없고 애셋그룹으로 내려온다.
   WEB_SITE_TRAFFIC: '트래픽', PMAX: '애드부스트',
+  // 네이버 검색광고 — 지금은 브랜드검색만 본다 (캠페인 유형이 곧 목적 자리다)
+  BRAND_SEARCH: '브랜드검색',
 };
 
 // 상세 보기에서 쪼갤 수 있는 항목. 매체마다 부르는 이름이 달라 여기서 한 낱말로 맞춘다.
@@ -4577,278 +4600,6 @@ if (onboarding) {
     }
     if (event.target.closest('.onboard-open')) window.open(docOf(picked).src, '_blank', 'noopener');
   });
-}
-
-// ── 퍼포먼스 · 브랜드검색 ───────────────────────────────────────────
-// 네이버 검색광고(SA)의 **브랜드검색만** 따로 보는 화면이다.
-// GFA(성과형 디스플레이)는 공개 API 가 없어 PC 가 적재한 시트를 읽지만,
-// 검색광고는 공개 API 가 있어 Apps Script 가 바로 부른다.
-// 매체별 성과의 전매체 검색에는 섞지 않는다 — 검색광고는 여기서만 본다.
-const brandSearch = document.querySelector('#brand-search');
-if (brandSearch) {
-  const STORAGE_KEY = 'minix-brand-search-v1';
-
-  const PRESETS = [['오늘', 'today'], ['어제', 'yesterday'], ['최근 7일', 'last7'],
-    ['최근 14일', 'last14'], ['최근 30일', 'last30'], ['이번 달', 'month'], ['지난 달', 'lastmonth'],
-    ['직접 지정', 'custom']];
-
-  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-  const money = perfMoney('KRW');
-  const count = perfCount;
-  const percent = perfPercent;
-  const dayOf = (when) => {
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
-  };
-  const shift = (days) => {
-    const when = new Date();
-    when.setDate(when.getDate() + days);
-    return dayOf(when);
-  };
-
-  // 기간 고르개 → 실제 날짜. '직접 지정' 은 담아 둔 날짜를 쓴다.
-  const rangeOf = () => {
-    const now = new Date();
-    const first = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastFirst = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-    if (state.preset === 'today') return { since: dayOf(now), until: dayOf(now) };
-    if (state.preset === 'yesterday') return { since: shift(-1), until: shift(-1) };
-    if (state.preset === 'last7') return { since: shift(-6), until: dayOf(now) };
-    if (state.preset === 'last14') return { since: shift(-13), until: dayOf(now) };
-    if (state.preset === 'last30') return { since: shift(-29), until: dayOf(now) };
-    if (state.preset === 'month') return { since: dayOf(first), until: dayOf(now) };
-    if (state.preset === 'lastmonth') return { since: dayOf(lastFirst), until: dayOf(lastEnd) };
-    return { since: state.since, until: state.until };
-  };
-
-  const DEFAULT_STATE = { preset: 'last7', since: shift(-6), until: dayOf(new Date()) };
-  let state = { ...DEFAULT_STATE };
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-    if (saved) state = { ...state, ...saved };
-  } catch { /* 저장값이 깨졌으면 기본값으로 시작한다 */ }
-
-  let report = null;
-  let status = { state: 'idle', message: '' };
-  let open = [];                 // 펼친 캠페인 번호
-  let words = [];                // 키워드까지 펼친 광고그룹 번호
-
-  const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-
-  const load = (refresh) => {
-    const span = rangeOf();
-    if (!span.since || !span.until) {
-      status = { state: 'error', message: '기간을 채워 주세요.' };
-      return render();
-    }
-    status = { state: 'loading', message: '' };
-    render();
-    return askSheet({ action: 'saBrandReport', since: span.since, until: span.until, refresh: !!refresh })
-      .then((body) => {
-        report = body;
-        status = { state: 'done', message: '' };
-        render();
-      })
-      .catch((reason) => {
-        report = null;
-        status = { state: 'error', message: reason.message };
-        render();
-      });
-  };
-
-  // ── 숫자 ─────────────────────────────────────────────────────────
-  const sumOf = (rows) => rows.reduce((into, one) => ({
-    spend: into.spend + (Number(one.spend) || 0),
-    impressions: into.impressions + (Number(one.impressions) || 0),
-    clicks: into.clicks + (Number(one.clicks) || 0),
-    conv: into.conv + (Number(one.conv) || 0),
-    revenue: into.revenue + (Number(one.revenue) || 0),
-  }), { spend: 0, impressions: 0, clicks: 0, conv: 0, revenue: 0 });
-
-  const ratio = (top, bottom) => (bottom > 0 ? top / bottom : null);
-  const blank = (value, format) => (value === null ? '<span class="tool-blank">—</span>' : format(value));
-  // 지표 차례는 매체별 성과와 같게 둔다 (광고비 → 전환값 → ROAS → 노출 · 클릭 → 비율)
-  const cells = (one) => {
-    const conv = report && report.hasConv;
-    return [
-      `<td class="perf-num">${money(one.spend)}</td>`,
-      conv ? `<td class="perf-num">${money(one.revenue)}</td>` : '',
-      conv ? `<td class="perf-num">${blank(ratio(one.revenue, one.spend), perfRoas)}</td>` : '',
-      conv ? `<td class="perf-num">${count(one.conv)}</td>` : '',
-      `<td class="perf-num">${count(one.impressions)}</td>`,
-      `<td class="perf-num">${count(one.clicks)}</td>`,
-      `<td class="perf-num">${blank(ratio(one.spend, one.clicks), money)}</td>`,
-      `<td class="perf-num">${blank(ratio(one.clicks, one.impressions), percent)}</td>`,
-    ].join('');
-  };
-  const head = (first) => {
-    const conv = report && report.hasConv;
-    return `<thead><tr><th>${first}</th><th>광고비</th>${conv ? '<th>전환값</th><th>ROAS</th><th>전환</th>' : ''}
-      <th>노출</th><th>클릭</th><th>CPC</th><th>CTR</th></tr></thead>`;
-  };
-
-  const groupsOf = (campaignId) => ((report || {}).adgroups || [])
-    .filter((one) => one.campaignId === campaignId);
-  const wordsOf = (groupId) => ((report || {}).keywords || [])
-    .filter((one) => one.adgroupId === groupId);
-
-  // ── 화면 ─────────────────────────────────────────────────────────
-  const pills = (attr, items, current) => `<div class="perf-chips">${items
-    .map(([label, value]) => `<button type="button" class="perf-chip${value === current ? ' is-on' : ''}" data-${attr}="${escapeHtml(value)}">${escapeHtml(label)}</button>`)
-    .join('')}</div>`;
-
-  const table = () => {
-    const campaigns = ((report || {}).campaigns || []).slice()
-      .sort((a, b) => b.spend - a.spend);
-    if (!campaigns.length) {
-      return `<p class="tool-empty">${escapeHtml((report && report.note) || '브랜드검색 캠페인이 없습니다.')}</p>`;
-    }
-    const total = sumOf(campaigns);
-    return `<div class="tool-table-wrap"><table class="tool-table perf-table">
-      ${head('캠페인 · 광고그룹 · 키워드')}
-      <tbody>
-        ${campaigns.map((one) => {
-    const mine = groupsOf(one.id);
-    const shown = open.indexOf(one.id) >= 0;
-    return `<tr class="perf-row perf-branch" data-brand="campaign" data-id="${escapeHtml(one.id)}">
-          <td class="perf-name"><span>
-            <b>${escapeHtml(one.name)}</b>
-            <small>${one.active ? '' : '<em class="perf-off">꺼짐</em> · '}광고그룹 ${count(mine.length)}${one.begin ? ` · ${escapeHtml(one.begin)} ~ ${escapeHtml(one.end || '')}` : ''}</small></span></td>
-          ${cells(one)}
-        </tr>
-        ${shown ? mine.map((group) => {
-      const inner = wordsOf(group.id);
-      const openWords = words.indexOf(group.id) >= 0;
-      return `<tr class="perf-row perf-child" data-brand="group" data-id="${escapeHtml(group.id)}">
-            <td class="perf-name"><span>
-              <b>${escapeHtml(group.name)}</b>
-              <small>${group.active ? '' : '<em class="perf-off">꺼짐</em> · '}키워드 ${count(inner.length)}</small></span></td>
-            ${cells(group)}
-          </tr>
-          ${openWords ? inner.slice().sort((a, b) => b.impressions - a.impressions).map((word) => `<tr class="perf-row perf-child is-deep">
-            <td class="perf-name"><span><span class="perf-word">${escapeHtml(word.name)}</span></span></td>
-            ${cells(word)}
-          </tr>`).join('') : ''}`;
-    }).join('') : ''}`;
-  }).join('')}
-        <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>총합</b>
-          <small>캠페인 ${count(campaigns.length)}</small></span></td>${cells(total)}</tr>
-      </tbody>
-    </table></div>`;
-  };
-
-  const excel = () => {
-    if (!report) return;
-    const conv = report.hasConv;
-    const lines = [['단위', '이름', '상태', '광고비'].concat(conv ? ['전환값', '전환'] : [])
-      .concat(['노출', '클릭']).join('\t')];
-    const put = (what, one) => lines.push([what, one.name, one.active ? '운영중' : '꺼짐',
-      Math.round(one.spend)].concat(conv ? [Math.round(one.revenue), one.conv] : [])
-      .concat([one.impressions, one.clicks]).join('\t'));
-    (report.campaigns || []).forEach((one) => {
-      put('캠페인', one);
-      groupsOf(one.id).forEach((group) => {
-        put('광고그룹', group);
-        wordsOf(group.id).forEach((word) => put('키워드', word));
-      });
-    });
-    const span = rangeOf();
-    perfDownload(`브랜드검색_${span.since}_${span.until}.tsv`, lines.join('\n'));
-  };
-
-  const render = () => {
-    const span = rangeOf();
-    const busy = status.state === 'loading';
-    brandSearch.innerHTML = `
-      <div class="tool-head">
-        <h2>브랜드검색</h2>
-        <p>네이버 검색광고의 <b>브랜드검색</b> 성과입니다. 캠페인을 누르면 광고그룹, 광고그룹을 누르면
-        키워드까지 펼쳐집니다. 광고비는 <b>부가세 별도</b>이고, 브랜드검색은 정액(CPT) 상품이라
-        고른 기간에 걸친 금액입니다.</p>
-      </div>
-
-      <section class="tool-card">
-        <div class="tool-list-head">
-          <h3>기간 <small>${escapeHtml(span.since || '')} ~ ${escapeHtml(span.until || '')}</small></h3>
-          <div class="tool-list-actions">
-            <button type="button" class="tool-copy-all brand-excel"${report ? '' : ' disabled'}>
-              <i data-lucide="sheet"></i>엑셀 받기</button>
-            <button type="button" class="tool-add brand-reload"${busy ? ' disabled' : ''}>
-              <i data-lucide="refresh-cw"></i>${busy ? '불러오는 중…' : '새로고침'}</button>
-          </div>
-        </div>
-        ${pills('preset', PRESETS, state.preset)}
-        ${state.preset === 'custom' ? `<div class="perf-filter">
-          <input type="date" data-brand-day="since" value="${escapeHtml(state.since)}">
-          <span class="perf-phase-tilde">~</span>
-          <input type="date" data-brand-day="until" value="${escapeHtml(state.until)}">
-        </div>` : ''}
-      </section>
-
-      <section class="tool-card">
-        ${busy ? '<p class="perf-loading">네이버에서 불러오는 중… (캠페인 · 광고그룹 · 키워드를 차례로 읽습니다)</p>'
-    : status.state === 'error' ? `<p class="perf-error">${escapeHtml(status.message)}</p>`
-      : status.state === 'idle' ? '<p class="tool-empty">기간을 고르면 불러옵니다.</p>'
-        : table()}
-        ${report && report.note && ((report.campaigns || []).length)
-    ? `<p class="perf-note">${escapeHtml(report.note)}${report.hasConv ? '' : ' 전환 지표는 이 계정에 붙어 있지 않아 표에서 뺐습니다 (프리미엄로그분석이 연결돼 있어야 옵니다).'}</p>`
-    : ''}
-      </section>`;
-    lucide.createIcons();
-  };
-
-  brandSearch.addEventListener('click', (event) => {
-    const preset = event.target.closest('[data-preset]');
-    if (preset) {
-      state.preset = preset.dataset.preset;
-      save();
-      render();
-      if (state.preset !== 'custom') load(false);
-      return;
-    }
-    if (event.target.closest('.brand-reload')) return load(true);
-    if (event.target.closest('.brand-excel')) return excel();
-
-    const branch = event.target.closest('[data-brand="campaign"]');
-    if (branch) {
-      const id = branch.dataset.id;
-      const at = open.indexOf(id);
-      if (at >= 0) open.splice(at, 1);
-      else open.push(id);
-      return render();
-    }
-    const group = event.target.closest('[data-brand="group"]');
-    if (group) {
-      const id = group.dataset.id;
-      const at = words.indexOf(id);
-      if (at >= 0) words.splice(at, 1);
-      else words.push(id);
-      return render();
-    }
-    return undefined;
-  });
-
-  brandSearch.addEventListener('change', (event) => {
-    const day = event.target.closest('[data-brand-day]');
-    if (!day) return;
-    state[day.dataset.brandDay] = day.value;
-    save();
-    if (state.since && state.until) load(false);
-  });
-
-  render();
-
-  // 이 화면을 처음 열 때만 불러온다 (안 보는 사람에게 네이버를 부르지 않는다)
-  let woke = false;
-  const wake = () => {
-    if (woke) return;
-    woke = true;
-    load(false);
-  };
-  new MutationObserver(() => { if (!brandSearch.hidden) wake(); })
-    .observe(brandSearch, { attributes: true, attributeFilter: ['hidden'] });
-  if (!brandSearch.hidden) wake();
 }
 
 // ── 광고자동 세팅 · 메타 광고 세팅 ──────────────────────────────────
@@ -8392,6 +8143,7 @@ if (mediaPerformance) {
   // 목적 코드는 여럿인데 한글 이름이 같은 것들이 있다 (OUTCOME_TRAFFIC · LINK_CLICKS = 트래픽).
   // 칩이 두 개로 갈라지지 않게 코드가 아니라 이름으로 묶는다.
   const objectiveName = (key) => OBJECTIVES[key] || String(key || '');
+  // 브랜드검색은 목적 자리에 'BRAND_SEARCH' 하나만 온다
 
   // 고를 수 있는 목적 · 유형.
   // 켜져 있는 캠페인만 보면, 지금 꺼졌지만 그 기간에 돈을 쓴 목적이 목록에서 빠져 버린다.
@@ -8632,7 +8384,10 @@ if (mediaPerformance) {
         .then((body) => {
           const named = {};
           (body.campaigns || []).forEach((each) => { named[each.id] = each.name; });
-          const rows = (body.adsets || []).filter((row) => perfNameHit(row.name, wanted.toLowerCase(), crossBracket))
+          /* 브랜드검색 소재에는 사람이 정한 이름이 없다 (문구에서 따 온다).
+             행사명은 광고그룹 이름에 들어가므로 이 매체만 광고그룹 이름도 같이 본다. */
+          const rows = (body.adsets || []).filter((row) => perfNameHit(row.name, wanted.toLowerCase(), crossBracket)
+            || (key === 'naverSa' && perfNameHit(row.campaignName || '', wanted.toLowerCase(), crossBracket)))
             .map((row) => ({
               ...row,
               campaignName: row.campaignName || named[row.campaignId] || '',

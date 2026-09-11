@@ -1375,11 +1375,3 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .setup-table tr.is-bad td{background:#fff6f5}
 .setup-warn{color:#c0392b}
 .setup-hist li.is-bad small{color:#c0392b}
-
-/* 브랜드검색 — 키워드 줄과 꺼짐 표시 */
-#brand-search .perf-child.is-deep .perf-name{padding-left:34px}
-#brand-search .perf-word{font-weight:500;color:#5f5f58}
-#brand-search .perf-off{font-style:normal;color:#c0392b}
-#brand-search .perf-branch{cursor:pointer}
-/* 브랜드검색은 지표가 적어 1400px 을 고집할 필요가 없다 (가로 스크롤이 괜히 생긴다) */
-#brand-search .perf-table{min-width:760px}
