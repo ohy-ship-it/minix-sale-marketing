@@ -1362,8 +1362,13 @@ function supplyPut_(payload) {
   }
 }
 
+// **읽기만 할 때는 표를 손보지 않는다.**
+// ensureConfigSheet_ 는 빠진 줄을 채우고 autoResizeColumns 까지 부르는데, 그 한 줄이
+// 6~12초를 잡아먹는다 (직접 재 봤다). 고르개를 채우려고 읽는 길에서는 그만큼이 통째로
+// 사람이 기다리는 시간이 된다. 표가 아예 없을 때만 만들어 준다.
 function configList_() {
-  var config = ensureConfigSheet_(SpreadsheetApp.openById(SHEET_ID));
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var config = book.getSheetByName(CONFIG_SHEET_NAME) || ensureConfigSheet_(book);
   return {
     ok: true,
     media: configRead_(config, 1, 3),    // 매체 · utm_source · utm_medium
@@ -1597,6 +1602,7 @@ function handleAction_(payload) {
     if (payload.action === 'naverSaCostGet') return naverSaCostGet_();
     if (payload.action === 'naverSaCostPut') return naverSaCostPut_(payload);
     if (payload.action === 'saPeek') return saPeek_(payload);
+    if (payload.action === 'budgetFixedSpend') return budgetFixedSpend_(payload);
     // 페이지 결과 (Microsoft Clarity)
     if (payload.action === 'clarityReport') return clarityReport_(payload);
     if (payload.action === 'clarityPages') return clarityPages_(payload);
@@ -4837,6 +4843,156 @@ function saSort_(rows) {
 
 /* 브랜드검색의 짜임새 — 캠페인 · 광고그룹 · 소재. 숫자는 담지 않는다.
    기간과 상관없는 값이라 따로 담아 두고, 기간이 바뀌면 숫자만 다시 묻는다. */
+// ── 실사용비 받기 (고정비 + 판매채널로 잡히는 프로모션 줄) ─────────────────
+/* 월별 예산의 고정비 줄 중 **검색광고로 나가는 것**을 네이버에서 바로 받아 채운다.
+   두 곳에서 받는다:
+     · 파워링크 · 쇼핑검색 — 네이버 검색광고 API 를 바로 부른다.
+     · 애드부스트   — 검색광고가 아니라 GFA(성과형 디스플레이) 라 공개 API 가 없다.
+                      PC 의 get_gfa_report.py 가 쌓아 둔 네이버성과 시트를 읽는다.
+   브랜드검색은 넣지 않는다 — 정액(CPT) 이라 salesAmt 가 늘 0 으로 온다. 계약서 보고 손으로 적는다.
+
+   캠페인 이름은 '[미닉스 더 플렌더]naversa_traffic' 꼴이라 대괄호 안이 제품이다.
+   대괄호가 없거나 '미닉스' 가 안 붙은 캠페인(경쟁사 · 리퍼제품 같은 것)은 제품을
+   못 가리므로 product 를 비워 보낸다 — 화면에서 '못 붙인 것' 으로 따로 보여 준다. */
+var BUDGET_FIXED_SEARCH = [
+  { item: '파워링크', type: 'WEB_SITE' },
+  { item: '쇼핑검색', type: 'SHOPPING' }
+];
+
+// '[미닉스 더 플렌더]naversa_traffic' → '더 플렌더'
+function budgetFixedProduct_(name) {
+  var text = String(name || '');
+  var at = text.indexOf('[');
+  var to = text.indexOf(']', at + 1);
+  if (at !== 0 || to < 0) return '';          // 대괄호로 시작하지 않으면 규칙 밖이다
+  var inside = text.slice(at + 1, to).replace(/\s+/g, ' ').trim();
+  if (inside.indexOf('미닉스') !== 0) return '';   // [레거시] · [키첸] 같은 것
+  return inside.slice('미닉스'.length).trim();
+}
+
+/* 판매채널로 실사용비를 받아 오는 규칙.
+   프로모션 줄의 **판매채널 이름**이 왼쪽과 같으면, 그 매체 계정에서 광고그룹 이름에
+   match 가 들어간 것들의 광고비를 더해 그 줄의 실사용비로 넣는다.
+
+   광고그룹 이름은 '[260901-charlesenter-secret]25-54_none_officialwebsite' 처럼
+   앞에 날짜가, 뒤에 타겟팅이 붙는다. 그래서 **들어 있는지**로 견준다 (똑같은지가 아니다).
+   같은 조각이 여러 광고그룹에 걸리면 그것들을 다 더한다 (한 행사를 소재별로 쪼갠 경우다).
+
+   새 채널을 붙일 때는 이 표에 한 줄만 더하면 된다. */
+var BUDGET_CHANNEL_ADS = [
+  { channel: '찰스엔터 비밀특가', media: 'meta',
+    account: 'act_370223898721955', match: 'charlesenter-secret' },
+  { channel: '고기남자 어필리에잇', media: 'google',
+    account: '4112908407', match: 'goginamja' },
+  { channel: '아가리어터 비밀특가', media: 'meta',
+    account: 'act_370223898721955', match: 'agariutter-260910' }
+];
+
+function budgetChannelSpend_(since, until) {
+  var out = [];
+  var notes = [];
+
+  // 같은 계정을 여러 번 부르지 않는다 (메타 두 채널이 같은 계정이다)
+  var seen = {};
+  BUDGET_CHANNEL_ADS.forEach(function (rule) {
+    var key = rule.media + '|' + rule.account;
+    if (!seen[key]) seen[key] = { media: rule.media, account: rule.account, rules: [] };
+    seen[key].rules.push(rule);
+  });
+
+  Object.keys(seen).forEach(function (key) {
+    var group = seen[key];
+    var adsets = [];
+    try {
+      var body = group.media === 'meta'
+        ? metaReport_({ account: group.account, since: since, until: until })
+        : adsReport_({ account: group.account, since: since, until: until });
+      adsets = (body && body.adsets) || [];
+    } catch (error) {
+      notes.push(group.media + ' ' + group.account + ' — '
+        + String((error && error.message) || error));
+      return;
+    }
+    group.rules.forEach(function (rule) {
+      var want = rule.match.toLowerCase();
+      var spend = 0;
+      var names = [];
+      adsets.forEach(function (one) {
+        var name = String((one && one.name) || '');
+        if (name.toLowerCase().indexOf(want) < 0) return;
+        spend += Number(one.spend) || 0;
+        if (names.indexOf(name) < 0) names.push(name);
+      });
+      out.push({ channel: rule.channel, media: rule.media, match: rule.match,
+        spend: Math.round(spend), adsets: names });
+    });
+  });
+
+  return { rows: out, notes: notes };
+}
+
+function budgetFixedSpend_(payload) {
+  var since = String((payload && payload.since) || '').slice(0, 10);
+  var until = String((payload && payload.until) || '').slice(0, 10);
+  if (!since || !until) throw new Error('기간(since · until)이 없습니다.');
+
+  var rows = [];
+  var ids = [];
+  var whose = {};        // 캠페인 id → { item, name, product }
+
+  BUDGET_FIXED_SEARCH.forEach(function (kind) {
+    var list = saAsk_('/ncc/campaigns', { campaignType: kind.type }) || [];
+    if (!Array.isArray(list)) list = [];
+    list.forEach(function (one) {
+      var id = String(one.nccCampaignId || '');
+      if (!id) return;
+      whose[id] = { item: kind.item, name: one.name || id, product: budgetFixedProduct_(one.name) };
+      ids.push(id);
+    });
+  });
+
+  // 광고비만 묻는다. 지표를 줄이면 주소가 짧아져 한 번에 묶이는 캠페인 수도 는다.
+  var got = ids.length ? saStats_(ids, since, until, ['salesAmt']).stats : {};
+
+  Object.keys(whose).forEach(function (id) {
+    var spend = Number((got[id] || {}).salesAmt) || 0;
+    if (!spend) return;                        // 안 쓴 캠페인은 보낼 것이 없다
+    var one = whose[id];
+    rows.push({ item: one.item, campaign: one.name, product: one.product, spend: spend });
+  });
+
+  /* 애드부스트 — GFA 라 검색광고 API 에 없다. 스크래퍼가 쌓아 둔 네이버성과 시트를 읽는다.
+     naverReport_ 가 이미 부가세를 빼(÷1.1) 공급가로 내려 주므로 위 검색광고와 기준이 같다.
+     시트가 아직 안 쌓였으면 그것만 건너뛴다 — 검색광고까지 같이 죽이지 않는다. */
+  var gfaNote = '';
+  var gfaLoadedAt = '';   // 성과 시트에 마지막으로 쌓인 시각 (스크래퍼가 언제 돌았나)
+  try {
+    var gfa = naverReport_({ since: since, until: until });
+    // naverReport_ 의 fetchedAt 은 그 기간 줄들의 **가장 늦은 적재시각**이다.
+    gfaLoadedAt = String(gfa.fetchedAt || '');
+    (gfa.campaigns || []).forEach(function (one) {
+      if (String(one.objective) !== 'PMAX') return;   // PMAX 가 애드부스트다
+      var spend = Math.round(Number(one.spend) || 0);
+      if (!spend) return;
+      rows.push({ item: '애드부스트', campaign: one.name || '',
+        product: budgetFixedProduct_(one.name), spend: spend });
+    });
+  } catch (error) {
+    gfaNote = String((error && error.message) || error);
+  }
+
+  rows.sort(function (a, b) { return b.spend - a.spend; });
+
+  // 판매채널로 잡히는 프로모션 줄 (메타 · 구글 광고그룹 이름으로 찾는다)
+  var channel = budgetChannelSpend_(since, until);
+  // 광고비는 모두 **부가세를 뺀 공급가**다 (검색광고는 salesAmt 가 원래 별도,
+  // GFA 는 naverReport_ 가 ÷1.1 해서 준다). 매체별 성과와 같은 기준이다.
+  return { ok: true, since: since, until: until, vat: 'exclusive',
+    campaigns: ids.length, rows: rows, gfaNote: gfaNote, gfaLoadedAt: gfaLoadedAt,
+    channels: channel.rows, channelNotes: channel.notes,
+    fetchedAt: new Date().toISOString() };
+}
+
 function saTree_(refresh) {
   var cache = CacheService.getScriptCache();
   if (!refresh) {

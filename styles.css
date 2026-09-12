@@ -827,7 +827,7 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .bg-title{margin:18px 0 9px}
 .bg-title h3{margin:0;font-size:14px;font-weight:700;color:#2a2a27}
 
-.bg-stat{flex:1;min-width:104px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;
+.bg-stat{flex:1;min-width:92px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;
   background:#fafaf8}
 .bg-stat small{display:block;font-size:10.5px;font-weight:600;color:#8c8c85}
 .bg-stat b{display:block;margin-top:2px;font-size:17px;font-weight:800;letter-spacing:-.2px;color:#2a2a27}
@@ -839,23 +839,63 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .bg-hero-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;
   margin-bottom:13px}
 .bg-hero-head h3{margin:0;font-size:16px;font-weight:800;color:#2a2a27}
-.bg-total{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600;color:#8c8c85}
-.bg-total input{width:170px;padding:7px 10px;border:1px solid #c9c8c1;border-radius:9px;background:#fff;
-  font-family:inherit;font-size:15px;font-weight:700;text-align:right;color:#2a2a27}
-.bg-total input:focus{outline:none;border-color:#2a78d6;box-shadow:0 0 0 3px rgba(42,120,214,.12)}
+/* 예산은 SKU 마다 적는다. 맨 위 총 예산은 그 합이라 적는 칸이 없다. */
+.bg-hero-note{font-size:11px;color:#a5a49f}
+.bg-sku-budget{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;color:#3d3d39}
+.bg-sku-budget input{width:150px;padding:6px 10px;border:1px solid #c9c8c1;border-radius:9px;background:#fff;
+  font-family:inherit;font-size:14px;font-weight:700;text-align:right;color:#2a2a27}
+.bg-sku-budget input:focus{outline:none;border-color:#2a78d6;box-shadow:0 0 0 3px rgba(42,120,214,.12)}
+/* 못 센 수식. 값을 되돌리지 않고 칸만 빨갛게 둔다 — 적다 만 것일 수 있어서다. */
+.bg-num.is-bad,.bg-sku-budget input.is-bad,.perf-cost-num.is-bad{border-color:#d9534f;background:#fdf4f3}
+/* 브랜드검색 광고비 칸도 수식을 받는다 (숫자 칸이 아니라 글자 칸이다) */
+.perf-cost-num{width:100%;text-align:right;font-variant-numeric:tabular-nums}
 .bg-line{margin:11px 0 0;font-size:11.5px;color:#8c8c85}
 .bg-note-bad{color:#c9302c;font-weight:600}
 .bg-line b{color:#3d3d39}
 .bg-line.is-over,.bg-line.is-over b{color:#c9302c}
 
-/* ② 요약 — 값이 다른 메뉴에서 온다. 빈 도넛에 0 을 적으면 '안 쓴 돈' 으로 잘못 읽혀
-   테두리만 그려 두고 숫자는 넣지 않는다. */
-.bg-rings{display:flex;flex-wrap:wrap;gap:14px;padding:6px 0 12px}
-.bg-ring{flex:1;min-width:118px;text-align:center}
-.bg-ring-mark{display:block;width:76px;height:76px;margin:0 auto 8px;border-radius:50%;
-  border:9px solid #eeede9}
-.bg-ring b{display:block;font-size:13px;font-weight:700;color:#3d3d39}
-.bg-ring small{font-size:10.5px;color:#a5a49f}
+/* ② 요약 — 고리 하나가 구분 하나다. 노란 고리가 그 구분의 예정(한 바퀴),
+   그 위에 덧그린 파란 활이 사용이라 '짠 것 중 얼마나 썼나' 가 바로 보인다.
+   한 바퀴를 넘기면 넘긴 것이라 빨갛게 둔다. 금액은 고리 밑에 적는다. */
+.bg-rings{display:flex;flex-wrap:wrap;justify-content:center;gap:18px 26px;padding:8px 0 14px}
+.bg-donut{width:124px;margin:0}
+.bg-ringbox{position:relative;width:124px;height:124px}
+.bg-donut svg{display:block;width:124px;height:124px}
+.bg-arc-none{fill:none;stroke:#eeede9;stroke-width:13}
+.bg-arc{fill:none;stroke-width:13}
+.bg-arc.is-plan{stroke:#f0b429}
+.bg-arc.is-used{stroke:#2a78d6;stroke-linecap:round}
+.bg-donut.is-over .bg-arc.is-used{stroke:#c9302c}
+.bg-donut figcaption{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:2px;pointer-events:none;padding:0 12px;text-align:center}
+/* 구분은 손으로 적을 수 있어 긴 이름도 들어온다. 띄어쓰기에서 먼저 접고,
+   그래도 안 되면(한 덩어리로 긴 이름) 아무 데서나 접어 고리 밖으로 안 나가게 한다. */
+.bg-donut figcaption b{font-size:13px;font-weight:700;line-height:1.25;color:#2f2f2b;
+  word-break:keep-all;overflow-wrap:anywhere}
+.bg-donut figcaption small{font-size:11px;font-weight:600;color:#8a8a82}
+.bg-donut.is-over figcaption small{color:#c9302c}
+/* 예정 · 사용을 한 줄에 두면 124px 안에 안 들어가 글자가 잘린다 — 두 줄로 쌓는다.
+   span 은 display:contents 로 지우지 않는다. 박스가 없어지면 title 툴팁이 안 뜬다.
+   이름이 둘 다 두 글자라 그대로도 자릿수가 나란히 선다. */
+.bg-ringfoot{display:flex;flex-direction:column;align-items:center;gap:2px;
+  margin-top:8px;font-size:11px;line-height:1.5;color:#8a8a82}
+.bg-ringfoot span{display:flex;gap:6px;white-space:nowrap}
+.bg-ringfoot i{font-style:normal}
+.bg-ringfoot b{font-weight:700;color:#b8860b}
+.bg-ringfoot em{font-style:normal;font-weight:700;color:#2a78d6}
+.bg-donut.is-over .bg-ringfoot em{color:#c9302c}
+.bg-key{display:inline-block;width:9px;height:9px;margin-right:3px;border-radius:3px;vertical-align:middle}
+.bg-key.is-plan{background:#f0b429}
+.bg-key.is-used{background:#2a78d6}
+
+/* 브검 포함 · 미포함을 한 줄에 나란히. 지금 보고 있는 기준에 밑줄을 둔다 —
+   맨 위 스위치를 건드리지 않고도 두 값을 견줄 수 있다. */
+.bg-both{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px}
+.bg-both-one{color:#a5a49f}
+.bg-both-one b{font-weight:700;color:#8c8c85}
+.bg-both-one.is-now{color:#6f6f68}
+.bg-both-one.is-now b{color:#2a2a27;border-bottom:2px solid #2a78d6}
+.bg-both small{font-size:11px;color:#b8860b}
 
 .bg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:13px}
 .bg-card{margin:0;padding:15px 16px}
@@ -869,19 +909,26 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .bg-card-skus span{text-align:right}
 
 /* ④ 행사별 */
-/* SKU 를 **넣는 자리**(드롭다운)와 **보는 자리**(칩)를 눈으로도 가른다.
-   앞서는 둘 다 드롭다운이라 나란히 놓여, 하는 일이 다른데도 같아 보였다. */
+/* 카테고리(보기 · 상세 SKU 고르개의 범위)와 상세 SKU(넣기)를 나란히 둔다.
+   무엇을 하는 칸인지 이름표를 굵게 적어 두 칸이 헷갈리지 않게 한다. */
 .bg-pick-add{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
 .bg-pick-add .bg-cat b{font-weight:700;color:#3d3d39}
 .bg-pick-add select{min-width:190px}
 .bg-pick-add small{font-size:11px;color:#a5a49f}
-.bg-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:11px;
-  padding-top:11px;border-top:1px dashed var(--line)}
-.bg-chips>span{margin-right:2px;font-size:11.5px;font-weight:600;color:#8c8c85}
-.bg-chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;background:#fff;
-  font-family:inherit;font-size:12px;color:#6f6f68;cursor:pointer}
-.bg-chip:hover{border-color:#b9c9dd;color:#2a78d6}
-.bg-chip.is-on{border-color:#2a2a27;background:#2a2a27;font-weight:700;color:#fff}
+.bg-both-note{font-size:11px;color:#a5a49f}
+/* 곁말로만 두는 칸 (브검비 — 어떤 합계에도 안 들어간다) */
+.bg-table .bg-aside{color:#a5a49f}
+.bg-table input.bg-aside{color:#8c8c85;background:#fafaf8}
+/* 실사용비 — 실제로 나간 돈이라 진하게 */
+.bg-table .bg-used{font-weight:700;color:#1f7a4d}
+.bg-table input.bg-used{color:#1f7a4d}
+
+.bg-both-note b{color:#c9302c}
+/* SKU 카드에 어느 카테고리인지 작게 적어 둔다 (고르개가 카테고리로 바뀌었다) */
+.bg-sku-cat{padding:3px 9px;border:1px solid var(--line);border-radius:20px;background:#fafaf8;
+  font-size:11px;font-weight:600;color:#8c8c85}
+/* 보기일 때 표는 값만 남는다. 줄 높이가 들쭉날쭉하지 않게 칸 높이를 맞춰 둔다. */
+.bg-table td{height:34px}
 
 /* 지우기는 되돌릴 수 없다. 평소에는 눈에 안 띄고, 손이 닿을 때만 빨개진다. */
 .bg-drop-month{margin-left:auto;color:#a5a49f}
@@ -905,7 +952,7 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .bg-check input{margin:0;cursor:pointer}
 .bg-tools small{font-size:11px;color:#a5a49f}
 
-.bg-table{min-width:900px}
+.bg-table{min-width:1300px}
 .bg-table th small{display:block;font-size:9.5px;font-weight:500;color:#b5b4ae}
 .bg-table td{vertical-align:middle}
 .bg-table select,.bg-table input{padding:5px 7px;border:1px solid #dcdbd4;border-radius:7px;background:#fff;
@@ -917,19 +964,47 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .bg-span input{width:118px}
 .bg-span i{margin:0 4px;font-style:normal;color:#b5b4ae}
 .bg-cost span{font-weight:700;color:#2a78d6}
+.bg-cost .bg-num{width:104px;font-weight:700;color:#2a78d6}
+/* 수기로 적은 광고비. 셈한 값과 눈으로 갈리게 표시해 둔다 (앞에 점 하나). */
+.bg-cost .is-manual{border-color:#c9c8c1;background:#fffdf6}
+.bg-cost span.is-manual::before{content:"✎ ";font-weight:400;color:#b08a2e}
+/* 진행광고매체 — 한 줄에 여럿을 켤 수 있다. 표 칸 안이라 눌러 켜는 조각으로 둔다
+   (여러 줄 고르개는 칸 높이를 세 배로 만든다). 보기일 때는 켠 것만 남는다. */
+.bg-kinds{white-space:nowrap;line-height:1}
+.bg-kind{display:inline-block;margin:1px 3px 1px 0;padding:3px 8px;border:1px solid var(--line);
+  border-radius:20px;background:#fff;font-family:inherit;font-size:11px;color:#a5a49f;cursor:pointer}
+button.bg-kind:hover{border-color:#b9c9dd;color:#2a78d6}
+.bg-kind.is-on{border-color:#2a78d6;background:#e7f0fb;font-weight:700;color:#2a78d6}
+span.bg-kind{cursor:default}
+/* 끌 손잡이. 줄 전체가 아니라 이것만 끌리게 둔다 — 줄을 끌게 하면 칸 안 글자를 못 고른다. */
+.bg-grip{width:24px;padding-right:0!important;text-align:center}
+.bg-grip span{display:inline-flex;padding:2px;border-radius:5px;color:#c4c3bd;cursor:grab}
+.bg-grip span:hover{background:#f0efeb;color:#6f6f68}
+.bg-grip span:active{cursor:grabbing}
+.bg-grip svg{width:14px;height:14px}
+.bg-table tr.is-dragging{opacity:.4}
+/* 떨어뜨릴 자리 — 줄 위 · 아래에 선을 그어 어디로 가는지 보여 준다 */
+.bg-table tr.is-over-top td{box-shadow:inset 0 2px 0 #2a78d6}
+.bg-table tr.is-over-bottom td{box-shadow:inset 0 -2px 0 #2a78d6}
+/* 고정비 표는 열이 적어 행사별만큼 넓을 이유가 없다 */
+/* 브검 미포함으로 보는 중 — 값은 그대로 두고 합계에서만 뺐다는 표시 */
+.bg-table td.is-off,.bg-table .bg-num.is-off{opacity:.45;text-decoration:line-through}
+.bg-table th small{display:block;font-size:9.5px;font-weight:500;color:#c9302c}
+.bg-fixed{min-width:760px}
+.bg-fixed select{min-width:104px}
+.bg-table td.is-minus{color:#c9302c;font-weight:700}
+.bg-row-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}
+.bg-row-tools small{font-size:11px;color:#a5a49f}
+.bg-channel{width:132px}
+.bg-group{width:104px}
+.bg-live{white-space:nowrap}
+.bg-live input{width:130px}
 .bg-none{padding:16px 0;text-align:center;font-size:12px;color:#a5a49f}
 .bg-kill button{display:inline-flex;padding:4px;border:0;border-radius:6px;background:none;color:#b5b4ae;cursor:pointer}
 .bg-kill button:hover{background:#faeceb;color:#c9302c}
 .bg-kill svg{width:14px;height:14px}
 .bg-add{margin-top:10px}
 
-.bg-pull{margin-top:13px}
-.bg-media{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:4px}
-.bg-media-one{padding:6px 10px;border:1px solid var(--line);border-radius:9px;background:#fafaf8}
-.bg-media-one small{display:block;font-size:10px;color:#8c8c85}
-.bg-media-one b{font-size:12.5px;font-weight:700;color:#3d3d39}
-.bg-media-one.is-bad{border-color:#e6cdcb;background:#fdf4f3}
-.bg-media-one.is-bad b{color:#c9302c}
 
 /* KOL 라이브 표가 아직 쓰는 조각 (여기서 처음 만든 것이라 자리를 지킨다) */
 .budget-cell-bar{position:absolute;right:0;top:4px;bottom:4px;border-radius:4px;background:#e3edfa}
@@ -1430,3 +1505,10 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .perf-cost input[type=number]{text-align:right}
 .perf-cost td:nth-child(2) input,.perf-cost td:nth-child(3) input{min-width:130px}
 .perf-cost td:last-child{width:1%;white-space:nowrap}
+
+/* 고정비 아래 단추 두 개 (줄 추가 · 네이버에서 받기) */
+.bg-pull-note{margin:10px 2px 0;line-height:1.6}
+
+/* 달 추가 — 도구줄 오른쪽 끝에 떼어 둔다 (달 고르개 옆에 붙여 두니 둘이 한 짝처럼 보였다) */
+.bg-newmonth{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
+.bg-newmonth input{border:1px solid var(--line,#e6e5e0);border-radius:6px;padding:6px 8px;font:inherit;font-size:12px;color:#3d3d39;background:#fff}
