@@ -444,6 +444,12 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .setup-pill{border:1px solid #e3e2dc;border-radius:16px;background:#fff;color:#555;font:600 11px inherit;padding:7px 14px;cursor:pointer}
 .setup-pill:hover{background:#f4f4f1}
 .setup-pill.is-on{border-color:#2f86d9;background:#2f86d9;color:#fff}
+/* 게재지면 · 입찰형태 고르개 — 안내말이 길어 이름표와 사이를 띄운다 */
+.setup-choice{margin-top:14px}
+.setup-choice>span{line-height:1.5}
+/* 계정에서 아직 안 쓴 게재지면임을 알리는 꼬리표 */
+.setup-pill-tag{margin-left:5px;font-style:normal;font-size:9px;font-weight:700;color:#b9b8b2}
+.setup-pill.is-on .setup-pill-tag{color:#cfe3f7}
 
 .setup-promo{margin-top:12px}
 .setup-promo-row{display:flex;gap:8px}

@@ -3800,6 +3800,51 @@ function kakaoBase_(account, kind, goal, refresh) {
     campaignName: campaign.name, matchedGoal: same.length > 0 };
 }
 
+/* 화면에서 고를 수 있는 게재지면 · 입찰형태를 모은다.
+   카카오 문서의 코드를 외워 박아 두면 캠페인 유형마다 되고 안 되고가 갈려 400 이 난다.
+   그래서 **같은 유형으로 이미 만든 광고그룹**을 훑어, 이 계정에서 실제로 통한 값만 모아 준다.
+   (화면은 여기 없는 지면도 보여 주되 '미사용' 이라고 적어 둔다) */
+var KAKAO_SCAN_GROUPS = 12;
+
+function kakaoChoices_(account, kind) {
+  var want = KAKAO_TYPE_OF[String(kind || 'bizboard')] || 'TALK_BIZ_BOARD';
+  var tree = kakaoTree_({ account: account, refresh: false });
+  var ids = [];
+  (tree.campaigns || []).forEach(function (one) {
+    if (one.type !== want) return;
+    one.groups.forEach(function (group) { ids.push(Number(group.id)); });
+  });
+  // 번호가 클수록 나중에 만든 것이다 — 요즘 쓰는 설정부터 본다
+  ids.sort(function (a, b) { return b - a; });
+  ids = ids.slice(0, KAKAO_SCAN_GROUPS);
+  if (!ids.length) return { placements: [], deviceTypes: [], bids: [] };
+
+  var got = kakaoMany_(ids.map(function (id) {
+    return { key: 'g' + id, path: '/adGroups/' + id };
+  }), account);
+
+  var placements = [];
+  var devices = [];
+  var bids = [];
+  ids.forEach(function (id) {
+    var group = got['g' + id];
+    if (!group) return;
+    (group.placements || []).forEach(function (one) {
+      if (one && placements.indexOf(one) < 0) placements.push(one);
+    });
+    (group.deviceTypes || []).forEach(function (one) {
+      if (one && devices.indexOf(one) < 0) devices.push(one);
+    });
+    var strategy = String(group.bidStrategy || '');
+    var pricing = String(group.pricingType || '');
+    if (!strategy && !pricing) return;
+    var key = strategy + '|' + pricing;
+    for (var i = 0; i < bids.length; i += 1) if (bids[i].key === key) return;
+    bids.push({ key: key, bidStrategy: strategy, pricingType: pricing });
+  });
+  return { placements: placements, deviceTypes: devices, bids: bids };
+}
+
 /* 화면에 보여 줄 기준값 — 무엇을 본떠 만들지 한 줄로 알려 주고,
    음성 안내(altText) · 프로필 이름 · 행동 버튼처럼 적기 번거로운 값을 미리 채워 준다. */
 function kakaoDefaults_(payload) {
@@ -3815,15 +3860,20 @@ function kakaoDefaults_(payload) {
     if (one) { sample = one; break; }
   }
 
+  // 기준을 새로 읽었다면 캠페인 나무도 방금 갱신됐다 — 여기서는 담아 둔 것을 쓴다
+  var choices = { placements: [], deviceTypes: [], bids: [] };
+  try { choices = kakaoChoices_(account, payload.kind); } catch (error) { /* 고를거리는 없어도 만들 수 있다 */ }
+
   return { ok: true, source: 'kakao', account: account,
-    campaign: base.campaign, group: base.group, sample: sample,
+    campaign: base.campaign, group: base.group, sample: sample, choices: choices,
     basedOn: { campaign: base.campaignName, group: base.groupName, matchedGoal: base.matchedGoal } };
 }
 
 /* 캠페인과 광고그룹을 만든다.
    - 캠페인은 이름이 같은 것이 있으면 그것을 쓴다 (두 번 눌러도 캠페인이 겹치지 않게)
-   - 광고그룹은 '틀' 로 고른 기존 광고그룹의 타겟팅 · 게재지면 · 입찰을 그대로 본뜨고
-     이름 · 기간 · 예산만 새로 넣는다
+   - 광고그룹은 '틀' 로 고른 기존 광고그룹의 타겟팅 · 요일시간표를 그대로 본뜨고
+     이름 · 기간 · 예산과 **화면에서 고른 게재지면 · 입찰형태**를 새로 넣는다
+     (게재지면 · 입찰형태를 안 보내면 예전처럼 틀의 값을 그대로 쓴다)
    - 만든 광고그룹은 바로 끈다. 심사가 끝나고 사람이 켜야 한다. */
 function kakaoMake_(payload) {
   var account = String(payload.account || '').replace(/[^0-9]/g, '');
@@ -3833,6 +3883,12 @@ function kakaoMake_(payload) {
   var bid = Math.round(Number(payload.bid) || 0);
   var beginDate = String(payload.beginDate || '').trim();
   var endDate = String(payload.endDate || '').trim();
+  // 화면에서 고른 게재지면 · 입찰형태. 안 보내면 틀의 값을 쓴다.
+  var placements = (Array.isArray(payload.placements) ? payload.placements : [])
+    .map(function (one) { return String(one || '').trim(); })
+    .filter(function (one) { return !!one; });
+  var bidStrategy = String(payload.bidStrategy || '').trim();
+  var pricingType = String(payload.pricingType || '').trim();
 
   if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
   if (!campaignName) throw new Error('캠페인명이 비어 있습니다.');
@@ -3888,14 +3944,18 @@ function kakaoMake_(payload) {
     schedule.detailTime = from.schedule.detailTime;
   }
 
+  var usePlacements = placements.length ? placements : (from.placements || []);
+  var useStrategy = bidStrategy || from.bidStrategy;
+  var usePricing = pricingType || from.pricingType;
+
   var groupBody = {
     campaign: { id: Number(campaignId) },
     name: groupName,
-    placements: from.placements,
+    placements: usePlacements,
     deviceTypes: from.deviceTypes,
     targeting: targeting,
-    pricingType: from.pricingType,
-    bidStrategy: from.bidStrategy,
+    pricingType: usePricing,
+    bidStrategy: useStrategy,
     bidAmount: bid,
     dailyBudgetAmount: budget,
     pacing: from.pacing,
@@ -3904,7 +3964,9 @@ function kakaoMake_(payload) {
   var groupId = kakaoNewId_(kakaoSend_('post', '/adGroups', groupBody, account));
   if (!groupId) throw new Error('광고그룹을 만들었는데 번호를 못 받았습니다.');
   log.push('광고그룹을 만들었습니다 (' + groupId + ') — 게재지면 '
-    + (from.placements || []).join(' · ') + ' / 입찰 ' + from.bidStrategy + ' ' + from.pricingType);
+    + usePlacements.join(' · ') + (placements.length ? ' (고른 값)' : ' (기준 그대로)')
+    + ' / 입찰 ' + useStrategy + ' ' + usePricing
+    + (bidStrategy || pricingType ? ' (고른 값)' : ' (기준 그대로)'));
 
   // ③ 바로 끈다. 심사를 통과한 뒤 사람이 켠다.
   var off = false;

@@ -5602,6 +5602,8 @@ if (adSetup) {
 // 캠페인 · 광고그룹에 넣을 값이 많아(타겟팅 · 게재지면 · 입찰 · 요일시간표)
 // **같은 종류 × 목표로 마지막에 만든 광고그룹**을 기준 삼아 그대로 본뜨고,
 // 이름 · 기간 · 예산만 새로 받는다. 무엇을 본떴는지는 화면에 한 줄로 적어 준다.
+// 다만 **게재지면 · 입찰형태**는 행사마다 달라져 화면에서 고른다. 처음에는 기준의 값이
+// 켜져 있으므로 손대지 않으면 예전과 똑같이 만들어진다.
 // 만든 광고그룹은 바로 꺼 둔다(OFF). 소재는 카카오 심사를 거쳐야 노출된다.
 const kakaoSetup = document.querySelector('#kakao-ad-setup');
 if (kakaoSetup) {
@@ -5627,6 +5629,13 @@ if (kakaoSetup) {
   };
   const URL_TYPES = [['landing', '랜딩링크'], ['linkGA', 'LINK(GA)'], ['ntPlain', 'NT(일반)'],
     ['ntStory', 'NT(쇼핑스토리)'], ['fmLive', 'FM(쇼핑라이브)']];
+  // 게재지면 · 입찰형태는 카카오가 **코드**로 준다. 화면에는 한글로 적고, 모르는 코드는 코드 그대로 적는다.
+  const PLACEMENT_LABEL = { KAKAO_TALK: '카카오톡', DAUM: '다음', KAKAO_STORY: '카카오스토리',
+    KAKAO_SERVICE: '카카오서비스', NETWORK: '네트워크' };
+  // 계정에서 아직 안 쓴 지면도 고를 수 있게 기본 목록을 함께 보여 준다 ('미사용' 이라고 적는다).
+  const PLACEMENT_ALL = ['KAKAO_TALK', 'DAUM', 'KAKAO_STORY', 'KAKAO_SERVICE', 'NETWORK'];
+  const BID_LABEL = { AUTOBID: '자동입찰', AUTO: '자동입찰', AUTO_BID: '자동입찰', MANUAL: '수동입찰' };
+
   const ACTIONS = [['PURCHASE', '구매하기'], ['LINK', '바로가기'], ['MORE', '알아보기'],
     ['REQUEST', '신청하기'], ['RESERVATION', '예약하기'], ['JOIN', '가입하기'],
     ['COUPON', '쿠폰 받기'], ['INQUIRE', '문의하기'], ['SUBSCRIBE', '소식 받기'],
@@ -5646,6 +5655,7 @@ if (kakaoSetup) {
     account: '', kind: 'bizboard', event: '', urlType: 'landing',
     campaignName: '', groupName: '',
     beginDate: '', endDate: '', budget: '', bid: '',
+    placements: [], bidStrategy: '', pricingType: '',
     altText: '', title: '', description: '', profileName: '', action: 'PURCHASE',
   };
 
@@ -5658,8 +5668,12 @@ if (kakaoSetup) {
   let history = [];
   try { history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') || []; } catch { history = []; }
 
+  // 게재지면이 없던 때에 저장한 값이면 배열이 아니다
+  if (!Array.isArray(state.placements)) state.placements = [];
+
   let accounts = [];
   let base = null;                 // 기준 광고그룹 (서버가 찾아 준다)
+  let choices = { placements: [], deviceTypes: [], bids: [] };   // 계정에서 실제로 쓴 게재지면 · 입찰형태
   let baseState = { state: 'idle', message: '' };
   let rows = [];                 // 시트에서 가져온 줄 (고른 종류만)
   let lookup = { state: 'idle', message: '' };
@@ -5810,6 +5824,13 @@ if (kakaoSetup) {
         base = body;
         baseState = { state: 'done', message: '' };
         const group = body.group || {};
+        choices = body.choices || { placements: [], deviceTypes: [], bids: [] };
+        // 게재지면 · 입찰형태는 기준 광고그룹의 값으로 채워 둔다 (그대로 두면 예전과 똑같이 만들어진다)
+        if (!state.placements.length) state.placements = (group.placements || []).slice();
+        if (!state.bidStrategy && !state.pricingType) {
+          state.bidStrategy = group.bidStrategy || '';
+          state.pricingType = group.pricingType || '';
+        }
         if (!tr(state.budget) && group.dailyBudgetAmount) state.budget = commaNum(group.dailyBudgetAmount);
         if (!tr(state.bid) && group.bidAmount) state.bid = commaNum(group.bidAmount);
         const sample = body.sample || {};
@@ -5892,6 +5913,10 @@ if (kakaoSetup) {
     if (!tr(state.groupName)) list.push('광고그룹명이 비어 있습니다.');
     if (!tr(state.beginDate)) list.push('시작일을 입력하세요.');
     if ((parseInt(digitsOf(state.budget), 10) || 0) < 10000) list.push('일예산은 10,000원 이상이어야 합니다.');
+    if (!state.placements.length) list.push('게재지면을 하나 이상 고르세요.');
+    if (state.bidStrategy && !isAutoBid() && (parseInt(digitsOf(state.bid), 10) || 0) <= 0) {
+      list.push('수동입찰은 입찰금액을 1원 이상 넣어야 합니다.');
+    }
     if (!tr(state.altText)) list.push('음성 안내 문구를 입력하세요 — 카카오 필수값입니다.');
     if (!isBoard()) {
       if (!tr(state.title)) list.push('제목을 입력하세요 (디스플레이 필수).');
@@ -5926,6 +5951,9 @@ if (kakaoSetup) {
         endDate: tr(state.endDate),
         budget: parseInt(digitsOf(state.budget), 10) || 0,
         bid: parseInt(digitsOf(state.bid), 10) || 0,
+        placements: state.placements.slice(),
+        bidStrategy: tr(state.bidStrategy),
+        pricingType: tr(state.pricingType),
       });
     } catch (reason) {
       work.running = false;
@@ -5998,9 +6026,42 @@ if (kakaoSetup) {
     return `<div class="setup-tnd">
       <div><b>기준</b><span>${escapeHtml(on.group || '')} <small>(${escapeHtml(on.campaign || '')})</small>
         ${on.matchedGoal === false ? '<em class="setup-warn">같은 목표가 없어 같은 종류에서 가져왔습니다</em>' : ''}</span></div>
-      <div><b>게재지면</b><span>${escapeHtml((group.placements || []).join(' · ')) || '<i>없음</i>'} · ${escapeHtml((group.deviceTypes || []).join(' · '))}</span></div>
+      <div><b>기준 지면</b><span>${escapeHtml((group.placements || []).join(' · ')) || '<i>없음</i>'} · ${escapeHtml((group.deviceTypes || []).join(' · '))}</span></div>
       <div><b>타겟</b><span>${escapeHtml(target.ageType === 'ALL' ? '나이 전체' : `${ages.join('·')}세`)} · ${escapeHtml(target.genderType === 'ALL' ? '성별 전체' : (target.genders || []).join('·'))} · ${escapeHtml(target.locationType === 'ALL' ? '지역 전체' : '지역 지정')}</span></div>
-      <div><b>입찰</b><span>${escapeHtml(group.bidStrategy || '')} · ${escapeHtml(group.pricingType || '')}${group.bidAmount ? ` · ${commaNum(group.bidAmount)}원` : ''}</span></div>
+      <div><b>기준 입찰</b><span>${escapeHtml(group.bidStrategy || '')} · ${escapeHtml(group.pricingType || '')}${group.bidAmount ? ` · ${commaNum(group.bidAmount)}원` : ''}</span></div>
+    </div>`;
+  };
+
+  const placementLabel = (code) => PLACEMENT_LABEL[code] || code;
+  const bidLabel = (one) => `${BID_LABEL[one.bidStrategy] || one.bidStrategy || '?'} · ${one.pricingType || '?'}`;
+  const isAutoBid = () => /auto/i.test(state.bidStrategy);
+
+  /* 게재지면 — 여러 곳을 고른다.
+     기본 다섯 곳에 더해, 계정이 실제로 쓴 지면 중 목록에 없는 코드도 함께 보여 준다.
+     계정에서 쓴 적 없는 지면은 '미사용' 이라고 적는다 — 캠페인 유형에 따라 카카오가 막을 수 있어서다. */
+  const placementBox = () => {
+    const seen = choices.placements || [];
+    const codes = PLACEMENT_ALL.concat(seen.filter((one) => PLACEMENT_ALL.indexOf(one) < 0));
+    // 계정을 아직 못 읽었으면 '미사용' 을 달지 않는다 — 안 쓴 것이 아니라 모르는 것이다
+    const tag = (code) => (seen.length && seen.indexOf(code) < 0 ? '<em class="setup-pill-tag">미사용</em>' : '');
+    return `<div class="setup-field setup-choice"><span><b class="setup-req">게재지면</b>
+      <small class="setup-hint">여러 곳을 고를 수 있습니다${seen.length ? ' · <b>미사용</b> 은 이 계정이 이 종류로 아직 쓴 적 없는 지면이라 카카오가 막을 수 있습니다' : ''}</small></span>
+      <div class="setup-pills">${codes.map((code) => `<button type="button" class="setup-pill${state.placements.indexOf(code) >= 0 ? ' is-on' : ''}" data-placement="${escapeHtml(code)}">${escapeHtml(placementLabel(code))}${tag(code)}</button>`).join('')}</div>
+    </div>`;
+  };
+
+  /* 입찰형태 — 계정이 같은 종류로 써 온 조합만 보여 준다.
+     되는 조합이 캠페인 유형 · 목표마다 갈려, 문서의 코드를 박아 두면 만들 때 400 이 난다. */
+  const bidBox = () => {
+    const now = `${state.bidStrategy}|${state.pricingType}`;
+    const list = (choices.bids || []).slice();
+    if ((state.bidStrategy || state.pricingType) && !list.some((one) => one.key === now)) {
+      list.unshift({ key: now, bidStrategy: state.bidStrategy, pricingType: state.pricingType });
+    }
+    if (!list.length) return '<p class="tool-empty">입찰형태는 기준 광고그룹을 읽은 뒤에 고를 수 있습니다.</p>';
+    return `<div class="setup-field setup-choice"><span><b class="setup-req">입찰형태</b>
+      <small class="setup-hint">이 계정이 같은 종류로 써 온 조합입니다 — 카카오가 받아 주는 값만 보여 줍니다</small></span>
+      <div class="setup-pills">${list.map((one) => `<button type="button" class="setup-pill${one.key === now ? ' is-on' : ''}" data-bid="${escapeHtml(one.key)}">${escapeHtml(bidLabel(one))}</button>`).join('')}</div>
     </div>`;
   };
 
@@ -6063,8 +6124,9 @@ if (kakaoSetup) {
       <div class="tool-head">
         <h2>카카오 광고 세팅</h2>
         <p>행사명을 적으면 시트에서 <b>캠페인명 · 광고그룹명 · 랜딩 URL</b> 을 가져옵니다.
-        이미 있는 광고그룹 하나를 <b>틀</b>로 골라 타겟팅 · 게재지면 · 입찰을 그대로 본뜨고,
-        소재 파일을 고른 뒤 <b>만들기</b> 한 번으로 카카오모먼트에 올립니다.
+        이미 있는 광고그룹 하나를 <b>틀</b>로 골라 타겟팅 · 요일시간표를 그대로 본뜨고,
+        <b>게재지면 · 입찰형태</b>는 아래에서 직접 고릅니다 (기준 광고그룹의 값이 미리 켜져 있습니다).
+        소재 파일까지 고른 뒤 <b>만들기</b> 한 번으로 카카오모먼트에 올립니다.
         만든 광고그룹은 <b>꺼진 상태(OFF)</b> 로 두고, 소재는 <b>카카오 심사</b>를 거쳐야 노출됩니다.</p>
       </div>
 
@@ -6098,6 +6160,8 @@ if (kakaoSetup) {
           </div>
         </div>
         ${baseBox()}
+        ${placementBox()}
+        ${bidBox()}
         <div class="tool-grid setup-grid">
           ${textField('campaignName', '캠페인명', { required: true, hint: '시트에서 가져옵니다 · 같은 이름이 있으면 그 캠페인을 씁니다', placeholder: '시트 조회 후 자동 입력', wide: true })}
           ${textField('groupName', '광고그룹명', { required: true, hint: '시트에서 가져옵니다', placeholder: '시트 조회 후 자동 입력', wide: true })}
@@ -6107,7 +6171,7 @@ if (kakaoSetup) {
           <label>종료일<small class="setup-hint">비우면 계속 게재</small><input type="date" data-field="endDate" value="${escapeHtml(state.endDate)}"></label>
           <label><span class="setup-req">일예산</span><small class="setup-hint">10,000원 이상</small>
             <input type="text" data-field="budget" inputmode="numeric" value="${escapeHtml(state.budget)}" placeholder="1,000,000"></label>
-          <label>입찰금액<small class="setup-hint">자동입찰이면 0</small>
+          <label>입찰금액<small class="setup-hint">${state.bidStrategy ? (isAutoBid() ? '자동입찰 — 0 으로 둡니다' : '수동입찰 — 1원 이상') : '자동입찰이면 0'}</small>
             <input type="text" data-field="bid" inputmode="numeric" value="${escapeHtml(state.bid)}" placeholder="0"></label>
         </div>
       </section>
@@ -6185,10 +6249,32 @@ if (kakaoSetup) {
     const kind = event.target.closest('[data-kind]');
     const urlType = event.target.closest('[data-urltype]');
     const drop = event.target.closest('[data-drop]');
+    const placement = event.target.closest('[data-placement]');
+    const bid = event.target.closest('[data-bid]');
 
     if (drop) { picks.splice(Number(drop.dataset.drop), 1); return render(); }
 
+    // 게재지면은 켰다 껐다 한다 (여러 곳을 동시에 쓴다)
+    if (placement) {
+      const code = placement.dataset.placement;
+      const at = state.placements.indexOf(code);
+      if (at >= 0) state.placements.splice(at, 1);
+      else state.placements.push(code);
+      save();
+      return render();
+    }
+    // 입찰형태는 하나만 고른다
+    if (bid) {
+      const parts = String(bid.dataset.bid).split('|');
+      state.bidStrategy = parts[0] || '';
+      state.pricingType = parts[1] || '';
+      save();
+      return render();
+    }
+
     if (account || kind || urlType) {
+      const wasAccount = state.account;
+      const wasKind = state.kind;
       if (account) { state.account = account.dataset.account; base = null; }
       if (kind) {
         state.kind = kind.dataset.kind;
@@ -6197,6 +6283,14 @@ if (kakaoSetup) {
         lookup = { state: 'idle', message: '' };
       }
       if (urlType) state.urlType = urlType.dataset.urltype;
+      // 계정 · 종류가 **바뀌면** 되는 게재지면 · 입찰형태도 달라진다 — 새 기준에서 다시 채운다.
+      // 이미 고른 것을 또 눌렀을 때는 손대지 않는다 (사람이 고른 지면이 지워지면 안 된다)
+      if (state.account !== wasAccount || state.kind !== wasKind) {
+        choices = { placements: [], deviceTypes: [], bids: [] };
+        state.placements = [];
+        state.bidStrategy = '';
+        state.pricingType = '';
+      }
       save();
       render();
       if (account || kind) loadBase(false);
@@ -6210,7 +6304,7 @@ if (kakaoSetup) {
     if (event.target.closest('.setup-make')) {
       if (work && work.running) return undefined;
       const list = problems();
-      if (!list.length && !window.confirm(`카카오모먼트에 실제로 만듭니다.\n\n광고그룹: ${tr(state.groupName)}\n소재: ${picks.filter((one) => !sizeBad(one) && urlFor(one)).length}개\n\n진행할까요?`)) return undefined;
+      if (!list.length && !window.confirm(`카카오모먼트에 실제로 만듭니다.\n\n광고그룹: ${tr(state.groupName)}\n게재지면: ${state.placements.map(placementLabel).join(' · ')}\n입찰형태: ${bidLabel({ bidStrategy: state.bidStrategy, pricingType: state.pricingType })}\n소재: ${picks.filter((one) => !sizeBad(one) && urlFor(one)).length}개\n\n진행할까요?`)) return undefined;
       work = null;
       return makeAll();
     }
