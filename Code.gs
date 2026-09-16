@@ -1599,6 +1599,12 @@ function handleAction_(payload) {
   try {
     if (payload.action === 'metaAccounts') return { ok: true, accounts: metaAccounts_() };
     if (payload.action === 'metaCampaigns') return metaCampaigns_(payload);
+    if (payload.action === 'metaMake') return metaMake_(payload);
+    if (payload.action === 'metaAd') return metaAd_(payload);
+    if (payload.action === 'metaVideoStart') return metaVideoStart_(payload);
+    if (payload.action === 'metaVideoChunk') return metaVideoChunk_(payload);
+    if (payload.action === 'metaVideoFinish') return metaVideoFinish_(payload);
+    if (payload.action === 'metaVideoReady') return metaVideoReady_(payload);
     if (payload.action === 'metaReport') return metaReport_(payload);
     if (payload.action === 'googleAccounts') return { ok: true, accounts: adsAccounts_() };
     if (payload.action === 'googleReport') return adsReport_(payload);
@@ -1883,6 +1889,452 @@ function metaCampaigns_(payload) {
   // 담아 두다 실패해도(캐시 한 칸은 100KB) 목록은 그대로 준다
   try { cache.put(key, JSON.stringify(out), META_CAMPAIGN_CACHE_SECONDS); } catch (ignore) { /* 너무 길면 담지 않는다 */ }
   return { ok: true, campaigns: out };
+}
+
+/* ── 메타 광고 만들기 ─────────────────────────────────────────────
+   예전에는 화면이 PowerShell(.ps1) 을 만들어 주고 사람이 내려받아 돌렸다. 브라우저가
+   NAS 를 마운트하지 못하고 토큰을 맡길 곳도 없어서였다. 이제 소재는 사람이 화면에
+   끌어다 놓고(브라우저가 base64 로 실어 보낸다), 메타 API 는 여기서 부른다.
+   카카오 광고 세팅과 같은 길이다 — 토큰은 스크립트 속성에만 있다.
+
+   .ps1 이 하던 일을 그대로 옮겼다:
+     metaMake_  캠페인 · 광고세트 조회/생성 (Step 5-0 · 5)
+     metaAd_    소재 업로드 → 크리에이티브 → 광고 (Step 4 · 6)
+   만든 것은 모두 **PAUSED** 다. Ads Manager 에서 보고 사람이 켠다.                  */
+
+// 화면이 보낸 값이 이 목록에 있어야 받는다. 엉뚱한 값을 그대로 넘기면
+// 메타가 알아듣기 어려운 오류를 돌려주고, 무엇이 틀렸는지 화면에서 알 수 없다.
+var META_OBJECTIVES = ['OUTCOME_SALES', 'OUTCOME_TRAFFIC', 'OUTCOME_AWARENESS',
+  'OUTCOME_ENGAGEMENT', 'OUTCOME_LEADS'];
+var META_OPT_GOALS = ['OFFSITE_CONVERSIONS', 'LINK_CLICKS', 'REACH', 'IMPRESSIONS',
+  'LANDING_PAGE_VIEWS', 'POST_ENGAGEMENT'];
+var META_BILL_EVENTS = ['IMPRESSIONS', 'LINK_CLICKS', 'POST_ENGAGEMENT'];
+var META_CTAS = ['SHOP_NOW', 'APPLY_NOW', 'LEARN_MORE', 'SIGN_UP', 'GET_OFFER',
+  'ORDER_NOW', 'SUBSCRIBE', 'CONTACT_US'];
+
+// 게시 주체(페이지 · 인스타 계정). 스크립트 속성에 적어 두면 그것을 쓰고,
+// 없으면 그 계정이 이미 쓰고 있는 크리에이티브에서 찾아 온다 — 손으로 적을 것을 줄인다.
+var META_IG_FALLBACK = '17841446818074113';   // @minix_official
+var META_STORY_CACHE_SECONDS = 21600;         // 6시간
+
+function metaOneOf_(value, list, what) {
+  var picked = String(value || '').trim().toUpperCase();
+  if (list.indexOf(picked) < 0) {
+    throw new Error(what + ' 값이 올바르지 않습니다: ' + (value || '(비어 있음)'));
+  }
+  return picked;
+}
+
+function metaAccountId_(value) {
+  var account = String(value || '').trim();
+  if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
+  return account.indexOf('act_') === 0 ? account : 'act_' + account;
+}
+
+// 'YYYY-MM-DDTHH:mm' 을 유닉스 초로. 광고 계정 시간대(한국)로 읽는다.
+function metaTime_(value) {
+  var text = String(value || '').trim();
+  if (!text) return 0;
+  var found = text.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!found) throw new Error('일시가 올바르지 않습니다: ' + text);
+  var when = new Date(found[1] + '-' + found[2] + '-' + found[3]
+    + 'T' + found[4] + ':' + found[5] + ':00+09:00');
+  if (isNaN(when.getTime())) throw new Error('일시가 올바르지 않습니다: ' + text);
+  return Math.floor(when.getTime() / 1000);
+}
+
+// 폼(application/x-www-form-urlencoded)으로 보낸다. 빈 칸은 아예 보내지 않는다.
+function graphPost_(path, params) {
+  var payload = { access_token: metaToken_() };
+  Object.keys(params || {}).forEach(function (key) {
+    var value = params[key];
+    if (value === undefined || value === null || value === '') return;
+    payload[key] = value;
+  });
+  var response = UrlFetchApp.fetch(GRAPH_URL + path, {
+    method: 'post', payload: payload, muteHttpExceptions: true
+  });
+  return metaAnswer_(response, 'POST ' + path);
+}
+
+function metaAnswer_(response, where) {
+  var text = response.getContentText() || '';
+  var body = {};
+  try { body = JSON.parse(text || '{}'); } catch (error) { body = {}; }
+  var code = response.getResponseCode();
+  if (body.error) {
+    var reason = body.error.error_user_msg || body.error.message || JSON.stringify(body.error);
+    // 토큰에 만들기 권한이 없을 때가 가장 흔하다. 무엇을 하면 되는지 함께 적는다.
+    if (/permission|ads_management|OAuth/i.test(reason)) {
+      reason += ' — 광고를 만들려면 토큰에 ads_management 권한이 있어야 합니다 '
+        + '(지금 토큰은 읽기만 되는 것일 수 있습니다).';
+    }
+    throw new Error('메타 API ' + where + ': ' + reason);
+  }
+  if (code >= 400) throw new Error('메타 API ' + where + ' (HTTP ' + code + '): ' + text.slice(0, 300));
+  return body;
+}
+
+/* 게시 주체를 찾는다.
+   스크립트 속성 META_PAGE_ID · META_IG_USER_ID 가 있으면 그것을 쓴다.
+   없으면 계정이 이미 만들어 둔 크리에이티브에서 page_id · instagram_user_id 를 꺼낸다 —
+   지금 쓰고 있는 페이지라 가장 틀릴 일이 없다. */
+function metaStory_(account) {
+  var store = PropertiesService.getScriptProperties();
+  var page = cleanToken_(store.getProperty('META_PAGE_ID'));
+  var insta = cleanToken_(store.getProperty('META_IG_USER_ID'));
+  if (page) return { pageId: page, igId: insta || META_IG_FALLBACK, from: '스크립트 속성' };
+
+  var cache = CacheService.getScriptCache();
+  var key = 'metaStory:' + account;
+  var hit = cache.get(key);
+  if (hit) {
+    try {
+      var kept = JSON.parse(hit);
+      if (kept && kept.pageId) return kept;
+    } catch (ignore) { /* 깨졌으면 다시 찾는다 */ }
+  }
+
+  var found = { pageId: '', igId: insta || META_IG_FALLBACK, from: '계정의 기존 소재' };
+  try {
+    var rows = graphAll_('/' + account + '/adcreatives',
+      { fields: 'object_story_spec{page_id,instagram_user_id}', limit: 25 }, 1);
+    for (var i = 0; i < rows.length && !found.pageId; i += 1) {
+      var spec = (rows[i] || {}).object_story_spec || {};
+      if (spec.page_id) found.pageId = String(spec.page_id);
+      if (!insta && spec.instagram_user_id) found.igId = String(spec.instagram_user_id);
+    }
+  } catch (error) { /* 못 읽으면 아래에서 알려 준다 */ }
+
+  if (!found.pageId) {
+    throw new Error('광고를 게시할 페이지(page_id)를 찾지 못했습니다. '
+      + 'Apps Script 편집기 → 프로젝트 설정 → 스크립트 속성에 META_PAGE_ID 를 넣어 주세요 '
+      + '(공유 폴더 .env 의 META_PAGE_ID 와 같은 값입니다).');
+  }
+  try { cache.put(key, JSON.stringify(found), META_STORY_CACHE_SECONDS); } catch (ignore) { /* 거들기다 */ }
+  return found;
+}
+
+/* 캠페인 · 광고세트를 찾거나 만든다.
+   **이름이 같으면 이미 있는 것을 쓴다** — 두 번 눌러도 캠페인이 겹치지 않게.
+   새 광고세트는 같은 캠페인의 기존 광고세트에서 promoted_object(픽셀 · 전환 이벤트)와
+   최적화 · 과금 기준을 물려받는다. 물려받을 것이 없으면 계정의 픽셀을 찾아 붙인다. */
+function metaMake_(payload) {
+  var account = metaAccountId_(payload.account);
+  var campaignName = String(payload.campaignName || '').trim();
+  var adsetName = String(payload.adsetName || '').trim();
+  if (!campaignName) throw new Error('캠페인명이 비어 있습니다.');
+  if (!adsetName) throw new Error('광고그룹명이 비어 있습니다.');
+
+  var objective = metaOneOf_(payload.objective, META_OBJECTIVES, '캠페인 목적');
+  var optGoal = metaOneOf_(payload.optGoal, META_OPT_GOALS, '최적화 기준');
+  var billEvent = metaOneOf_(payload.billEvent, META_BILL_EVENTS, '과금 기준');
+  var budgetType = String(payload.budgetType || 'daily') === 'lifetime' ? 'lifetime' : 'daily';
+  var budget = Math.round(Number(payload.budget) || 0);
+  if (budget <= 0) throw new Error('예산이 0원입니다.');
+
+  var start = metaTime_(payload.startAt);
+  if (!start) throw new Error('시작일시가 비어 있습니다.');
+  var end = payload.endAt ? metaTime_(payload.endAt) : 0;
+  if (budgetType === 'lifetime' && !end) throw new Error('총예산을 쓰려면 종료일시가 있어야 합니다.');
+  if (end && end <= start) throw new Error('종료일시가 시작일시보다 빠르거나 같습니다.');
+
+  var log = [];
+
+  // ① 캠페인 — 이름이 같은 것이 있으면 그것을 쓴다
+  var campaignId = '';
+  try {
+    var already = graphAll_('/' + account + '/campaigns', { fields: 'id,name', limit: 200 }, 3);
+    for (var i = 0; i < already.length && !campaignId; i += 1) {
+      if (String(already[i].name || '') === campaignName) campaignId = String(already[i].id);
+    }
+  } catch (error) { /* 못 읽으면 새로 만든다 */ }
+
+  if (campaignId) {
+    log.push('캠페인은 이미 있는 것을 씁니다 (' + campaignId + ')');
+  } else {
+    var made = graphPost_('/' + account + '/campaigns', {
+      name: campaignName, objective: objective, status: 'PAUSED',
+      special_ad_categories: JSON.stringify([]),
+      is_adset_budget_sharing_enabled: 'false'
+    });
+    campaignId = String(made.id || '');
+    if (!campaignId) throw new Error('캠페인을 만들었는데 번호를 못 받았습니다.');
+    log.push('캠페인을 만들었습니다 (' + campaignId + ' · ' + objective + ')');
+  }
+
+  // ② 광고세트 — 이름이 같은 것이 있으면 그것을 쓴다
+  var adsetId = '';
+  try {
+    var groups = graphAll_('/' + campaignId + '/adsets', { fields: 'id,name', limit: 200 }, 3);
+    for (var k = 0; k < groups.length && !adsetId; k += 1) {
+      if (String(groups[k].name || '') === adsetName) adsetId = String(groups[k].id);
+    }
+  } catch (error) { /* 못 읽으면 새로 만든다 */ }
+
+  if (adsetId) {
+    log.push('광고세트는 이미 있는 것을 씁니다 (' + adsetId + ')');
+  } else {
+    var promoted = '';
+    try {
+      var sample = graphAll_('/' + campaignId + '/adsets',
+        { fields: 'promoted_object,optimization_goal,billing_event', limit: 1 }, 1);
+      if (sample.length) {
+        if (sample[0].promoted_object) promoted = JSON.stringify(sample[0].promoted_object);
+        if (sample[0].optimization_goal) optGoal = sample[0].optimization_goal;
+        if (sample[0].billing_event) billEvent = sample[0].billing_event;
+        log.push('기존 광고세트 설정을 물려받았습니다 (최적화 ' + optGoal
+          + ' · 픽셀 ' + (promoted ? '있음' : '없음') + ')');
+      }
+    } catch (error) { /* 물려받을 것이 없으면 아래에서 픽셀을 찾는다 */ }
+
+    if (!promoted && optGoal === 'OFFSITE_CONVERSIONS') {
+      try {
+        var pixels = graphAll_('/' + account + '/adspixels', { fields: 'id', limit: 1 }, 1);
+        if (pixels.length && pixels[0].id) {
+          promoted = JSON.stringify({ pixel_id: String(pixels[0].id), custom_event_type: 'PURCHASE' });
+          log.push('픽셀을 붙였습니다 (' + pixels[0].id + ' · PURCHASE)');
+        }
+      } catch (error) { /* 픽셀이 없으면 그대로 만든다 */ }
+    }
+
+    var targeting = {
+      geo_locations: { countries: ['KR'] },
+      age_min: Math.max(Number(payload.ageMin) || 0, 13),
+      age_max: Math.min(Number(payload.ageMax) || 65, 65),
+      targeting_automation: { advantage_audience: 0 }
+    };
+    var gender = String(payload.gender || '전체');
+    if (gender === '여성') targeting.genders = [2];
+    else if (gender === '남성') targeting.genders = [1];
+
+    var params = {
+      name: adsetName, campaign_id: campaignId, start_time: start,
+      optimization_goal: optGoal, billing_event: billEvent,
+      bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
+      targeting: JSON.stringify(targeting), status: 'PAUSED',
+      promoted_object: promoted
+    };
+    params[budgetType === 'lifetime' ? 'lifetime_budget' : 'daily_budget'] = budget;
+    if (end) params.end_time = end;
+
+    var group = graphPost_('/' + account + '/adsets', params);
+    adsetId = String(group.id || '');
+    if (!adsetId) throw new Error('광고세트를 만들었는데 번호를 못 받았습니다.');
+    log.push('광고세트를 만들었습니다 (' + adsetId + ' · '
+      + (budgetType === 'lifetime' ? '총예산 ' : '일예산 ') + budget + '원)');
+  }
+
+  // ③ 이미 있는 광고 이름 — 같은 이름으로 두 번 만들지 않게 화면에 알려 준다
+  var names = [];
+  try {
+    graphAll_('/' + adsetId + '/ads', { fields: 'name', limit: 200 }, 3).forEach(function (one) {
+      if (one && one.name) names.push(String(one.name));
+    });
+    if (names.length) log.push('광고세트에 이미 있는 광고 ' + names.length + '건은 건너뜁니다');
+  } catch (error) { /* 못 읽으면 그냥 만든다 */ }
+
+  var story = metaStory_(account);
+  log.push('게시 주체: 페이지 ' + story.pageId
+    + (story.igId ? ' · 인스타 ' + story.igId : '') + ' (' + story.from + ')');
+
+  return { ok: true, source: 'meta', account: account,
+    campaign: campaignId, adset: adsetId, adNames: names,
+    page: story.pageId, instagram: story.igId, log: log };
+}
+
+// 그림 한 장을 올려 해시를 받는다. 해시는 크리에이티브가 소재를 가리키는 번호다.
+function metaUpload_(account, fileName, base64) {
+  var name = String(fileName || 'creative.jpg');
+  var mime = /\.png$/i.test(name) ? 'image/png' : 'image/jpeg';
+  var blob = Utilities.newBlob(Utilities.base64Decode(String(base64 || '')), mime, name);
+  var response = UrlFetchApp.fetch(GRAPH_URL + '/' + account + '/adimages', {
+    method: 'post',
+    payload: { access_token: metaToken_(), filename: blob },
+    muteHttpExceptions: true
+  });
+  var body = metaAnswer_(response, 'POST /adimages (' + name + ')');
+  var images = body.images || {};
+  var keys = Object.keys(images);
+  if (!keys.length || !images[keys[0]].hash) {
+    throw new Error('소재를 올렸는데 해시를 못 받았습니다: ' + name);
+  }
+  return images[keys[0]].hash;
+}
+
+/* ── 영상 올리기 (쪼개서 보낸다) ──────────────────────────────────
+   그림은 한 번에 올리면 되지만 영상은 수십~수백 MB다. Apps Script 는 한 번에 6분 · 50MB 가
+   끝이라 통째로는 못 넘긴다. 그래서 메타가 마련해 둔 **나눠 올리기**를 쓴다.
+
+     start     크기를 알려 주고 자리(세션)를 받는다 → video_id 도 이때 나온다
+     transfer  브라우저가 4MB씩 잘라 보내면 그 조각을 그대로 메타에 넘긴다 (요청 하나에 조각 하나)
+     finish    다 보냈다고 알린다
+
+   조각마다 요청이 따로라 6분 제한에 걸리지 않는다. 올린 뒤에도 메타가 인코딩하는 동안은
+   쓸 수 없어서, 다 됐는지(video_status) 화면이 몇 초씩 물어본다.                      */
+
+function metaVideoStart_(payload) {
+  var account = metaAccountId_(payload.account);
+  var size = Math.round(Number(payload.fileSize) || 0);
+  if (size <= 0) throw new Error('영상 크기를 알 수 없습니다.');
+  var body = graphPost_('/' + account + '/advideos', {
+    upload_phase: 'start', file_size: size
+  });
+  if (!body.upload_session_id || !body.video_id) {
+    throw new Error('영상 올릴 자리를 받지 못했습니다: ' + JSON.stringify(body).slice(0, 200));
+  }
+  return { ok: true, source: 'meta', session: String(body.upload_session_id),
+    video: String(body.video_id), start: Number(body.start_offset || 0),
+    end: Number(body.end_offset || 0) };
+}
+
+function metaVideoChunk_(payload) {
+  var account = metaAccountId_(payload.account);
+  var session = String(payload.session || '').trim();
+  var offset = String(payload.offset === undefined ? '' : payload.offset).trim();
+  if (!session) throw new Error('영상 올리는 자리(세션)가 없습니다.');
+  if (offset === '') throw new Error('보낼 자리(offset)가 없습니다.');
+  if (!payload.chunk) throw new Error('영상 조각이 실려 오지 않았습니다.');
+
+  var blob = Utilities.newBlob(Utilities.base64Decode(String(payload.chunk)),
+    'application/octet-stream', String(payload.fileName || 'video.mp4'));
+  var response = UrlFetchApp.fetch(GRAPH_URL + '/' + account + '/advideos', {
+    method: 'post',
+    payload: {
+      access_token: metaToken_(), upload_phase: 'transfer',
+      upload_session_id: session, start_offset: offset, video_file_chunk: blob
+    },
+    muteHttpExceptions: true
+  });
+  var body = metaAnswer_(response, 'POST /advideos (transfer ' + offset + ')');
+  return { ok: true, source: 'meta',
+    start: Number(body.start_offset || 0), end: Number(body.end_offset || 0) };
+}
+
+function metaVideoFinish_(payload) {
+  var account = metaAccountId_(payload.account);
+  var session = String(payload.session || '').trim();
+  if (!session) throw new Error('영상 올리는 자리(세션)가 없습니다.');
+  graphPost_('/' + account + '/advideos', {
+    upload_phase: 'finish', upload_session_id: session,
+    title: String(payload.title || '')
+  });
+  return { ok: true, source: 'meta', session: session };
+}
+
+/* 인코딩이 끝났는지 · 표지(썸네일)가 나왔는지 본다.
+   표지를 따로 주지 않으면 메타가 뽑아 준 것을 쓴다 — 그것도 인코딩이 끝나야 나온다. */
+function metaVideoReady_(payload) {
+  var video = String(payload.video || '').replace(/[^0-9]/g, '');
+  if (!video) throw new Error('영상 번호가 없습니다.');
+  var body = graph_('/' + video, { fields: 'status,thumbnails{uri,is_preferred}' });
+  var status = String(((body.status || {}).video_status) || '');
+  var thumb = '';
+  var list = ((body.thumbnails || {}).data) || [];
+  for (var i = 0; i < list.length && !thumb; i += 1) {
+    if (list[i] && list[i].is_preferred && list[i].uri) thumb = String(list[i].uri);
+  }
+  if (!thumb && list.length && list[0].uri) thumb = String(list[0].uri);
+  if (status === 'error') {
+    throw new Error('메타가 영상을 처리하지 못했습니다 (형식 · 길이를 확인해 주세요).');
+  }
+  return { ok: true, source: 'meta', video: video,
+    ready: status === 'ready', status: status, thumb: thumb };
+}
+
+/* 소재 하나로 크리에이티브와 광고를 만든다 (둘 다 PAUSED).
+   세로 소재를 함께 보내면 asset_feed_spec 으로 묶어 **피드는 기본 소재 · 스토리와 릴스는
+   세로 소재**가 나가게 한다 — .ps1 이 하던 것과 같은 규칙이다. */
+function metaAd_(payload) {
+  var account = metaAccountId_(payload.account);
+  var adsetId = String(payload.adset || '').replace(/[^0-9]/g, '');
+  var name = String(payload.name || '').trim();
+  var landing = String(payload.landing || '').trim();
+  if (!adsetId) throw new Error('광고세트 번호가 없습니다.');
+  if (!name) throw new Error('광고명이 비어 있습니다.');
+  if (!landing) throw new Error('랜딩 URL 이 없습니다: ' + name);
+  var videoId = String(payload.video || '').replace(/[^0-9]/g, '');
+  if (!payload.image && !videoId) throw new Error('소재가 실려 오지 않았습니다: ' + name);
+
+  var cta = metaOneOf_(payload.cta || 'LEARN_MORE', META_CTAS, '행동 유도 버튼');
+  var headline = String(payload.headline || '');
+  var body = String(payload.body || '');
+  var story = metaStory_(account);
+
+  // 이미 같은 이름의 광고가 있으면 그것을 그대로 돌려준다.
+  // 되묻기(구글이 답을 흘렸을 때)로 같은 요청이 두 번 와도 광고가 둘이 되지 않게 하는 자리다.
+  try {
+    var made = graphAll_('/' + adsetId + '/ads', { fields: 'id,name', limit: 200 }, 3);
+    for (var i = 0; i < made.length; i += 1) {
+      if (String(made[i].name || '') === name) {
+        return { ok: true, source: 'meta', name: name, ad: String(made[i].id),
+          creative: '', vertical: false, skipped: true };
+      }
+    }
+  } catch (error) { /* 못 읽으면 그냥 만든다 */ }
+
+  // 영상이면 payload.image 는 소재가 아니라 **표지**다 (같은 이름의 jpg 를 끌어다 놓았을 때)
+  var hash = payload.image ? metaUpload_(account, payload.fileName, payload.image) : '';
+  var vertical = (!videoId && payload.story)
+    ? metaUpload_(account, payload.storyFileName, payload.story) : '';
+
+  var spec = { page_id: story.pageId };
+  if (story.igId) spec.instagram_user_id = story.igId;
+
+  var params = { name: name };
+  if (videoId) {
+    /* 영상 광고. 그림과 칸 이름이 다르다 —
+       랜딩 URL 이 link 가 아니라 call_to_action.value.link 에 들어가고, 표지가 반드시 필요하다.
+       끌어다 놓은 표지가 있으면 그 해시를, 없으면 메타가 뽑아 준 표지 주소를 쓴다. */
+    var data = {
+      video_id: videoId, message: body, title: headline,
+      call_to_action: { type: cta, value: { link: landing } }
+    };
+    if (hash) data.image_hash = hash;
+    else if (payload.thumbUrl) data.image_url = String(payload.thumbUrl);
+    else throw new Error('영상 표지를 찾지 못했습니다: ' + name
+      + ' (같은 이름의 jpg 를 함께 끌어다 놓으면 그것을 표지로 씁니다)');
+    spec.video_data = data;
+  } else if (vertical) {
+    // 게재위치마다 다른 소재를 쓴다. 이름표(img_feed · img_story)로 짝지어 준다.
+    params.asset_feed_spec = JSON.stringify({
+      ad_formats: ['SINGLE_IMAGE'],
+      images: [
+        { hash: hash, adlabels: [{ name: 'img_feed' }] },
+        { hash: vertical, adlabels: [{ name: 'img_story' }] }
+      ],
+      bodies: [{ text: body }],
+      titles: [{ text: headline }],
+      link_urls: [{ website_url: landing }],
+      call_to_action_types: [cta],
+      asset_customization_rules: [
+        { customization_spec: { publisher_platforms: ['facebook', 'instagram'],
+          facebook_positions: ['feed'], instagram_positions: ['stream'] },
+          image_label: { name: 'img_feed' } },
+        { customization_spec: { publisher_platforms: ['facebook', 'instagram'],
+          facebook_positions: ['story', 'facebook_reels'], instagram_positions: ['story', 'reels'] },
+          image_label: { name: 'img_story' } }
+      ]
+    });
+  } else {
+    spec.link_data = { link: landing, message: body, name: headline,
+      image_hash: hash, call_to_action: { type: cta } };
+  }
+  params.object_story_spec = JSON.stringify(spec);
+
+  var creative = graphPost_('/' + account + '/adcreatives', params);
+  var creativeId = String(creative.id || '');
+  if (!creativeId) throw new Error('크리에이티브를 만들었는데 번호를 못 받았습니다: ' + name);
+
+  var ad = graphPost_('/' + account + '/ads', {
+    name: name, adset_id: adsetId,
+    creative: JSON.stringify({ creative_id: creativeId }), status: 'PAUSED'
+  });
+  var adId = String(ad.id || '');
+  if (!adId) throw new Error('광고를 만들었는데 번호를 못 받았습니다: ' + name);
+
+  return { ok: true, source: 'meta', name: name, creative: creativeId, ad: adId,
+    vertical: !!vertical, video: videoId };
 }
 
 function metaReport_(payload) {

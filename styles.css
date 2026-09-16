@@ -502,6 +502,44 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .setup-tnd.is-warn{border-color:#f0dcc2;background:#fdf6ec;color:#96632a}
 .setup-tnd.is-warn b{color:inherit}
 
+/* 소재 — NAS 폴더에서 끌어다 놓는다 (카카오 쪽과 겹치는 이름이라 #ad-setup 으로 가둔다) */
+#ad-setup .setup-drop{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0;border:1px dashed #d8d7d0;border-radius:9px;background:#fbfbf8;padding:14px;text-align:left}
+#ad-setup .setup-drop.is-over{border-color:#2f86d9;background:#eef5fc}
+#ad-setup .setup-drop.has-file{padding:11px 14px}
+#ad-setup .setup-drop label{flex:none;margin:0}
+#ad-setup .setup-drop span{min-width:0;font-size:11px;color:#a5a49f}
+#ad-setup .setup-drop b{font-weight:700;color:#8c8c85}
+.setup-picks{margin:10px 0 0;padding:0;list-style:none;border:1px solid #eeede8;border-radius:8px;overflow:hidden}
+.setup-picks li{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid #f4f3ef;font-size:11px}
+.setup-picks li:first-child{border-top:0}
+.setup-picks li.is-story{background:#fbfaf6}
+.setup-picks b{flex:none;max-width:44%;font:600 11px inherit;color:#20211e;overflow-wrap:anywhere}
+.setup-picks small{flex:1;min-width:0;color:#a5a49f;overflow-wrap:anywhere}
+.setup-picks i{font-style:normal;color:#c9c8c3}
+.setup-picks em{flex:none;font-style:normal;font-size:10px;color:#b9b8b2}
+.setup-pick-drop{flex:none;border:0;border-radius:5px;background:none;color:#b9b8b2;font:700 14px inherit;line-height:1;padding:3px 6px;cursor:pointer}
+.setup-pick-drop:hover{background:#f4f4f1;color:#d44c47}
+
+/* 만드는 중 — 소재 하나마다 한 줄씩 적는다 */
+.setup-work{margin-top:12px;border:1px solid #eeede8;border-radius:8px;background:#fbfbf8;padding:11px 13px}
+.setup-work.is-running{border-color:#cfe3f7;background:#f4f9fd}
+.setup-work.is-done{border-color:#c7e1c9;background:#f4faf5}
+.setup-work.is-warn{border-color:#f0dcc2;background:#fdf6ec}
+.setup-work-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:#8c8c85}
+.setup-work-head b{font-weight:700;color:#555}
+.setup-work-bar{height:4px;margin:8px 0;border-radius:2px;background:#eeede8;overflow:hidden}
+.setup-work-bar i{display:block;height:100%;background:#2f86d9;transition:width .2s}
+.setup-work-lines{margin:0;padding-left:18px;font-size:11px;color:#555;line-height:1.9;max-height:260px;overflow:auto}
+.setup-work-lines li.is-bad{color:#d44c47}
+
+/* 예전 방식(.ps1) — 접어 둔다 */
+.setup-legacy{padding:0}
+.setup-toggle-legacy{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;border:0;background:none;color:#a5a49f;font:600 11px inherit;text-align:left;padding:12px 14px;cursor:pointer}
+.setup-toggle-legacy:hover{color:#555}
+.setup-toggle-legacy svg{width:13px}
+.setup-legacy>*:not(.setup-toggle-legacy){margin-left:14px;margin-right:14px}
+.setup-legacy>*:last-child{margin-bottom:14px}
+
 .setup-budget{display:flex;align-items:center;gap:6px;margin-top:5px}
 .setup-budget select{flex:none;width:80px;margin-top:0}
 .setup-budget input{flex:1;min-width:0;margin-top:0}

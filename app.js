@@ -1836,7 +1836,9 @@ const SHEET_TIMEOUT = 60000;
 // (계정 전체는 4~12초). 60초에서 끊으면 화면은 실패로 보이는데 시트 쪽은 그 요청을 계속 돌리고 있고,
 // 다시 물을 때마다 Apps Script 가 같은 사람의 실행을 줄 세워 더 느려진다 — 끊을수록 나빠진다.
 // Apps Script 자체 한도가 6분이라 3분까지 기다려 준다.
-const SHEET_SLOW = /(Creatives|Report|Breakdown|kolLive|promoCalendar|clarity)/;
+// 오래 걸리는 요청은 기다려 주는 시간을 늘린다. 소재를 올리는 길(metaAd · metaVideo)도
+// 그림 · 영상 조각이 오가서 60초로는 모자랄 수 있다.
+const SHEET_SLOW = /(Creatives|Report|Breakdown|kolLive|promoCalendar|clarity|metaAd|metaVideo)/;
 const askBudget = (payload) => (SHEET_SLOW.test(String((payload && payload.action) || '')) ? 180000 : SHEET_TIMEOUT);
 
 const askSheetOnce = (payload) => {
@@ -4891,6 +4893,10 @@ if (adSetup) {
   let scriptOpen = false;
   // 캠페인명 고르개 — 고른 계정에서 켜져 있는 캠페인. acct 는 그 목록이 어느 계정 것인지다.
   let campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
+  // 끌어다 놓은 소재 [{ file, name, size, row, story }] · 만드는 중 상황
+  let picks = [];
+  let work = null;        // { running, done, total, lines: [], failed, adset }
+  let scriptOn = false;   // 예전 방식(.ps1) 칸을 펴 두었는가
 
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const saveHistory = () => localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
@@ -5037,6 +5043,7 @@ if (adSetup) {
           ? `[${part}] 탭의 '${event}' 에 메타 줄이 없습니다 (다른 매체로 ${otherMedia}줄 있습니다 — 파트를 확인해 보세요).`
           : `[${part}] 탭에서 '${event}' 로 된 메타 줄을 찾지 못했습니다 — 파트 · 행사명 · 목적 필터를 확인하세요.` };
     if (found.length) selectRow(0, false);
+    matchPicks();
     render();
     if (found.length) loadTnd();
   };
@@ -5050,6 +5057,74 @@ if (adSetup) {
     save();
     if (redraw) render();
   };
+
+  /* 끌어다 놓은 소재. NAS 폴더를 탐색기에서 열어 그대로 끌어오면 된다 —
+     브라우저는 NAS 를 마운트하지 못하지만, 사람이 연 폴더의 파일은 읽을 수 있다.
+
+     이름에 '세로' 가 든 파일은 따로 둔다. 같은 이름의 기본 소재와 짝지어
+     **피드는 기본 · 스토리와 릴스는 세로**로 올라간다 (.ps1 이 하던 규칙 그대로). */
+  const isStory = (name) => String(name || '').indexOf('세로') >= 0;
+  const isVideo = (name) => /\.(mp4|mov|m4v)$/i.test(String(name || ''));
+  const baseName = (name) => String(name || '').replace(/\.[^.]+$/, '');
+  const storyKey = (name) => baseName(name).replace(/\s*\(?세로\)?\s*/g, '');
+
+  // 영상과 이름이 같은 그림은 소재가 아니라 그 영상의 **표지**다 (소재.mp4 + 소재.jpg)
+  const thumbOf = (pick) => picks.find((one) => one.kind === 'image' && !one.story
+    && baseName(one.name) === baseName(pick.name));
+  const isThumb = (pick) => pick.kind === 'image' && !pick.story
+    && picks.some((one) => one.kind === 'video' && baseName(one.name) === baseName(pick.name));
+
+  // 파일 이름에 시트의 '파일명' 이 들어 있으면 그 줄과 짝짓는다.
+  // 줄이 하나뿐이면 짝이 없어도 그 줄을 쓴다 (소재 이름만 파일명으로).
+  const matchPicks = () => {
+    picks.forEach((pick) => {
+      const hit = rows.find((row) => row.msgCode
+        && pick.name.toLowerCase().indexOf(row.msgCode.toLowerCase()) >= 0);
+      pick.row = hit || (rows.length === 1 ? rows[0] : null);
+    });
+  };
+
+  // 광고 하나가 되는 소재. 세로 소재와 영상 표지는 짝으로 딸려 가므로 여기서 뺀다.
+  const adPicks = () => picks.filter((pick) => pick.kind === 'video'
+    || (!pick.story && !isThumb(pick)));
+  const storyFor = (pick) => (pick.kind === 'video' ? null
+    : picks.find((one) => one.story && storyKey(one.name) === storyKey(pick.name)));
+
+  // 광고명 · 랜딩 URL. 시트 줄이 있으면 그 값을, 없으면 파일 이름과 위에서 고른 줄을 쓴다.
+  const adNameOf = (pick) => (pick.row && pick.row.adName)
+    ? pick.row.adName : pick.name.replace(/\.[^.]+$/, '');
+  const landingOf = (pick) => (pick.row ? urlOf(pick.row, state.urlType) : '')
+    || urlOf(rows[selectedIdx] || {}, state.urlType);
+
+  const addFiles = (list) => {
+    Array.from(list || []).filter((one) => /\.(png|jpe?g|mp4|mov|m4v)$/i.test(one.name)).forEach((file) => {
+      if (picks.some((one) => one.name === file.name && one.size === file.size)) return;
+      picks.push({ file: file, name: file.name, size: file.size, row: null,
+        kind: isVideo(file.name) ? 'video' : 'image',
+        story: !isVideo(file.name) && isStory(file.name) });
+    });
+    matchPicks();
+    markStale();
+    render();
+  };
+
+  // 파일을 밑글자(base64)로. 서버가 그대로 메타에 올린다.
+  // 조각(blob)만 넘기면 그 조각만 읽는다 — 영상은 통째로 읽으면 브라우저가 버티지 못한다.
+  const readBase64 = (blob, label) => new Promise((done, fail) => {
+    const reader = new FileReader();
+    reader.onload = () => done(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = () => fail(new Error(`파일을 읽지 못했습니다: ${label || blob.name}`));
+    reader.readAsDataURL(blob);
+  });
+
+  // 영상 한 조각의 크기. 조각 하나가 요청 하나다 (Apps Script 가 한 번에 오래 못 돈다).
+  const CHUNK = 4 * 1024 * 1024;
+  // 되묻지 않는 부름. 같은 조각을 두 번 보내면 메타가 자리(offset)가 어긋났다며 막는다.
+  const askOnce = (payload) => askSheetOnce(payload).then((body) => {
+    if (!body || !body.ok) throw new Error((body && body.error) || '알 수 없는 오류');
+    return body;
+  });
+  const wait = (ms) => new Promise((done) => window.setTimeout(done, ms));
 
   /* 켜져 있는 캠페인 목록 — 새로 만들지 않고 도는 캠페인에 붙일 때 쓴다.
      토큰은 브라우저에 두지 않으므로 Apps Script 에 물어본다 (매체별 성과와 같은 길).
@@ -5113,6 +5188,133 @@ if (adSetup) {
       tnd = { error: error.message };
     }
     render();
+  };
+
+  /* 영상을 올린다. 브라우저가 4MB씩 잘라 보내고 서버가 그대로 메타에 넘긴다.
+     다 보내면 메타가 인코딩할 때까지 기다린다 — 그 전에는 광고에 쓸 수 없다.
+     표지(썸네일)는 같은 이름의 그림이 있으면 그것을, 없으면 메타가 뽑아 준 것을 쓴다. */
+  const uploadVideo = async (pick, say) => {
+    const started = await askOnce({ action: 'metaVideoStart', account: state.acct,
+      fileSize: pick.size, fileName: pick.name });
+
+    let sent = 0;
+    let at = started.start;
+    let to = started.end;
+    while (at < pick.size) {
+      const want = to > at ? to - at : CHUNK;
+      const end = Math.min(at + Math.min(want, CHUNK), pick.size);
+      const chunk = await readBase64(pick.file.slice(at, end), pick.name);
+      const moved = await askOnce({ action: 'metaVideoChunk', account: state.acct,
+        session: started.session, offset: String(at), chunk: chunk, fileName: pick.name });
+      sent += 1;
+      say(`  ${pick.name} — ${Math.min(Math.round((end / pick.size) * 100), 100)}% 보냈습니다`);
+      const next = Number(moved.start) || 0;
+      if (next <= at) {
+        throw new Error(`영상이 ${at} 바이트에서 더 나아가지 않습니다 — 다시 [광고 만들기] 를 눌러 주세요.`);
+      }
+      at = next;
+      to = Number(moved.end) || 0;
+    }
+    await askOnce({ action: 'metaVideoFinish', account: state.acct,
+      session: started.session, title: baseName(pick.name) });
+    say(`  ${pick.name} — 다 보냈습니다 (조각 ${sent}개). 메타가 처리하는 중…`);
+
+    // 인코딩이 끝나야 표지가 나오고 광고에 쓸 수 있다. 3초씩 스무 번(1분)까지 기다린다.
+    let thumb = '';
+    for (let turn = 0; turn < 20; turn += 1) {
+      const ready = await askOnce({ action: 'metaVideoReady', video: started.video });
+      thumb = ready.thumb || thumb;
+      if (ready.ready) return { video: started.video, thumb: thumb };
+      await wait(3000);
+    }
+    // 아직 처리 중이어도 광고는 만들어 둔다 (메타가 끝나면 저절로 돈다)
+    say(`  ${pick.name} — 메타 처리가 길어집니다. 그대로 광고를 만듭니다.`);
+    return { video: started.video, thumb: thumb };
+  };
+
+  /* 광고를 만든다. 캠페인 · 광고세트를 한 번 만들고(metaMake), 소재마다 한 번씩
+     크리에이티브 + 광고를 만든다(metaAd). 소재마다 나눠 부르는 까닭은 Apps Script 가
+     한 번에 6분까지만 돌기 때문이다 — 카카오 광고 세팅도 같은 이유로 그렇게 한다.
+     한 건이 실패해도 멈추지 않고 다음 소재로 간다. 무엇이 됐고 무엇이 안 됐는지 줄줄이 적는다. */
+  const make = async () => {
+    attempted = true;
+    if (problems().length) return render();
+
+    const feeds = adPicks();
+    work = { running: true, done: 0, total: feeds.length, lines: [], failed: 0, adset: '' };
+    render();
+
+    const say = (line) => { work.lines.push(line); render(); };
+
+    let base;
+    try {
+      base = await askSheet({
+        action: 'metaMake', account: state.acct,
+        campaignName: tr(state.campaignName), adsetName: tr(state.adsetName),
+        objective: CAMPAIGN_OBJECTIVE[state.objective] || 'OUTCOME_SALES',
+        optGoal: (OPTIMIZATION[state.objective] || OPTIMIZATION['구매']).opt,
+        billEvent: (OPTIMIZATION[state.objective] || OPTIMIZATION['구매']).bill,
+        budget: parseInt(digitsOf(state.budget), 10) || 0,
+        budgetType: state.budgetType, startAt: state.startAt, endAt: state.endAt,
+        gender: state.gender, ageMin: state.ageMin, ageMax: state.ageMax,
+      });
+    } catch (error) {
+      work.running = false;
+      work.failed = feeds.length;
+      return say(`[멈춤] ${error.message}`);
+    }
+
+    (base.log || []).forEach(say);
+    work.adset = base.adset || '';
+    const already = base.adNames || [];
+
+    for (const pick of feeds) {
+      const name = adNameOf(pick);
+      if (already.indexOf(name) >= 0) {
+        work.done += 1;
+        say(`[건너뜀 · 이미 있음] ${name}`);
+        continue;
+      }
+      const vertical = storyFor(pick);
+      try {
+        // 영상이면 먼저 올린다. 그 사이 표지로 쓸 그림(같은 이름의 jpg)도 함께 싣는다.
+        let video = '';
+        let thumbUrl = '';
+        let source = pick;
+        if (pick.kind === 'video') {
+          say(`[영상] ${pick.name} (${kb(pick.size)}) 올리는 중…`);
+          const up = await uploadVideo(pick, say);
+          video = up.video;
+          thumbUrl = up.thumb;
+          source = thumbOf(pick) || null;
+        }
+        const image = source ? await readBase64(source.file) : '';
+        const story = vertical ? await readBase64(vertical.file) : '';
+        const made = await askSheet({
+          action: 'metaAd', account: state.acct, adset: base.adset,
+          name: name, landing: landingOf(pick), cta: state.cta,
+          headline: (tnd && tnd.headline) || '', body: (tnd && tnd.body) || '',
+          fileName: source ? source.name : pick.name, image: image,
+          video: video, thumbUrl: thumbUrl,
+          storyFileName: vertical ? vertical.name : '', story: story,
+        });
+        work.done += 1;
+        say(made.skipped
+          ? `[건너뜀 · 이미 있음] ${name}`
+          : `[완료] ${name}${made.video ? ' (영상)' : (made.vertical ? ' (세로 포함)' : '')} · 광고 ${made.ad}`);
+      } catch (error) {
+        work.done += 1;
+        work.failed += 1;
+        say(`[실패] ${name} — ${error.message}`);
+      }
+    }
+
+    work.running = false;
+    const done = work.total - work.failed;
+    if (done) addHistory(tr(state.campaignName));
+    say(work.failed
+      ? `끝났습니다 — ${done}건 성공 · ${work.failed}건 실패. 모두 일시중지(PAUSED) 상태입니다.`
+      : `끝났습니다 — ${done}건 모두 만들었습니다. 일시중지(PAUSED) 상태이니 Ads Manager 에서 확인 후 켜 주세요.`);
   };
 
   // ── 실행 스크립트 생성 ───────────────────────────────────────────
@@ -5481,7 +5683,8 @@ if (adSetup) {
   };
 
   // 실행은 다른 곳에서 일어나므로, 원본이 실행 도중에야 냈던 오류를 여기서 미리 잡는다
-  const problems = () => {
+  // mode 가 'script' 면 예전 방식(.ps1) 기준으로 본다 — 그때는 소재 대신 폴더 경로가 있어야 한다.
+  const problems = (mode) => {
     const list = [];
     const min = parseInt(state.ageMin, 10);
     const max = parseInt(state.ageMax, 10);
@@ -5489,7 +5692,11 @@ if (adSetup) {
     if (!tr(state.promo)) list.push('행사명을 입력하세요.');
     if (!rows.length) list.push('[시트 조회] 를 눌러 소재 대응표를 먼저 만드세요. 없으면 광고명과 랜딩 URL 이 비어 들어갑니다.');
     if (!tr(state.sheetUrl)) list.push('구글시트 URL(T&D) 을 입력하세요. 없으면 제목·문구가 빈 채로 올라갑니다.');
-    if (!tr(state.nasPath) && !tr(state.localPath)) list.push('NAS 소재 경로 또는 로컬 소재 경로 중 하나는 입력해야 합니다.');
+    if (mode === 'script') {
+      if (!tr(state.nasPath) && !tr(state.localPath)) list.push('NAS 소재 경로 또는 로컬 소재 경로 중 하나는 입력해야 합니다.');
+    } else if (!adPicks().length) {
+      list.push("소재를 고르세요. (이름에 '세로' 가 든 파일만 있으면 짝지을 기본 소재가 없습니다)");
+    }
     if (!tr(state.campaignName)) list.push('캠페인명을 입력하세요.');
     if (!tr(state.adsetName)) list.push('광고그룹명을 입력하세요.');
     if (!(parseInt(digitsOf(state.budget), 10) > 0)) list.push('예산을 입력하세요. (0원 불가)');
@@ -5518,7 +5725,7 @@ if (adSetup) {
 
   const makeScript = () => {
     attempted = true;
-    if (problems().length) { script = null; return render(); }
+    if (problems('script').length) { script = null; return render(); }
     script = { filename: `meta-ad-setup_${stampName()}.ps1`, text: buildScript(), at: new Date().toLocaleString('ko-KR'), ads: rows.length };
     addHistory(tr(state.campaignName));
     render();
@@ -5633,8 +5840,46 @@ if (adSetup) {
     </div>`;
   };
 
+  const kb = (size) => (size > 1024 * 1024
+    ? `${(size / 1024 / 1024).toFixed(1)}MB` : `${Math.round(size / 1024)}KB`);
+
+  const pickBox = () => {
+    const feeds = adPicks();
+    return `<div class="setup-drop${picks.length ? ' has-file' : ''}">
+        <input type="file" id="setup-files" accept="image/png,image/jpeg,video/mp4,video/quicktime" multiple hidden>
+        <label for="setup-files" class="tool-add"><i data-lucide="image-plus"></i>소재 고르기</label>
+        <span>NAS 폴더를 탐색기에서 열어 <b>이 칸에 끌어다 놓아도</b> 됩니다 · jpg · png · mp4 · mov</span>
+      </div>
+      ${picks.length ? `<ul class="setup-picks">${picks.map((pick, i) => `<li${pick.story || isThumb(pick) ? ' class="is-story"' : ''}>
+        <b>${escapeHtml(pick.name)}</b>
+        <small>${pick.story ? '세로 — 스토리 · 릴스에 쓰입니다'
+          : isThumb(pick) ? '표지 — 같은 이름의 영상에 쓰입니다'
+          : (pick.kind === 'video' ? '영상 · ' : '')
+            + (pick.row ? `광고명 ${escapeHtml(adNameOf(pick))}` : '<i>시트에서 못 찾음 — 파일 이름이 광고명이 됩니다</i>')}</small>
+        <em>${kb(pick.size)}</em>
+        <button type="button" class="setup-pick-drop" data-pick="${i}" title="빼기">×</button>
+      </li>`).join('')}</ul>
+      <p class="setup-note">광고 ${feeds.length}건이 만들어집니다${picks.length - feeds.length
+        ? ` (세로 · 표지 ${picks.length - feeds.length}개는 짝지어 함께 올라갑니다)` : ''}.
+        영상은 표지가 필요합니다 — 같은 이름의 jpg 를 함께 놓으면 그것을 쓰고, 없으면 메타가 뽑아 줍니다.</p>`
+      : ''}`;
+  };
+
+  const workBox = () => {
+    if (!work) return '';
+    const done = work.total ? Math.round((work.done / work.total) * 100) : 0;
+    return `<div class="setup-work${work.running ? ' is-running' : (work.failed ? ' is-warn' : ' is-done')}">
+      <div class="setup-work-head">
+        <b>${work.running ? '만드는 중…' : (work.failed ? `${work.total - work.failed}건 성공 · ${work.failed}건 실패` : '다 만들었습니다')}</b>
+        <span>${work.done} / ${work.total}</span>
+      </div>
+      <div class="setup-work-bar"><i style="width:${done}%"></i></div>
+      <ol class="setup-work-lines">${work.lines.map((line) => `<li${/\[실패\]|\[멈춤\]/.test(line) ? ' class="is-bad"' : ''}>${escapeHtml(line)}</li>`).join('')}</ol>
+    </div>`;
+  };
+
   const scriptBox = () => {
-    const list = attempted ? problems() : [];
+    const list = attempted ? problems('script') : [];
     if (list.length) return `<div class="setup-issues"><b>아래를 먼저 채워주세요</b><ul>${list.map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}</ul></div>`;
     if (!script) return '';
     return `<div class="setup-done${script.stale ? ' is-stale' : ''}">
@@ -5661,9 +5906,9 @@ if (adSetup) {
     adSetup.innerHTML = `
       <div class="tool-head">
         <h2>메타 광고 세팅</h2>
-        <p>폼 · 시트 조회 · 검증은 이 화면에서, NAS 접근과 메타 API 호출은 내려받은 PowerShell 스크립트가 합니다.
-        토큰과 NAS 비밀번호는 브라우저에 저장하지 않고 스크립트가 <b>.env</b> 를 직접 읽습니다.
-        광고는 원본과 똑같이 항상 <b>일시중지(PAUSED)</b> 상태로 만들어집니다.</p>
+        <p>소재를 끌어다 놓고 [광고 만들기] 를 누르면 캠페인 · 광고세트 · 광고가 바로 만들어집니다.
+        메타 토큰은 브라우저에 두지 않습니다 — 그림만 보내고 메타 API 는 서버(Apps Script)가 부릅니다.
+        광고는 예전과 똑같이 항상 <b>일시중지(PAUSED)</b> 상태로 만들어집니다.</p>
       </div>
 
       <section class="tool-card">
@@ -5694,9 +5939,12 @@ if (adSetup) {
         ${tndBox()}
         <div class="tool-grid setup-grid">
           ${textField('sheetUrl', '구글시트 URL (T&D)', { required: true, placeholder: 'https://docs.google.com/spreadsheets/d/…', wide: true })}
-          ${textField('nasPath', 'NAS 소재 경로', { hint: '/앳홈_공유폴더/… 또는 \\\\192.168.1.100\\… · 슬래시 방향 무관', placeholder: '/앳홈_공유폴더/3. 마케팅팀/미닉스/…', wide: true })}
-          ${textField('localPath', '로컬 소재 경로', { hint: '입력하면 NAS 대신 이 폴더를 씁니다', placeholder: 'C:\\Users\\…\\소재폴더', wide: true })}
         </div>
+      </section>
+
+      <section class="tool-card">
+        <h3><span class="setup-req">소재</span>${picks.length ? `<small>${picks.length}개</small>` : ''}</h3>
+        ${pickBox()}
       </section>
 
       <section class="tool-card">
@@ -5734,15 +5982,30 @@ if (adSetup) {
       </section>
 
       <section class="tool-card">
-        <h3>실행 스크립트</h3>
+        <h3>만들기</h3>
+        <div class="setup-run">
+          <button type="button" class="tool-add setup-go"${work && work.running ? ' disabled' : ''}><i data-lucide="rocket"></i>${work && work.running ? '만드는 중…' : '광고 만들기'}</button>
+          <small>캠페인 · 광고세트 · 광고를 여기서 바로 만듭니다. 모두 <b>일시중지(PAUSED)</b> 로 만들어지니, Ads Manager 에서 보고 사람이 켭니다.</small>
+        </div>
+        ${attempted && problems().length
+          ? `<div class="setup-issues"><b>아래를 먼저 채워주세요</b><ul>${problems().map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}</ul></div>`
+          : ''}
+        ${workBox()}
+      </section>
+
+      <section class="tool-card setup-legacy">
+        <button type="button" class="setup-toggle-legacy">예전 방식 · PowerShell 스크립트 내려받기<i data-lucide="chevron-${scriptOn ? 'up' : 'down'}"></i></button>
+        ${scriptOn ? `<p class="setup-note">NAS 폴더째로 한 번에 올리고 싶을 때 씁니다. 소재를 고르지 않아도 되는 대신,
+          내려받은 .ps1 을 PowerShell 에서 직접 돌려야 합니다.</p>
         <div class="tool-grid setup-grid">
+          ${textField('nasPath', 'NAS 소재 경로', { hint: '/앳홈_공유폴더/… 또는 \\\\192.168.1.100\\… · 슬래시 방향 무관', placeholder: '/앳홈_공유폴더/3. 마케팅팀/미닉스/…', wide: true })}
+          ${textField('localPath', '로컬 소재 경로', { hint: '입력하면 NAS 대신 이 폴더를 씁니다', placeholder: 'C:\\Users\\…\\소재폴더', wide: true })}
           ${textField('envDir', '.env 폴더', { hint: '토큰·NAS 정보가 든 공유 폴더. 비우면 .ps1 이 있는 폴더부터 위로 찾습니다', placeholder: 'C:\\Users\\…\\공유_NAS수정판', wide: true })}
         </div>
         <div class="setup-run">
-          <button type="button" class="tool-add setup-make"><i data-lucide="file-cog"></i>실행 스크립트 만들기</button>
-          <small>브라우저는 NAS 와 PowerShell 에 닿지 못해서, 원본과 같은 일을 하는 .ps1 을 만들어 드립니다.</small>
+          <button type="button" class="tool-copy setup-make"><i data-lucide="file-cog"></i>실행 스크립트 만들기</button>
         </div>
-        ${scriptBox()}
+        ${scriptBox()}` : ''}
       </section>
 
       <section class="tool-card">
@@ -5752,15 +6015,38 @@ if (adSetup) {
         </div>
         ${history.length
           ? `<ul class="setup-hist">${history.map((entry) => `<li><b>${escapeHtml(entry.name)}</b><small>${escapeHtml(entry.acct || '')}${entry.acct ? ' · ' : ''}${escapeHtml(entry.at)}</small></li>`).join('')}</ul>`
-          : '<p class="tool-empty">아직 만든 스크립트가 없습니다.</p>'}
+          : '<p class="tool-empty">아직 만든 캠페인이 없습니다.</p>'}
       </section>
 
       <div class="tool-footer">
         <button type="button" class="tool-reset setup-reset"><i data-lucide="rotate-ccw"></i>입력값 비우기</button>
-        <small>시트 URL · 소재 경로 · .env 폴더는 남겨둡니다. 나머지 입력값만 되돌립니다.</small>
+        <small>파트 · 시트 URL · 소재 경로 · .env 폴더는 남겨둡니다. 고른 소재와 나머지 입력값을 되돌립니다.</small>
       </div>`;
     lucide.createIcons();
   };
+
+  // 고른 소재. change 는 파일 칸에서만 오고, 나머지 칸은 아래 리스너가 맡는다.
+  adSetup.addEventListener('change', (event) => {
+    if (event.target.id !== 'setup-files') return;
+    addFiles(event.target.files);
+    event.target.value = '';   // 같은 파일을 다시 골라도 change 가 오게 비운다
+  });
+
+  // 탐색기에서 끌어다 놓기. 기본 동작(파일을 브라우저 탭으로 여는 것)을 막아야 한다.
+  adSetup.addEventListener('dragover', (event) => {
+    if (!event.target.closest('.setup-drop')) return;
+    event.preventDefault();
+    event.target.closest('.setup-drop').classList.add('is-over');
+  });
+  adSetup.addEventListener('dragleave', (event) => {
+    const box = event.target.closest('.setup-drop');
+    if (box) box.classList.remove('is-over');
+  });
+  adSetup.addEventListener('drop', (event) => {
+    if (!event.target.closest('.setup-drop')) return;
+    event.preventDefault();
+    addFiles(event.dataTransfer && event.dataTransfer.files);
+  });
 
   // 텍스트 칸은 다시 그리지 않는다 (입력 중 커서가 튀지 않도록)
   adSetup.addEventListener('input', (event) => {
@@ -5844,6 +6130,14 @@ if (adSetup) {
     }
 
     if (event.target.closest('.setup-lookup')) return lookupSheet();
+    if (event.target.closest('.setup-go')) return make();
+    if (event.target.closest('.setup-toggle-legacy')) { scriptOn = !scriptOn; return render(); }
+    const drop = event.target.closest('[data-pick]');
+    if (drop) {
+      picks.splice(Number(drop.dataset.pick), 1);
+      markStale();
+      return render();
+    }
     if (event.target.closest('.setup-make')) return makeScript();
     if (event.target.closest('.setup-download')) return download();
     if (event.target.closest('.setup-copy-cmd')) return copyText(runCommand(), event.target.closest('.setup-copy-cmd'));
@@ -5868,6 +6162,8 @@ if (adSetup) {
       script = null;
       attempted = false;
       campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
+      picks = [];
+      work = null;
       save();
       return render();
     }
