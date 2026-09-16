@@ -4818,17 +4818,31 @@ const adSetup = document.querySelector('#ad-setup');
 if (adSetup) {
   const STORAGE_KEY = 'minix-ad-setup-v1';
   const HISTORY_KEY = 'minix-ad-setup-history-v1';
-  // 프로모션 → 캠페인/그룹/광고명·랜딩 URL 대응표가 들어있는 시트
-  const UTM_SHEET_ID = '1K9kGdlfuHCp-VNaKUuGMYi9B_rRbW0rY1lg_NFYMv8s';
-  const UTM_SHEET_NAME = 'utm-builder';
+  // 행사명 → 캠페인명 · 광고그룹명 · 광고명 · 랜딩 URL 이 든 적재 시트.
+  // 파일명 도구가 적재하는 그 시트다 (카카오 광고 세팅도 같은 곳을 본다).
+  const LOAD_SHEET_ID = '1-IrBGbuQmcQ9Za1LCZKfV6XUaGIV5gtut5npHw0Gu_E';
+  // 파트 탭. 맨 위에서 고른 파트의 탭만 읽는다.
+  const PARTS = ['세일즈마케팅', '더플렌더_파트', '생활가전_파트'];
+  // 열은 **이름**으로 찾는다. 적재 시트는 열이 늘었다 줄었다 하므로 자리로 읽으면 어긋난다.
+  const COL = { event: '행사명', file: '파일명', media: '매체', purpose: '목적',
+    landing: '랜딩링크', linkGA: 'LINK(GA)', nt: 'NT(일반)', ntStory: 'NT(쇼핑스토리)',
+    shoplive: 'FM(쇼핑라이브)', campaign: '캠페인명', group: '광고그룹명', ad: '광고명' };
   const TND_SHEET_NAME = '[DA] 메타';
 
   const ACCOUNTS = AD_ACCOUNTS;
-  const PURPOSES = ['구매', '트래픽', '참여', '잠재고객'];
-  const URL_TYPES = [['url', 'URL'], ['linkGA', 'LINK(GA)'], ['nt', 'NT'], ['shoplive', '쇼핑라이브']];
+  // 시트의 목적 열에는 영문 코드가 적힌다 (파일명 도구가 그렇게 넣는다). 한글 · 코드 둘 다로 찾는다.
+  const PURPOSES = [['구매', 'purchase'], ['트래픽', 'traffic'], ['참여', 'participation'], ['잠재고객', 'prospect']];
+  const purposeCode = (label) => (PURPOSES.find(([name]) => name === label) || [])[1] || '';
+  const URL_TYPES = [['url', '랜딩링크'], ['linkGA', 'LINK(GA)'], ['nt', 'NT(일반)'],
+    ['ntStory', 'NT(쇼핑스토리)'], ['shoplive', 'FM(쇼핑라이브)']];
   const OBJECTIVES = ['구매', '링크클릭', '도달'];
   const CTAS = [['SHOP_NOW', '지금 구매하기'], ['APPLY_NOW', '지금 신청하기'], ['LEARN_MORE', '더 알아보기']];
   const GENDERS = ['전체', '여성', '남성'];
+  // 고르개에 함께 적는 캠페인 목적 (메타가 주는 코드 그대로는 알아보기 어렵다)
+  const OBJECTIVE_LABEL = {
+    OUTCOME_SALES: '판매', OUTCOME_TRAFFIC: '트래픽', OUTCOME_AWARENESS: '인지도',
+    OUTCOME_ENGAGEMENT: '참여', OUTCOME_LEADS: '잠재고객', OUTCOME_APP_PROMOTION: '앱 홍보',
+  };
   // 캠페인 목적 → 캠페인 objective / 광고세트 최적화·과금 기준
   const CAMPAIGN_OBJECTIVE = { 구매: 'OUTCOME_SALES', 링크클릭: 'OUTCOME_TRAFFIC', 도달: 'OUTCOME_AWARENESS' };
   const OPTIMIZATION = {
@@ -4847,7 +4861,7 @@ if (adSetup) {
   };
 
   const DEFAULT_STATE = {
-    acct: '', purpose: '', urlType: 'url',
+    acct: '', part: PARTS[0], purpose: '', urlType: 'url',
     promo: '', sheetUrl: '', nasPath: '', localPath: '', envDir: '',
     campaignName: '', adsetName: '',
     budget: '', budgetType: 'daily',
@@ -4861,6 +4875,8 @@ if (adSetup) {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (saved) state = { ...state, ...saved };
   } catch { /* 저장값이 깨졌으면 기본값으로 시작한다 */ }
+  // 파트가 없던 때에 저장한 값이면 첫 파트로 돌린다
+  if (PARTS.indexOf(state.part) < 0) state.part = PARTS[0];
 
   let history = [];
   try { history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') || []; } catch { history = []; }
@@ -4873,6 +4889,8 @@ if (adSetup) {
   let script = null;      // { filename, text, at, ads, stale }
   let attempted = false;  // [실행 스크립트 만들기] 를 한 번이라도 눌렀는가
   let scriptOpen = false;
+  // 캠페인명 고르개 — 고른 계정에서 켜져 있는 캠페인. acct 는 그 목록이 어느 계정 것인지다.
+  let campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
 
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const saveHistory = () => localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
@@ -4941,14 +4959,34 @@ if (adSetup) {
   const gvizUrl = (sheetId, sheetName, out) =>
     `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:${out}&headers=0&sheet=${encodeURIComponent(sheetName)}`;
 
-  const urlOf = (row, type) =>
-    (type === 'linkGA' ? row.linkGA : type === 'nt' ? row.nt : type === 'shoplive' ? row.shoplive : row.url) || '';
+  /* 랜딩 URL 을 만든다.
+     시트의 NT · FM 칸은 '?nt_source=…' 처럼 **꼬리만** 들어 있다. 그래서 랜딩링크에 이어 붙인다.
+     LINK(GA) 처럼 http 로 시작하는 칸은 그 자체가 주소라 그대로 쓴다. */
+  const urlOf = (row, type) => {
+    const base = tr(row.url);
+    if (!type || type === 'url') return base;
+    const tail = tr(row[type]);
+    if (!tail) return base;
+    if (/^https?:\/\//i.test(tail)) return tail;
+    if (!base) return '';
+    const join = tail.charAt(0) === '?' && base.indexOf('?') >= 0 ? `&${tail.slice(1)}` : tail;
+    return base + join;
+  };
 
-  const urlTypeLabel = () => (URL_TYPES.find(([value]) => value === state.urlType) || [])[1] || 'URL';
+  const urlTypeLabel = () => (URL_TYPES.find(([value]) => value === state.urlType) || [])[1] || '랜딩링크';
+
+  // 머리글 줄에서 열 자리를 찾아 한 줄을 읽기 좋은 모양으로 바꾼다
+  const rowOf = (head, cells) => {
+    const cell = (name) => { const i = head.indexOf(name); return i >= 0 ? tr(cells[i]) : ''; };
+    return { msgCode: cell(COL.file), event: cell(COL.event), media: cell(COL.media),
+      purpose: cell(COL.purpose), campaign: cell(COL.campaign), group: cell(COL.group),
+      adName: cell(COL.ad), url: cell(COL.landing), linkGA: cell(COL.linkGA),
+      nt: cell(COL.nt), ntStory: cell(COL.ntStory), shoplive: cell(COL.shoplive) };
+  };
 
   const lookupSheet = async () => {
-    const promo = tr(state.promo);
-    if (!promo) { lookup = { state: 'error', message: '프로모션을 입력해주세요.' }; return render(); }
+    const event = tr(state.promo);
+    if (!event) { lookup = { state: 'error', message: '행사명을 입력해주세요.' }; return render(); }
 
     lookup = { state: 'loading', message: '' };
     rows = [];
@@ -4956,43 +4994,48 @@ if (adSetup) {
     tnd = null;
     render();
 
+    // 맨 위에서 고른 파트의 탭만 읽는다
+    const part = PARTS.indexOf(state.part) >= 0 ? state.part : PARTS[0];
     let table;
     try {
-      const response = await fetch(gvizUrl(UTM_SHEET_ID, UTM_SHEET_NAME, 'csv'));
+      const response = await fetch(gvizUrl(LOAD_SHEET_ID, part, 'csv'));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       table = parseCsv(await response.text());
     } catch (error) {
-      lookup = { state: 'error', message: `시트 조회 실패: ${error.message}` };
+      lookup = { state: 'error', message: `[${part}] 탭 조회 실패: ${error.message}` };
       return render();
     }
 
-    // 1행은 머리글. 페이스북 · 프로모션(H열) · 목적(F열) 이 맞는 행만 남긴다.
+    const head = (table[0] || []).map((one) => tr(one));
+    if (head.indexOf(COL.event) < 0) {
+      lookup = { state: 'error', message: `[${part}] 탭에서 머리글(행사명 · 파일명 …) 을 찾지 못했습니다 — 시트 공유 설정과 탭 이름을 확인해 주세요.` };
+      return render();
+    }
+
+    // 1행은 머리글. 행사명이 같은 메타(페이스북) 줄만 남긴다. 목적을 골랐으면 그 목적만.
+    const code = purposeCode(state.purpose);
     const found = [];
+    let otherMedia = 0;
     for (let i = 1; i < table.length; i += 1) {
-      const r = table[i];
-      if (r.length < 22) continue;
-      const media = tr(r[4]).toLowerCase();
-      if (media.indexOf('페이스북') < 0 && media.indexOf('facebook') < 0) continue;
-      if (tr(r[7]) !== promo) continue;
-      if (state.purpose && tr(r[5]).indexOf(state.purpose) < 0) continue;
-      const entry = {
-        msgCode: tr(r[12]),
-        campaign: tr(r[20]),
-        group: tr(r[21]),
-        adName: tr(r[22]),
-        url: tr(r[15]),
-        linkGA: tr(r[16]),
-        nt: r.length > 18 ? tr(r[18]) : '',
-        shoplive: r.length > 19 ? tr(r[19]) : '',
-      };
-      if (!entry.msgCode && !entry.adName) continue;
-      found.push(entry);
+      const one = rowOf(head, table[i]);
+      if (one.event !== event) continue;
+      const media = one.media.toLowerCase();
+      if (media.indexOf('메타') < 0 && media.indexOf('페이스북') < 0 && media.indexOf('facebook') < 0) { otherMedia += 1; continue; }
+      if (state.purpose) {
+        const purpose = one.purpose.toLowerCase();
+        if (purpose.indexOf(state.purpose) < 0 && (!code || purpose.indexOf(code) < 0)) continue;
+      }
+      if (!one.msgCode && !one.adName) continue;
+      found.push(one);
     }
 
     rows = found;
     lookup = found.length
       ? { state: 'done', message: '' }
-      : { state: 'done', message: '일치하는 데이터 없음 — 프로모션 값과 목적 필터를 확인하세요.' };
+      : { state: 'done',
+        message: otherMedia
+          ? `[${part}] 탭의 '${event}' 에 메타 줄이 없습니다 (다른 매체로 ${otherMedia}줄 있습니다 — 파트를 확인해 보세요).`
+          : `[${part}] 탭에서 '${event}' 로 된 메타 줄을 찾지 못했습니다 — 파트 · 행사명 · 목적 필터를 확인하세요.` };
     if (found.length) selectRow(0, false);
     render();
     if (found.length) loadTnd();
@@ -5006,6 +5049,36 @@ if (adSetup) {
     state.adsetName = row.group;
     save();
     if (redraw) render();
+  };
+
+  /* 켜져 있는 캠페인 목록 — 새로 만들지 않고 도는 캠페인에 붙일 때 쓴다.
+     토큰은 브라우저에 두지 않으므로 Apps Script 에 물어본다 (매체별 성과와 같은 길).
+     서버가 5분 담아 두므로 [다시 읽기] 는 refresh 로 그것을 버린다. */
+  const loadCampaigns = async (refresh) => {
+    if (!state.acct) {
+      campaigns = { state: 'error', list: [], acct: '', message: '광고 계정을 먼저 고르세요.', open: true };
+      return render();
+    }
+    // 같은 계정을 이미 읽었으면 다시 묻지 않는다 (Apps Script 는 팀이 실행 줄 하나를 같이 쓴다)
+    if (!refresh && campaigns.state === 'done' && campaigns.acct === state.acct) {
+      campaigns.open = true;
+      return render();
+    }
+    const acct = state.acct;
+    campaigns = { state: 'loading', list: [], acct: acct, message: '', open: true };
+    render();
+    try {
+      const body = await askSheet({ action: 'metaCampaigns', account: acct, refresh: !!refresh });
+      if (state.acct !== acct) return undefined;   // 기다리는 사이에 계정을 바꿨다
+      const list = body.campaigns || [];
+      campaigns = { state: 'done', list: list, acct: acct, open: true,
+        message: list.length ? '' : '이 계정에 켜져 있는 캠페인이 없습니다.' };
+    } catch (error) {
+      if (state.acct !== acct) return undefined;
+      campaigns = { state: 'error', list: [], acct: acct, open: true,
+        message: `캠페인을 못 읽었습니다 — ${error.message}` };
+    }
+    return render();
   };
 
   // 실행 전에 T&D 시트의 제목/문구를 미리 확인한다 (비어 있으면 광고 문구가 빈 채로 올라간다)
@@ -5413,7 +5486,7 @@ if (adSetup) {
     const min = parseInt(state.ageMin, 10);
     const max = parseInt(state.ageMax, 10);
     if (!state.acct) list.push('광고 계정을 선택하세요.');
-    if (!tr(state.promo)) list.push('프로모션을 입력하세요.');
+    if (!tr(state.promo)) list.push('행사명을 입력하세요.');
     if (!rows.length) list.push('[시트 조회] 를 눌러 소재 대응표를 먼저 만드세요. 없으면 광고명과 랜딩 URL 이 비어 들어갑니다.');
     if (!tr(state.sheetUrl)) list.push('구글시트 URL(T&D) 을 입력하세요. 없으면 제목·문구가 빈 채로 올라갑니다.');
     if (!tr(state.nasPath) && !tr(state.localPath)) list.push('NAS 소재 경로 또는 로컬 소재 경로 중 하나는 입력해야 합니다.');
@@ -5496,20 +5569,57 @@ if (adSetup) {
       <input type="text" data-field="${field}" value="${escapeHtml(state[field])}" placeholder="${escapeHtml(placeholder)}">
     </label>`;
 
+  /* 캠페인명 고르개 — 화살표를 누르면 고른 계정에서 켜져 있는 캠페인을 보여 준다.
+     손으로 적으면 도는 캠페인과 한 글자가 달라 같은 캠페인이 하나 더 생기기 때문이다.
+     적어 둔 글자가 있으면 그것으로 목록을 좁힌다 (맞는 것이 없으면 그냥 다 보여 준다). */
+  const campaignPicks = () => {
+    if (campaigns.acct !== state.acct) return [];
+    const typed = tr(state.campaignName).toLowerCase();
+    if (!typed) return campaigns.list;
+    // 이미 목록에 있는 이름을 그대로 적어 두었다면(골랐다면) 좁히지 않는다 — 나머지도 보여야 바꿔 고른다
+    if (campaigns.list.some((one) => tr(one.name).toLowerCase() === typed)) return campaigns.list;
+    const near = campaigns.list.filter((one) => tr(one.name).toLowerCase().indexOf(typed) >= 0);
+    return near.length ? near : campaigns.list;
+  };
+
+  const comboInner = () => {
+    if (campaigns.state === 'loading') return '<p class="setup-combo-empty">켜져 있는 캠페인을 읽는 중…</p>';
+    if (campaigns.state === 'error') return `<p class="setup-combo-empty is-warn">${escapeHtml(campaigns.message)}</p>`;
+    const list = campaignPicks();
+    const narrowed = list.length < campaigns.list.length;
+    return `<div class="setup-combo-head">
+        <b>켜져 있는 캠페인 ${campaigns.list.length}개${narrowed ? ` · 적은 글자에 맞는 것 ${list.length}개` : ''}</b>
+        <button type="button" class="setup-combo-refresh">다시 읽기</button>
+      </div>
+      ${list.length
+        ? `<ul class="setup-combo-items">${list.map((one) => `<li><button type="button" data-campaign="${escapeHtml(one.name)}"${tr(one.name) === tr(state.campaignName) ? ' class="is-on"' : ''}><b>${escapeHtml(one.name)}</b><small>${escapeHtml(OBJECTIVE_LABEL[one.objective] || one.objective || '')}</small></button></li>`).join('')}</ul>`
+        : `<p class="setup-combo-empty">${escapeHtml(campaigns.message || '켜져 있는 캠페인이 없습니다.')}</p>`}`;
+  };
+
+  const campaignField = () => `
+    <div class="setup-field tool-wide setup-combo">
+      <span class="setup-req">캠페인명<small class="setup-hint">시트 조회 시 자동 입력 · 화살표를 누르면 계정에서 켜져 있는 캠페인을 가져옵니다</small></span>
+      <div class="setup-combo-row">
+        <input type="text" data-field="campaignName" value="${escapeHtml(state.campaignName)}" placeholder="시트 조회 후 자동 입력 또는 직접 입력">
+        <button type="button" class="setup-combo-toggle${campaigns.open ? ' is-open' : ''}" title="켜져 있는 캠페인 고르기"><i data-lucide="chevron-${campaigns.open ? 'up' : 'down'}"></i></button>
+      </div>
+      ${campaigns.open ? `<div class="setup-combo-list">${comboInner()}</div>` : ''}
+    </div>`;
+
   const sheetTable = () => {
     if (lookup.state === 'loading') return '<p class="tool-empty">시트를 읽는 중…</p>';
     if (lookup.state === 'error') return `<p class="setup-alert">${escapeHtml(lookup.message)}</p>`;
     if (lookup.state === 'idle') return '';
     if (!rows.length) return `<p class="tool-empty">${escapeHtml(lookup.message || '일치하는 데이터 없음')}</p>`;
     return `<div class="tool-table-wrap"><table class="tool-table setup-table">
-      <thead><tr><th>메시지코드</th><th>광고소재명</th><th>${escapeHtml(urlTypeLabel())}</th></tr></thead>
+      <thead><tr><th>파일명</th><th>광고소재명</th><th>${escapeHtml(urlTypeLabel())}</th></tr></thead>
       <tbody>${rows.map((row, i) => `<tr data-row="${i}"${i === selectedIdx ? ' class="is-picked"' : ''}>
         <td><span class="setup-code">${i + 1}. ${escapeHtml(row.msgCode)}</span></td>
         <td>${escapeHtml(row.adName) || '<span class="tool-blank">-</span>'}</td>
         <td class="setup-url">${escapeHtml(urlOf(row, state.urlType)) || '<span class="tool-blank">-</span>'}</td>
       </tr>`).join('')}</tbody>
     </table></div>
-    <p class="setup-note">행을 누르면 캠페인명 · 광고그룹명 · 랜딩 URL 이 그 행 값으로 채워집니다. 실제 광고명은 소재 파일명에 든 메시지코드로 다시 짝지어집니다.</p>`;
+    <p class="setup-note">행을 누르면 캠페인명 · 광고그룹명 · 랜딩 URL 이 그 행 값으로 채워집니다. 실제 광고명은 소재 파일 이름에 든 시트 파일명으로 다시 짝지어집니다.</p>`;
   };
 
   const tndBox = () => {
@@ -5557,6 +5667,12 @@ if (adSetup) {
       </div>
 
       <section class="tool-card">
+        <h3>적재 시트 파트<small>[${escapeHtml(state.part)}] 탭에서 찾습니다</small></h3>
+        ${pills('part', PARTS.map((value) => [value, value]), state.part)}
+        <p class="setup-note">파일명 도구가 적재하는 시트의 파트 탭입니다. 파트를 바꾸면 조회 결과는 지워집니다.</p>
+      </section>
+
+      <section class="tool-card">
         <h3><span class="setup-req">광고 계정</span>${state.acct ? `<small>${escapeHtml(acctLabel())} · ${escapeHtml(state.acct)}</small>` : ''}</h3>
         ${pills('acct', ACCOUNTS, state.acct)}
       </section>
@@ -5564,11 +5680,11 @@ if (adSetup) {
       <section class="tool-card">
         <h3>소재 / T&amp;D</h3>
         <div class="setup-row">
-          <div class="setup-field"><span>목적<small class="setup-hint">시트 목적열 필터 · 다시 누르면 해제</small></span>${pills('purpose', PURPOSES.map((value) => [value, value]), state.purpose)}</div>
+          <div class="setup-field"><span>목적<small class="setup-hint">시트 목적열 필터 · 다시 누르면 해제</small></span>${pills('purpose', PURPOSES.map(([label]) => [label, label]), state.purpose)}</div>
           <div class="setup-field"><span>URL 유형<small class="setup-hint">랜딩 URL 로 쓸 열</small></span>${pills('urltype', URL_TYPES.map(([value, label]) => [label, value]), state.urlType)}</div>
         </div>
         <div class="setup-field setup-promo">
-          <span class="setup-req">프로모션</span>
+          <span class="setup-req">행사명<small class="setup-hint">적재 시트의 행사명 · T&amp;D 시트도 이 이름으로 찾습니다</small></span>
           <div class="setup-promo-row">
             <input type="text" data-field="promo" value="${escapeHtml(state.promo)}" placeholder="예: always, cjonstyle …">
             <button type="button" class="tool-add setup-lookup"${lookup.state === 'loading' ? ' disabled' : ''}><i data-lucide="search"></i>시트 조회</button>
@@ -5586,7 +5702,7 @@ if (adSetup) {
       <section class="tool-card">
         <h3>광고세트</h3>
         <div class="tool-grid setup-grid">
-          ${textField('campaignName', '캠페인명', { required: true, hint: '시트 조회 시 자동 입력', placeholder: '시트 조회 후 자동 입력 또는 직접 입력', wide: true })}
+          ${campaignField()}
           ${textField('adsetName', '광고그룹명', { required: true, hint: '시트 조회 시 자동 입력', placeholder: '[always]30-49_interestTarget_officialWebsite_', wide: true })}
         </div>
         <div class="tool-grid setup-grid">
@@ -5659,6 +5775,12 @@ if (adSetup) {
     } else {
       state[field.dataset.field] = field.value;
     }
+    // 캠페인 고르개가 열려 있으면 적는 대로 목록을 좁힌다.
+    // 입력칸까지 다시 그리면 적던 자리(커서)가 튀므로 목록 칸만 바꿔 끼운다.
+    if (field.dataset.field === 'campaignName' && campaigns.open) {
+      const box = adSetup.querySelector('.setup-combo-list');
+      if (box) box.innerHTML = comboInner();
+    }
     save();
     markStale();
   });
@@ -5673,13 +5795,46 @@ if (adSetup) {
   });
 
   adSetup.addEventListener('click', (event) => {
+    // 캠페인명 고르개 먼저 본다 (다른 것을 누르면 닫혀야 한다)
+    if (event.target.closest('.setup-combo-toggle')) {
+      if (campaigns.open) { campaigns.open = false; return render(); }
+      return loadCampaigns(false);
+    }
+    if (event.target.closest('.setup-combo-refresh')) return loadCampaigns(true);
+    const campaign = event.target.closest('[data-campaign]');
+    if (campaign) {
+      state.campaignName = campaign.dataset.campaign;
+      campaigns.open = false;
+      save();
+      if (script) script.stale = true;
+      return render();
+    }
+    // 고르개 바깥을 눌렀으면 닫는다. 아래 처리는 누른 요소로 이어 가므로 여기서 다시 그려도 된다.
+    if (campaigns.open && !event.target.closest('.setup-combo')) {
+      campaigns.open = false;
+      render();
+    }
+
     const acct = event.target.closest('[data-acct]');
+    const part = event.target.closest('[data-part]');
     const purpose = event.target.closest('[data-purpose]');
     const urlType = event.target.closest('[data-urltype]');
     const row = event.target.closest('[data-row]');
 
-    if (acct || purpose || urlType || row) {
-      if (acct) state.acct = acct.dataset.acct;
+    if (acct || part || purpose || urlType || row) {
+      if (acct && acct.dataset.acct !== state.acct) {
+        state.acct = acct.dataset.acct;
+        // 캠페인 목록은 계정마다 다르다. 계정을 바꾸면 버리고 다음에 다시 읽는다.
+        campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
+      }
+      // 파트를 바꾸면 다른 탭을 보게 된다 — 앞서 읽은 줄은 더 이상 맞지 않으므로 지운다
+      if (part && part.dataset.part !== state.part) {
+        state.part = part.dataset.part;
+        rows = [];
+        selectedIdx = -1;
+        lookup = { state: 'idle', message: '' };
+        tnd = null;
+      }
       if (purpose) state.purpose = state.purpose === purpose.dataset.purpose ? '' : purpose.dataset.purpose;
       if (urlType) state.urlType = urlType.dataset.urltype;
       if (row) return selectRow(Number(row.dataset.row));
@@ -5703,8 +5858,8 @@ if (adSetup) {
     }
 
     if (event.target.closest('.setup-reset')) {
-      if (!window.confirm('입력값을 비울까요? (시트 URL · 소재 경로 · .env 폴더는 남습니다)')) return;
-      const keep = { sheetUrl: state.sheetUrl, nasPath: state.nasPath, localPath: state.localPath, promo: state.promo, envDir: state.envDir };
+      if (!window.confirm('입력값을 비울까요? (파트 · 시트 URL · 소재 경로 · .env 폴더는 남습니다)')) return;
+      const keep = { part: state.part, sheetUrl: state.sheetUrl, nasPath: state.nasPath, localPath: state.localPath, promo: state.promo, envDir: state.envDir };
       state = { ...DEFAULT_STATE, ...keep, startAt: todayAtMidnight() };
       rows = [];
       selectedIdx = -1;
@@ -5712,6 +5867,7 @@ if (adSetup) {
       tnd = null;
       script = null;
       attempted = false;
+      campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
       save();
       return render();
     }
@@ -11059,10 +11215,16 @@ if (pagePerformance) {
 
 const eventResult = document.querySelector('#event-result');
 if (eventResult) {
-  /* 판매채널 추이 — 달 하나를 골라 그 달의 프로모션을 **판매채널로 묶어** 본다.
-     왼쪽 세 칸(판매채널 · 라이브기간 · 광고기간)은 월별 예산에서 오고,
+  /* 판매채널 추이 — 달 하나를 골라 그 달의 프로모션을 한 줄씩 본다.
+     왼쪽 칸(프로모션명 · 라이브기간 · 광고기간)은 월별 예산에서 오고,
      오른쪽 지표는 전매체 검색에서 내려받은 파일을 붙이면 채워진다.
-     SKU 가 달라도 판매채널이 같으면 한 줄이다 — 채널 하나가 행사 하나라서다. */
+     SKU 가 달라도 프로모션명이 같으면 한 줄이다 — 이름 하나가 행사 하나라서다.
+
+     **판매채널은 맨 앞 칸에 손으로 적는다.** 월별 예산에는 적는 칸이 없어 사람만 아는 값이라,
+     적은 값은 시트('추이판매채널')에 달별로 담아 팀이 같이 본다.
+
+     파일은 **주차마다 하나씩** 붙일 수 있다. 맨 위 줄은 붙인 파일을 다 합친 종합이고,
+     줄을 펼치면 [주차별] 에서 파일 하나씩 갈라 보여 준다. */
   const escape = perfEscape;
   const won = perfMoney('KRW');
   const num = perfCount;
@@ -11071,13 +11233,14 @@ if (eventResult) {
   let month = '';                  // 보고 있는 달
   let status = 'idle';
   let error = '';
-  let file = null;                 // 모든 채널에 걸쳐 쓰는 파일 (이름 규칙으로 붙인다)
-  /* 채널마다 따로 붙인 파일. 전매체 검색은 **행사 하나씩** 찾아 내려받으므로,
-     그 파일은 통째로 그 판매채널의 것이다 — 이름 규칙으로 가릴 것이 없다.
-     그래서 채널 파일이 있으면 그 파일의 줄을 **그대로** 쓴다 (이게 더 정확하다). */
-  const byChannel = {};            // 판매채널 → { name, file }
+  let files = [];                  // 모든 프로모션에 걸쳐 쓰는 파일들 (이름 규칙으로 붙인다)
+  /* 프로모션마다 따로 붙인 파일. 전매체 검색은 **행사 하나씩** 찾아 내려받으므로,
+     그 파일은 통째로 그 프로모션의 것이다 — 이름 규칙으로 가릴 것이 없다.
+     그래서 그 파일이 있으면 줄을 **그대로** 쓴다 (이게 더 정확하다). */
+  const byChannel = {};            // 프로모션명 → [{ name, body }]
+  let manual = {};                 // '달|프로모션명' → 사람이 적은 판매채널
   let fileNote = '';
-  let open = '';                   // 펼친 판매채널
+  let open = '';                   // 펼친 프로모션
 
   // 돈은 통째로 적는다 (줄여 쓰지 않는다). 0 은 '—' 로 둔다 — 0원과 '아직 없음'은 다르다.
   const money = (value) => (Number(value) ? won(value) : '—');
@@ -11128,32 +11291,70 @@ if (eventResult) {
     return out.filter(Boolean);
   };
 
-  const fileRows = () => {
-    if (!file) return [];
-    // 단계(사전 · 당일 · 사후 · 상시) 줄을 쓰고, 없으면 조회 기간 줄을 쓴다
-    const phases = (file.phases || []).reduce((all, one) => all.concat(one.rows || []), []);
-    return phases.length ? phases : (file.searched || []);
+  // 파일 한 개의 줄 — 단계(사전 · 당일 · 사후 · 상시) 줄을 쓰고, 없으면 조회 기간 줄을 쓴다
+  const rowsIn = (one) => {
+    const phases = (one.phases || []).reduce((all, each) => all.concat(each.rows || []), []);
+    return phases.length ? phases : (one.searched || []);
   };
 
-  // 채널에 붙인 파일의 줄 (단계 줄을 쓰고, 없으면 조회 기간 줄)
-  const ownRows = (channel) => {
-    const own = byChannel[channel];
-    if (!own || !own.file) return null;
-    const phases = (own.file.phases || []).reduce((all, one) => all.concat(one.rows || []), []);
-    return phases.length ? phases : (own.file.searched || []);
+  // 파일 한 개가 덮는 기간 (단계가 있으면 단계를 통째로 감싼 것, 없으면 조회 기간)
+  const rangeIn = (one) => {
+    let since = '';
+    let until = '';
+    (one.phases || []).forEach((each) => {
+      if (each.since && (!since || each.since < since)) since = each.since;
+      if (each.until && (!until || each.until > until)) until = each.until;
+    });
+    const range = one.range || {};
+    return { since: since || range.since || '', until: until || range.until || '' };
   };
 
-  const rowsFor = (channel) => {
-    const own = ownRows(channel);
-    if (own) return own;            // 그 채널 파일이 있으면 통째로 그 채널 것이다
+  const dayCount = (since, until) => {
+    if (!since || !until) return 0;
+    const from = new Date(`${since}T00:00:00+09:00`).getTime();
+    const to = new Date(`${until}T00:00:00+09:00`).getTime();
+    if (!from || !to) return 0;
+    return Math.round((to - from) / 86400000) + 1;
+  };
+
+  /* 파일이 덮는 기간으로 주차 이름을 짓는다. 1~7일이 1주, 8~14일이 2주다
+     (달력 주가 아니라 **날짜로 나눈 주** — 팀이 '9월 2주차' 라고 부르는 그 방식).
+     한 주가 넘는 파일은 주차로 부를 수 없으니 그렇다고 적는다. 기간은 늘 옆에 적는다. */
+  const weekName = (range) => {
+    if (!range.since) return '기간 없음';
+    if (dayCount(range.since, range.until || range.since) > 8) return '한 주가 넘음';
+    const at = Number(String(range.since).slice(5, 7));
+    const day = Number(String(range.since).slice(8, 10)) || 1;
+    return `${at}월 ${Math.ceil(day / 7)}주`;
+  };
+
+  // 공용 파일에서 이 프로모션 줄만 고른다 (프로모션 파일은 통째로 그 프로모션 것이다)
+  const pickRows = (one, channel) => {
     const marks = marksOf(channel);
-    return fileRows().filter((row) => {
+    return rowsIn(one).filter((row) => {
       const tail = tailOf(row.adset);
       if (tail && marks.indexOf(tail) >= 0) return true;
       // 제휴처럼 매출채널 표에 없는 것 — 이름 조각이 광고그룹에 들어 있는지 본다
       return marks.some((mark) => mark.length >= 3 && plain(row.adset).indexOf(mark) >= 0);
     });
   };
+
+  /* 프로모션 하나에 붙은 파일들. **파일 하나가 한 구간(주차)** 이다.
+     따로 붙인 파일이 있으면 그것만 쓴다 — 공용 파일보다 정확하다. */
+  const packsOf = (channel) => {
+    const own = byChannel[channel] || [];
+    const mine = own.length ? own : files;
+    return mine.map((one) => ({
+      name: one.name,
+      range: rangeIn(one.body),
+      rows: own.length ? rowsIn(one.body) : pickRows(one.body, channel),
+    })).sort((a, b) => String(a.range.since).localeCompare(String(b.range.since)));
+  };
+
+  const rowsFor = (channel) => packsOf(channel).reduce((all, one) => all.concat(one.rows), []);
+
+  // 공용 파일 전체의 줄 (어느 프로모션에도 안 붙은 줄을 찾을 때 쓴다)
+  const allRows = () => files.reduce((all, one) => all.concat(rowsIn(one.body)), []);
 
   const sumOf = (rows) => rows.reduce((into, row) => ({
     spend: into.spend + (Number(row.spend) || 0),
@@ -11168,11 +11369,12 @@ if (eventResult) {
   const pctText = (value) => (value === null ? '—' : perfPercent(value));
   const moneyText = (value) => (value === null ? '—' : won(Math.round(value)));
 
-  const HEAD = ['판매채널', '라이브기간', '광고기간', '집행매체', '광고비', '전환수', '전환값',
+  const HEAD = ['판매채널', '프로모션명', '라이브기간', '광고기간', '집행매체', '광고비', '전환수', '전환값',
     'CPS', 'CVR', 'ROAS', 'CPM', 'CPC', 'CTR', '파일'];
+  const HEAD_NUM_FROM = 5;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
   const metricCells = (got) => {
-    if (!got) return `<td class="tr-none" colspan="${HEAD.length - 4}">파일을 붙이면 채워집니다</td>`;
+    if (!got) return `<td class="tr-none" colspan="${HEAD.length - HEAD_NUM_FROM}">파일을 붙이면 채워집니다</td>`;
     return [
       `<td class="tr-media">${got.media.length ? escape(got.media.join(' · ')) : '—'}</td>`,
       `<td class="perf-num">${money(got.spend)}</td>`,
@@ -11193,6 +11395,8 @@ if (eventResult) {
      그래서 파일이 작게 유지되고, 값도 늘 최신이다.
      대신 부를 때마다 몇 초 걸리므로 **탭을 누른 것만** 묻고 받아 둔 것은 다시 안 묻는다. */
   const TABS = [
+    // 주차별은 **매체에 묻지 않는다** — 이미 붙여 둔 파일을 갈라 놓기만 하면 된다
+    { key: 'week', name: '주차별' },
     { key: 'placement', name: '게재지면' },
     { key: 'age', name: '연령대' },
     { key: 'gender', name: '성별' },
@@ -11201,29 +11405,20 @@ if (eventResult) {
   // 쪼개 보기를 주는 매체 (네이버 GFA · 검색광고는 그 길이 없다)
   const SPLITS = ['meta', 'google', 'kakao'];
 
-  let tab = 'placement';
-  const got = {};          // '채널|탭' → { status, rows, notes }
+  let tab = 'week';
+  const got = {};          // '프로모션|탭' → { status, rows, notes }
 
   const slotOf = (channel, key) => `${channel}|${key}`;
 
-  // 그 채널의 줄이 어느 파일에서 왔나 (채널에 따로 붙인 것이 공용 파일을 이긴다)
-  const fileFor = (channel) => ((byChannel[channel] && byChannel[channel].file) || file || null);
-
-  /* 상세를 물어볼 기간. 차례로 —
-       ① 그 파일의 단계 기간을 통째로 감싼 것 (단계만 담은 제품별 파일이 여기 걸린다)
-       ② 그 파일의 조회 기간
-       ③ 월별 예산에 적힌 그 채널의 광고기간 (파일이 옛날 것이라 기간이 없을 때) */
+  /* 상세를 물어볼 기간. 붙인 파일이 여럿(주차별)이면 **통째로 감싼 기간**이다.
+     파일이 없거나 기간이 안 적힌 옛 파일이면 월별 예산에 적힌 광고기간을 쓴다. */
   const rangeFor = (channel) => {
-    const mine = fileFor(channel);
     let since = '';
     let until = '';
-    ((mine && mine.phases) || []).forEach((one) => {
-      if (one.since && (!since || one.since < since)) since = one.since;
-      if (one.until && (!until || one.until > until)) until = one.until;
+    packsOf(channel).forEach((one) => {
+      if (one.range.since && (!since || one.range.since < since)) since = one.range.since;
+      if (one.range.until && (!until || one.range.until > until)) until = one.range.until;
     });
-    const range = (mine && mine.range) || {};
-    since = since || range.since || '';
-    until = until || range.until || '';
     if (!since || !until) {
       const cell = cellsOf().filter((one) => one.channel === channel)[0] || {};
       since = since || cell.since || '';
@@ -11247,6 +11442,7 @@ if (eventResult) {
   };
 
   const askDetail = (channel, key, again) => {
+    if (key === 'week') return;    // 붙인 파일로 그린다 — 물어볼 것이 없다
     const slot = slotOf(channel, key);
     if (got[slot] && !again) return;
     const spots = spotsOf(channel);
@@ -11258,9 +11454,9 @@ if (eventResult) {
       render();
     };
     if (!spots.length) {
-      stop(fileFor(channel)
+      stop(packsOf(channel).length
         ? '붙인 파일에 광고그룹 번호가 없습니다 — 전매체에서 파일을 다시 내려받아 주세요.'
-        : '이 판매채널에 붙은 파일이 없습니다 — 전매체 파일을 먼저 붙여 주세요.');
+        : '이 프로모션에 붙은 파일이 없습니다 — 전매체 파일을 먼저 붙여 주세요.');
       return;
     }
     if (!range.since || !range.until) {
@@ -11359,41 +11555,98 @@ if (eventResult) {
     </figure>`).join('')}</div>`;
   };
 
+  /* 주차별 — 붙인 파일 하나가 한 줄이다. 맨 위 줄(종합)은 이 줄들을 다 합친 값이다.
+     매체에 묻지 않으므로 기다릴 것이 없고, 파일을 붙이는 대로 바로 늘어난다. */
+  const weekTable = (channel) => {
+    const packs = packsOf(channel);
+    if (!packs.length) {
+      return '<p class="perf-note">붙인 전매체 파일이 없습니다 — 주차마다 그 주만 조회해 '
+        + '내려받은 파일을 붙이면 여기서 주차별로 갈라 보여 드립니다.</p>';
+    }
+    const lines = packs.map((one) => ({ ...one, sum: sumOf(one.rows) }));
+    const chart = vizBars(lines.map((one) => ({ name: weekName(one.range), value: one.sum.spend })),
+      (value) => won(value), '광고비');
+    return `${chart}
+      <div class="tool-table-wrap"><table class="tool-table tr-split">
+        <thead><tr><th>주차</th><th>기간</th><th>파일</th><th class="perf-num">광고비</th>
+          <th class="perf-num">전환수</th><th class="perf-num">전환값</th>
+          <th class="perf-num">CPS</th><th class="perf-num">CVR</th><th class="perf-num">ROAS</th></tr></thead>
+        <tbody>${lines.map((one) => `<tr>
+          <td><b>${escape(weekName(one.range))}</b></td>
+          <td>${escape(span(one.range.since, one.range.until)) || '<span class="tool-blank">—</span>'}</td>
+          <td class="tr-week-file">${escape(one.name)}</td>
+          <td class="perf-num">${money(one.sum.spend)}</td>
+          <td class="perf-num">${one.sum.conv ? num(one.sum.conv) : '—'}</td>
+          <td class="perf-num">${money(one.sum.rev)}</td>
+          <td class="perf-num">${moneyText(ratio(one.sum.spend, one.sum.conv))}</td>
+          <td class="perf-num">${pctText(ratio(one.sum.conv, one.sum.clk))}</td>
+          <td class="perf-num">${one.sum.spend ? perfRoas(ratio(one.sum.rev, one.sum.spend) || 0) : '—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      ${packs.length === 1 ? '<p class="perf-note">파일이 하나라 한 줄입니다 — 주차마다 따로 내려받아 붙이면 줄이 늘어납니다.</p>' : ''}`;
+  };
+
   const detailCard = (channel) => {
     const slot = slotOf(channel, tab);
     const pack = got[slot];
-    const inside = !pack ? '<p class="perf-note">누르면 매체에 물어봅니다.</p>'
-      : pack.status === 'loading' ? '<p class="perf-note">매체에서 받는 중… (몇 초 걸립니다)</p>'
-        : (tab === 'creative' ? creativeCards(pack.rows) : splitTable(pack.rows));
+    const inside = tab === 'week' ? weekTable(channel)
+      : !pack ? '<p class="perf-note">누르면 매체에 물어봅니다.</p>'
+        : pack.status === 'loading' ? '<p class="perf-note">매체에서 받는 중… (몇 초 걸립니다)</p>'
+          : (tab === 'creative' ? creativeCards(pack.rows) : splitTable(pack.rows));
     // 어느 기간을 물었는지 늘 보여 준다 — 값이 비면 대개 기간이 어긋난 것이다
     const asked = pack && pack.range && pack.range.since
       ? `<span class="tr-asked">${escape(pack.range.since)} ~ ${escape(pack.range.until)}</span>` : '';
-    const notes = (pack && pack.notes) || [];
+    const notes = tab === 'week' ? [] : ((pack && pack.notes) || []);
     return `<div class="tr-detail">
       <div class="tr-tabs">${TABS.map((one) => `<button type="button" data-tr="tab" data-tab="${one.key}"
         class="${one.key === tab ? 'is-on' : ''}">${escape(one.name)}</button>`).join('')}
         ${asked}
-        <button type="button" class="tr-redo" data-tr="redo" data-channel="${escape(channel)}"
-          title="매체에 다시 묻기"><i data-lucide="rotate-ccw"></i></button></div>
+        ${tab === 'week' ? '' : `<button type="button" class="tr-redo" data-tr="redo" data-channel="${escape(channel)}"
+          title="매체에 다시 묻기"><i data-lucide="rotate-ccw"></i></button>`}</div>
       ${notes.map((one) => `<p class="perf-note bg-note-bad">${escape(one)}</p>`).join('')}${inside}
     </div>`;
   };
 
+  /* 사람이 적어 둔 판매채널. 그 달에 적은 것이 없으면 **지난달 값을 이어받아** 보여 준다
+     (프로모션은 달이 바뀌어도 대개 같은 채널에서 돈다). 이어받은 값은 옅게 적고,
+     한 번 고치거나 그대로 저장하면 그 달 값으로 굳는다. */
+  const manualOf = (promo) => {
+    const now = manual[`${month}|${promo}`];
+    if (now !== undefined) return { value: now, from: month };
+    const before = ((body && body.months) || []).filter((ym) => ym < month).sort();
+    for (let at = before.length - 1; at >= 0; at -= 1) {
+      const found = manual[`${before[at]}|${promo}`];
+      if (found) return { value: found, from: before[at] };
+    }
+    return { value: '', from: '' };
+  };
+
+  const salesCell = (promo) => {
+    const found = manualOf(promo);
+    const old = !!found.from && found.from !== month;
+    return `<td class="tr-sales" data-tr="skip">
+      <input type="text" class="tr-sales-in${old ? ' is-old' : ''}" list="tr-sales-list"
+        value="${escape(found.value)}" placeholder="적기"
+        data-tr="sales" data-channel="${escape(promo)}"
+        title="${old ? escape(`${monthName(found.from)} 에 적어 둔 값을 이어서 씁니다 — 이 달이 다르면 고쳐 적어 주세요`) : '판매채널을 적으면 시트에 담깁니다'}"></td>`;
+  };
+
   const lineOf = (one) => {
-    const mineFile = byChannel[one.channel] || null;
-    const mine = (mineFile || file) ? rowsFor(one.channel) : null;
+    const own = byChannel[one.channel] || [];
+    const mine = (own.length || files.length) ? rowsFor(one.channel) : null;
     const got = mine && mine.length ? sumOf(mine) : null;
     return `<tr class="tr-row${open === one.channel ? ' is-open' : ''}" data-tr="pick" data-channel="${escape(one.channel)}">
+      ${salesCell(one.channel)}
       <td class="tr-name"><i data-lucide="chevron-right"></i>${escape(one.channel)}</td>
       <td>${one.live && one.live.length ? escape(one.live.join(' · ')) : '<span class="tool-blank">—</span>'}</td>
       <td>${span(one.since, one.until) ? escape(span(one.since, one.until)) : '<span class="tool-blank">—</span>'}</td>
       ${metricCells(got)}
       <td class="tr-own" data-tr="skip">
-        <label class="tr-pick" title="이 판매채널만 담긴 전매체 파일">
-          <i data-lucide="${mineFile ? 'file-check' : 'paperclip'}"></i>${mineFile ? escape(mineFile.name) : '파일'}
-          <input type="file" accept=".json,application/json" data-tr="one" data-channel="${escape(one.channel)}" hidden>
+        <label class="tr-pick" title="이 프로모션만 담긴 전매체 파일 (주차마다 하나씩 붙일 수 있습니다)">
+          <i data-lucide="${own.length ? 'file-check' : 'paperclip'}"></i>${own.length ? `${own.length}개` : '파일'}
+          <input type="file" accept=".json,application/json" multiple data-tr="one" data-channel="${escape(one.channel)}" hidden>
         </label>
-        ${mineFile ? `<button type="button" class="tr-off" data-tr="offone" data-channel="${escape(one.channel)}" title="이 파일 빼기"><i data-lucide="x"></i></button>` : ''}
+        ${own.length ? `<button type="button" class="tr-off" data-tr="offone" data-channel="${escape(one.channel)}" title="이 프로모션 파일 다 빼기"><i data-lucide="x"></i></button>` : ''}
       </td>
     </tr>${open === one.channel
       ? `<tr class="tr-more"><td colspan="${HEAD.length}">${detailCard(one.channel)}</td></tr>` : ''}`;
@@ -11411,7 +11664,16 @@ if (eventResult) {
     rows.forEach((one) => {
       rowsFor(one.channel).forEach((row) => { if (taken.indexOf(row) < 0) taken.push(row); });
     });
-    const stray = file ? fileRows().filter((row) => taken.indexOf(row) < 0) : [];
+    const stray = files.length ? allRows().filter((row) => taken.indexOf(row) < 0) : [];
+    // 판매채널 고르개 — 설정 탭의 행사채널과, 이미 적어 둔 값을 함께 보여 준다
+    const picks = [];
+    ((body && body.sales) || []).forEach((pair) => {
+      if (pair[0] && picks.indexOf(pair[0]) < 0) picks.push(pair[0]);
+    });
+    Object.keys(manual).forEach((key) => {
+      const value = manual[key];
+      if (value && picks.indexOf(value) < 0) picks.push(value);
+    });
 
     eventResult.innerHTML = `
       <div class="tool-head"><h2>판매채널 추이</h2></div>
@@ -11420,21 +11682,29 @@ if (eventResult) {
           <label class="bg-cat">달
             <select data-tr="month">${months.map((ym) => `<option value="${ym}"${ym === month ? ' selected' : ''}>${escape(monthName(ym))}</option>`).join('')}</select>
           </label>
-          <label class="tool-copy-all tr-file">
-            <i data-lucide="upload"></i>${file ? '파일 바꾸기' : '전매체 파일 붙이기'}
-            <input type="file" accept=".json,application/json" data-tr="file" hidden>
+          <label class="tool-copy-all tr-file" title="주차마다 그 주만 조회해 내려받은 파일을 하나씩 붙이세요">
+            <i data-lucide="upload"></i>${files.length ? '파일 더 붙이기' : '전매체 파일 붙이기'}
+            <input type="file" accept=".json,application/json" multiple data-tr="file" hidden>
           </label>
-          ${file ? '<button type="button" class="tool-copy-all" data-tr="drop"><i data-lucide="x"></i>파일 빼기</button>' : ''}
+          ${files.length ? '<button type="button" class="tool-copy-all" data-tr="drop"><i data-lucide="x"></i>파일 다 빼기</button>' : ''}
           <button type="button" class="tool-copy-all" data-tr="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
         </div>
+        ${files.length ? `<div class="tr-files">${files.map((one, at) => {
+    const range = rangeIn(one.body);
+    return `<span class="tr-chip"><b>${escape(weekName(range))}</b>
+      <small>${escape(span(range.since, range.until))}</small>
+      <em>${escape(one.name)}</em>
+      <button type="button" data-tr="dropone" data-at="${at}" title="이 파일 빼기"><i data-lucide="x"></i></button></span>`;
+  }).join('')}</div>` : ''}
+        <datalist id="tr-sales-list">${picks.map((one) => `<option value="${escape(one)}"></option>`).join('')}</datalist>
         ${error ? `<p class="perf-note bg-note-bad">${escape(error)}</p>` : ''}
         ${fileNote ? `<p class="perf-note">${fileNote}</p>` : ''}
         ${!months.length ? '<p class="perf-note">아직 짜 둔 달이 없습니다. 월별 예산에서 먼저 짜 주세요.</p>'
     : `<div class="tool-table-wrap"><table class="tool-table tr-table">
-        <thead><tr>${HEAD.map((name, at) => `<th${at >= 4 ? ' class="perf-num"' : ''}>${escape(name)}</th>`).join('')}</tr></thead>
+        <thead><tr>${HEAD.map((name, at) => `<th${at >= HEAD_NUM_FROM ? ' class="perf-num"' : ''}>${escape(name)}</th>`).join('')}</tr></thead>
         <tbody>${rows.map(lineOf).join('')}</tbody>
       </table></div>`}
-        ${stray.length ? `<p class="perf-note">파일에 있는데 어느 판매채널에도 안 붙은 광고그룹 ${num(stray.length)}개 — <b>${escape(stray.slice(0, 3).map((one) => one.adset).join(' · '))}</b>${stray.length > 3 ? ' 외' : ''}</p>` : ''}
+        ${stray.length ? `<p class="perf-note">파일에 있는데 어느 프로모션에도 안 붙은 광고그룹 ${num(stray.length)}개 — <b>${escape(stray.slice(0, 3).map((one) => one.adset).join(' · '))}</b>${stray.length > 3 ? ' 외' : ''}</p>` : ''}
       </div>`;
     lucide.createIcons();
   };
@@ -11456,6 +11726,8 @@ if (eventResult) {
     askSheet({ action: 'budgetTrend' })
       .then((found) => {
         body = found;
+        manual = {};
+        (found.manual || []).forEach((one) => { manual[`${one.month}|${one.promo}`] = one.channel; });
         const months = found.months || [];
         if (!month || months.indexOf(month) < 0) month = months[months.length - 1] || '';
         status = 'ready';
@@ -11468,32 +11740,55 @@ if (eventResult) {
     const hit = event.target.closest('[data-tr]');
     if (!hit) return;
     if (hit.dataset.tr === 'month') { month = hit.value; open = ''; render(); return; }
-    if (hit.dataset.tr === 'file') {
-      const picked = hit.files && hit.files[0];
-      if (!picked) return;
-      readFile(picked).then((found) => {
-        file = found;
-        const range = found.range || {};
-        fileNote = `<b>${escape(picked.name)}</b> 를 붙였습니다 — 광고그룹 ${num(fileRows().length)}줄 · 조회 ${escape(range.since || '')} ~ ${escape(range.until || '')}`;
-      }).catch((reason) => { file = null; fileNote = escape(reason.message); })
-        .then(() => { open = ''; render(); });
+    if (hit.dataset.tr === 'sales') {
+      /* 여기서 **다시 그리지 않는다.** 글자 칸의 change 는 빠져나올 때 오는데,
+         그때 화면을 다시 그리면 사람이 이어서 누른 곳이 사라져 그 누름이 삼켜진다.
+         그래서 담아 둔 값과 칸 모양만 손으로 맞춘다. */
+      const promo = hit.dataset.channel;
+      const value = hit.value.trim();
+      manual[`${month}|${promo}`] = value;
+      hit.classList.remove('is-old');
+      hit.classList.add('is-saving');
+      askSheet({ action: 'trendChannelPut', month: month, promo: promo, channel: value })
+        .then(() => {
+          hit.classList.remove('is-saving');
+          if (hit.isConnected) hit.classList.add('is-saved');
+        })
+        .catch((reason) => {
+          hit.classList.remove('is-saving');
+          error = `판매채널을 담지 못했습니다 (${promo}) — ${reason.message}`;
+          render();
+        });
       return;
     }
-    if (hit.dataset.tr === 'one') {
-      // 그 판매채널만 담긴 파일. 통째로 그 채널 것이라 이름 규칙을 안 쓴다.
-      const channel = hit.dataset.channel;
-      const picked = hit.files && hit.files[0];
-      if (!picked) return;
-      readFile(picked).then((found) => {
-        byChannel[channel] = { name: picked.name, file: found };
-        fileNote = `<b>${escape(channel)}</b> 에 ${escape(picked.name)} 를 붙였습니다 — 광고그룹 ${num((ownRows(channel) || []).length)}줄`;
-      }).catch((reason) => {
-        delete byChannel[channel];
-        fileNote = escape(reason.message);
-      }).then(() => {
-        Object.keys(got).forEach((slot) => { if (slot.indexOf(`${channel}|`) === 0) delete got[slot]; });
-        render();
-      });
+    if (hit.dataset.tr === 'file' || hit.dataset.tr === 'one') {
+      // 주차마다 하나씩 붙일 수 있다. 한 번에 여러 개를 골라도 된다.
+      const channel = hit.dataset.tr === 'one' ? hit.dataset.channel : '';
+      const picked = Array.from(hit.files || []);
+      hit.value = '';                       // 같은 파일을 다시 골라도 change 가 오게
+      if (!picked.length) return;
+      const bad = [];
+      Promise.all(picked.map((one) => readFile(one)
+        .then((found) => ({ name: one.name, body: found }))
+        .catch((reason) => { bad.push(`${one.name} — ${reason.message}`); return null; })))
+        .then((packs) => {
+          const good = packs.filter(Boolean);
+          if (channel) {
+            if (!byChannel[channel]) byChannel[channel] = [];
+            good.forEach((one) => byChannel[channel].push(one));
+            Object.keys(got).forEach((slot) => { if (slot.indexOf(`${channel}|`) === 0) delete got[slot]; });
+          } else {
+            good.forEach((one) => files.push(one));
+            open = '';
+          }
+          const where = channel ? `<b>${escape(channel)}</b> 에 ` : '';
+          fileNote = [
+            good.length ? `${where}파일 ${good.length}개를 붙였습니다 — ${good
+              .map((one) => `${escape(weekName(rangeIn(one.body)))} (${escape(one.name)})`).join(' · ')}` : '',
+            bad.length ? `<b>못 붙인 파일</b> — ${bad.map((one) => escape(one)).join(' · ')}` : '',
+          ].filter(Boolean).join('<br>');
+          render();
+        });
     }
   });
 
@@ -11502,11 +11797,18 @@ if (eventResult) {
     if (!hit) return;
     const what = hit.dataset.tr;
     if (what === 'reload') { load(); return; }
-    if (what === 'drop') { file = null; fileNote = ''; open = ''; render(); return; }
-    if (what === 'skip') return;            // 파일 칸을 눌러도 줄이 펼쳐지지 않게
+    if (what === 'drop') { files = []; fileNote = ''; open = ''; render(); return; }
+    if (what === 'dropone') {
+      files.splice(Number(hit.dataset.at), 1);
+      fileNote = '';
+      open = '';
+      render();
+      return;
+    }
+    if (what === 'skip' || what === 'sales') return;   // 눌러도 줄이 펼쳐지지 않게
     if (what === 'offone') {
       const channel = hit.dataset.channel;
-      delete byChannel[channel];
+      delete byChannel[channel];       // 그 프로모션에 붙인 파일을 다 뺀다
       Object.keys(got).forEach((slot) => { if (slot.indexOf(`${channel}|`) === 0) delete got[slot]; });
       fileNote = '';
       render();

@@ -1598,6 +1598,7 @@ var META_WINDOWS = ['1d_click', '7d_click'];
 function handleAction_(payload) {
   try {
     if (payload.action === 'metaAccounts') return { ok: true, accounts: metaAccounts_() };
+    if (payload.action === 'metaCampaigns') return metaCampaigns_(payload);
     if (payload.action === 'metaReport') return metaReport_(payload);
     if (payload.action === 'googleAccounts') return { ok: true, accounts: adsAccounts_() };
     if (payload.action === 'googleReport') return adsReport_(payload);
@@ -1633,6 +1634,7 @@ function handleAction_(payload) {
     if (payload.action === 'clarityPage') return clarityPage_(payload);
     if (payload.action === 'budgetGet') return budgetGet_(payload);
     if (payload.action === 'budgetTrend') return budgetTrend_();
+    if (payload.action === 'trendChannelPut') return trendChannelPut_(payload);
     if (payload.action === 'budgetPut') return budgetPut_(payload);
     if (payload.action === 'budgetDrop') return budgetDrop_(payload);
     if (payload.action === 'promoCalendar') return promoCalendar_(payload);
@@ -1832,6 +1834,55 @@ function listedAccounts_() {
   // 하나도 못 읽었으면 토큰 · 권한 문제다. 이유를 그대로 올려 보낸다.
   if (!out.length) throw new Error('메타 광고 계정을 하나도 읽지 못했습니다' + (trouble ? ' — ' + trouble : ''));
   return out;
+}
+
+/* 켜져 있는 캠페인 목록 (메타 광고 세팅의 캠페인명 고르개가 쓴다) ──────────
+   캠페인명을 손으로 적다 보면 이미 도는 캠페인과 한 글자가 달라 같은 캠페인이 하나 더 생긴다.
+   그래서 계정에서 **지금 켜져 있는** 캠페인 이름을 그대로 가져와 고르게 한다.
+   담아 두는 까닭: 목록은 자주 바뀌지 않는데 Apps Script 는 팀이 실행 줄 하나를 같이 쓴다.
+   방금 만든 캠페인이 안 보이면 화면의 [다시 읽기] 가 refresh 로 담아 둔 것을 버린다. */
+var META_CAMPAIGN_CACHE_SECONDS = 300;
+
+function metaCampaigns_(payload) {
+  var account = String(payload.account || '').trim();
+  if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
+  if (account.indexOf('act_') !== 0) account = 'act_' + account;
+
+  var cache = CacheService.getScriptCache();
+  var key = 'metaCampaigns:' + account;
+  if (!payload.refresh) {
+    var hit = cache.get(key);
+    if (hit) {
+      try { return { ok: true, campaigns: JSON.parse(hit), cached: true }; } catch (ignore) { /* 담아 둔 값이 깨졌으면 다시 읽는다 */ }
+    }
+  }
+
+  // status 가 ACTIVE 여도 캠페인 기간이 지났거나 계정이 막히면 돌지 않는다.
+  // 그래서 status 가 아니라 effective_status(실제 상태)로 거른다.
+  var rows = graphAll_('/' + account + '/campaigns', {
+    fields: 'name,objective,status,effective_status,updated_time',
+    effective_status: JSON.stringify(['ACTIVE']),
+    limit: 200
+  }, 5);
+
+  var out = [];
+  rows.forEach(function (row) {
+    var name = String(row.name || '').trim();
+    if (!name) return;
+    out.push({
+      id: row.id,
+      name: name,
+      objective: row.objective || '',
+      updated: row.updated_time || ''
+    });
+  });
+
+  // 최근에 손댄 것이 위로 온다 (대개 지금 쓰는 캠페인이다)
+  out.sort(function (a, b) { return String(b.updated).localeCompare(String(a.updated)); });
+
+  // 담아 두다 실패해도(캐시 한 칸은 100KB) 목록은 그대로 준다
+  try { cache.put(key, JSON.stringify(out), META_CAMPAIGN_CACHE_SECONDS); } catch (ignore) { /* 너무 길면 담지 않는다 */ }
+  return { ok: true, campaigns: out };
 }
 
 function metaReport_(payload) {
@@ -6289,6 +6340,88 @@ function monthBudgetRow_(line) {
   };
 }
 
+/* ── 추이 판매채널 (사람이 손으로 넣는다) ─────────────────────────────
+   월별 예산의 프로모션 줄 이름('찰스엔터 비밀특가' · 'KOL 라이브')은 **행사 이름**이지
+   판매채널이 아니다. 그 행사가 어느 채널에서 도는지는 예산에 적는 칸이 없어 사람만 안다.
+   그래서 추이 화면에서 손으로 적고, 그 값을 여기에 담는다.
+
+   브라우저에 두지 않는 까닭: 적은 사람 PC 에서만 보이면 팀이 같이 볼 수가 없다.
+   달마다 따로 담는다 — 같은 이름으로 다른 채널을 돌린 달이 있을 수 있어서다.
+   (화면은 지난달 값을 미리 채워 보여 준다. 그대로 두면 그 달 값으로 굳는다) */
+var TREND_CHANNEL_SHEET_NAME = '추이판매채널';
+var TREND_CHANNEL_HEADERS = ['달', '프로모션명', '판매채널', '수정자', '수정시각'];
+
+function trendChannelSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(TREND_CHANNEL_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(TREND_CHANNEL_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, TREND_CHANNEL_HEADERS.length)
+      .setValues([TREND_CHANNEL_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    // 달 칸은 글자로 둔다 (시트가 '2026-09' 를 날짜로 바꿔 두면 앞 달로 읽힐 수 있다)
+    sheet.getRange('A:A').setNumberFormat('@');
+    sheet.setColumnWidth(1, 90);
+    sheet.setColumnWidth(2, 280);
+    sheet.setColumnWidth(3, 160);
+  }
+  return sheet;
+}
+
+function trendChannelRows_() {
+  var sheet = trendChannelSheet_();
+  var last = sheet.getLastRow();
+  if (last < 2) return [];
+  var out = [];
+  sheet.getRange(2, 1, last - 1, TREND_CHANNEL_HEADERS.length).getValues().forEach(function (line) {
+    var month = monthBudgetKey_(line[0]);
+    var promo = String(line[1] || '').trim();
+    if (!month || !promo) return;
+    out.push({ month: month, promo: promo, channel: String(line[2] || '').trim() });
+  });
+  return out;
+}
+
+/* 한 칸만 고친다. 빈 값을 보내면 그 줄을 지운다 —
+   비워 두는 것과 '지난달 값을 이어받는 것' 은 다르다. 줄이 있으면 '이 달은 비었다' 는 뜻이다.
+   (줄을 지우면 화면이 다시 지난달 값을 이어받아 채운다) */
+function trendChannelPut_(payload) {
+  var month = monthBudgetKey_((payload && payload.month) || '');
+  var promo = String((payload && payload.promo) || '').trim();
+  if (!month) throw new Error('달이 비어 있습니다.');
+  if (!promo) throw new Error('프로모션명이 비어 있습니다.');
+  var channel = String((payload && payload.channel) || '').trim();
+  var who = String((payload && payload.by) || '');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = trendChannelSheet_();
+    var last = sheet.getLastRow();
+    var at = 0;
+    if (last > 1) {
+      var have = sheet.getRange(2, 1, last - 1, 2).getValues();
+      for (var i = 0; i < have.length; i++) {
+        if (monthBudgetKey_(have[i][0]) !== month) continue;
+        if (String(have[i][1]).trim() !== promo) continue;
+        at = i + 2;
+        break;
+      }
+    }
+    if (!channel) {
+      if (at) sheet.deleteRow(at);
+      return { ok: true, month: month, promo: promo, removed: !!at };
+    }
+    if (!at) at = sheet.getLastRow() + 1;
+    sheet.getRange(at, 1, 1, TREND_CHANNEL_HEADERS.length)
+      .setValues([[month, promo, channel, who, new Date()]]);
+    return { ok: true, month: month, promo: promo, channel: channel,
+      savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 /* 판매채널별 달 추이.
    월별예산 탭을 **한 번만** 훑어 달 × 판매채널로 모아 준다.
    달마다 budgetGet 을 부르면 달이 늘어난 만큼 요청이 늘고, 이 웹앱은 팀 전체가
@@ -6350,6 +6483,10 @@ function budgetTrend_() {
   var out = [];
   Object.keys(cells).forEach(function (key) { out.push(cells[key]); });
 
+  // 사람이 손으로 적어 둔 판매채널. 못 읽어도 추이는 그대로 보여 준다.
+  var manual = [];
+  try { manual = trendChannelRows_(); } catch (error) { manual = []; }
+
   // 행사채널 → 매출채널 (광고그룹 이름 마지막 토막). 못 읽어도 추이는 그대로 보여 준다.
   var sales = [];
   try {
@@ -6364,6 +6501,7 @@ function budgetTrend_() {
     channels: Object.keys(channels).sort(),
     cells: out,
     sales: sales,
+    manual: manual,
     // 제휴처럼 한글 판매채널이 영문 광고그룹으로 도는 것은 규칙으로 못 붙는다.
     // 실사용비를 받을 때 쓰는 그 표를 그대로 준다 (한 군데서만 고치게).
     channelAds: BUDGET_CHANNEL_ADS.map(function (one) {
