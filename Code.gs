@@ -1931,25 +1931,35 @@ function metaAccountId_(value) {
   return account.indexOf('act_') === 0 ? account : 'act_' + account;
 }
 
-// 'YYYY-MM-DDTHH:mm' 을 유닉스 초로. 광고 계정 시간대(한국)로 읽는다.
+/* 'YYYY-MM-DDTHH:mm' 을 유닉스 초로. 광고 계정 시간대(한국)로 읽는다.
+   읽지 못하면 **0 을 준다** (비어 있는 것과 같게 본다). 예전에는 던졌는데,
+   그러면 날짜 하나 때문에 만들기가 통째로 멈춘다 — 종료일시는 없어도 되는 값이다.
+   시작일시는 부르는 쪽에서 0 인지 따로 본다. */
 function metaTime_(value) {
   var text = String(value || '').trim();
   if (!text) return 0;
   var found = text.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
-  if (!found) throw new Error('일시가 올바르지 않습니다: ' + text);
+  if (!found) return 0;
   var when = new Date(found[1] + '-' + found[2] + '-' + found[3]
     + 'T' + found[4] + ':' + found[5] + ':00+09:00');
-  if (isNaN(when.getTime())) throw new Error('일시가 올바르지 않습니다: ' + text);
-  return Math.floor(when.getTime() / 1000);
+  var stamp = when.getTime();
+  if (!stamp || isNaN(stamp)) return 0;
+  return Math.floor(stamp / 1000);
 }
 
 // 폼(application/x-www-form-urlencoded)으로 보낸다. 빈 칸은 아예 보내지 않는다.
+// 값은 **글자로 굳혀서** 보낸다. 숫자가 아닌 숫자(NaN · Infinity)가 섞이면
+// 메타는 'Must be a unixtime…' 같은 말을 돌려주는데, 그것만 봐서는 어느 값이
+// 어쩌다 그렇게 됐는지 알 수 없다. 그런 값은 여기서 아예 빼 버린다.
 function graphPost_(path, params) {
   var payload = { access_token: metaToken_() };
   Object.keys(params || {}).forEach(function (key) {
     var value = params[key];
     if (value === undefined || value === null || value === '') return;
-    payload[key] = value;
+    if (typeof value === 'number' && !isFinite(value)) return;
+    var text = String(value);
+    if (text === 'NaN' || text === 'Infinity' || text === '-Infinity' || text === 'undefined') return;
+    payload[key] = text;
   });
   var response = UrlFetchApp.fetch(GRAPH_URL + path, {
     method: 'post', payload: payload, muteHttpExceptions: true
@@ -2034,10 +2044,14 @@ function metaMake_(payload) {
   if (budget <= 0) throw new Error('예산이 0원입니다.');
 
   var start = metaTime_(payload.startAt);
-  if (!start) throw new Error('시작일시가 비어 있습니다.');
-  var end = payload.endAt ? metaTime_(payload.endAt) : 0;
-  if (budgetType === 'lifetime' && !end) throw new Error('총예산을 쓰려면 종료일시가 있어야 합니다.');
-  if (end && end <= start) throw new Error('종료일시가 시작일시보다 빠르거나 같습니다.');
+  if (!(start > 0)) throw new Error('시작일시를 읽지 못했습니다: ' + JSON.stringify(String(payload.startAt || '')));
+  var end = metaTime_(payload.endAt);
+  // 적어 두었는데 못 읽었으면 조용히 버리지 않는다 — 무엇이 들어왔는지 그대로 알려 준다
+  if (String(payload.endAt === undefined || payload.endAt === null ? '' : payload.endAt).trim() && !(end > 0)) {
+    throw new Error('종료일시를 읽지 못했습니다: ' + JSON.stringify(String(payload.endAt)));
+  }
+  if (budgetType === 'lifetime' && !(end > 0)) throw new Error('총예산을 쓰려면 종료일시가 있어야 합니다.');
+  if (end > 0 && end <= start) throw new Error('종료일시가 시작일시보다 빠르거나 같습니다.');
 
   var log = [];
 
@@ -2109,16 +2123,29 @@ function metaMake_(payload) {
     else if (gender === '남성') targeting.genders = [1];
 
     var params = {
-      name: adsetName, campaign_id: campaignId, start_time: start,
+      name: adsetName, campaign_id: campaignId,
       optimization_goal: optGoal, billing_event: billEvent,
       bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
       targeting: JSON.stringify(targeting), status: 'PAUSED',
       promoted_object: promoted
     };
+    // 시각은 **0보다 큰 수일 때만** 넣는다. 숫자가 아닌 값이 새어 나가지 않게
+    // 글자로 굳혀서 넣는다 (메타는 유닉스 초를 받는다).
+    if (start > 0) params.start_time = String(start);
+    if (end > 0) params.end_time = String(end);
     params[budgetType === 'lifetime' ? 'lifetime_budget' : 'daily_budget'] = budget;
-    if (end) params.end_time = end;
 
-    var group = graphPost_('/' + account + '/adsets', params);
+    var group;
+    try {
+      group = graphPost_('/' + account + '/adsets', params);
+    } catch (error) {
+      // 메타가 어느 값을 물고 늘어지는지 알 수 있게, 보낸 시각을 함께 적어 준다.
+      throw new Error(String((error && error.message) || error)
+        + ' [보낸 값 — 시작 ' + (params.start_time || '(없음)')
+        + ' · 종료 ' + (params.end_time || '(없음)')
+        + ' · 받은 값 ' + JSON.stringify(String(payload.startAt || '')) + ' ~ '
+        + JSON.stringify(String(payload.endAt || '')) + ']');
+    }
     adsetId = String(group.id || '');
     if (!adsetId) throw new Error('광고세트를 만들었는데 번호를 못 받았습니다.');
     log.push('광고세트를 만들었습니다 (' + adsetId + ' · '
