@@ -244,6 +244,13 @@ function onOpen() {
     .addItem('구글 연결 확인', 'checkGoogleAds')
     .addItem('카카오 연결 확인', 'checkKakaoToken')
     .addItem('Clarity 연결 확인', 'checkClarity')
+    .addSeparator()
+    .addSubMenu(SpreadsheetApp.getUi().createMenu('월별 예산')
+      .addItem('지금 한 번 올리기', 'budgetDailyRun')
+      .addItem('아침 자동 올리기 켜기', 'budgetDailyInstall')
+      .addItem('아침 자동 올리기 끄기', 'budgetDailyRemove')
+      .addItem('자동 올리기 확인', 'budgetDailyCheck')
+      .addItem('손으로 건 트리거 표시하기', 'budgetDailyMarkOn'))
     .addToUi();
 }
 
@@ -772,9 +779,13 @@ function schedPut_(payload) {
 // 열쇠는 **검색어(행사)** 다 — 날짜는 그 행사의 것이라 하나로 뭉치면 서로 덮어쓴다.
 // 줄마다 따로 고치므로(끼워넣기) 다른 행사 줄은 건드리지 않는다.
 var PHASE_SHEET_NAME = '단계날짜';
-var PHASE_NAMES = ['사전', '당일', '사후'];
+var PHASE_NAMES = ['사전', '당일', '사후', '상시'];
+/* 상시 칸은 **맨 뒤에** 붙인다. 사후 뒤에 끼워 넣으면 이미 쌓인 줄의
+   수정자 · 수정시각이 한 칸씩 밀려 엉뚱하게 읽힌다.
+   그래서 칸 자리를 이름으로 못 박아 둔다 (차례로 세지 않는다). */
 var PHASE_HEADERS = ['검색어', '사전 시작', '사전 종료', '당일 시작', '당일 종료',
-  '사후 시작', '사후 종료', '수정자', '수정시각'];
+  '사후 시작', '사후 종료', '수정자', '수정시각', '상시 시작', '상시 종료'];
+var PHASE_AT = { '사전': 1, '당일': 3, '사후': 5, '상시': 9 };   // 시작 칸 (종료는 그 다음)
 
 function phaseSheet_() {
   var book = SpreadsheetApp.openById(SHEET_ID);
@@ -784,14 +795,22 @@ function phaseSheet_() {
     sheet.getRange(1, 1, 1, PHASE_HEADERS.length).setValues([PHASE_HEADERS]).setFontWeight('bold');
     sheet.setFrozenRows(1);
     sheet.setColumnWidth(1, 260);
+    return sheet;
+  }
+  // 상시 칸이 생기기 전에 만든 시트면 머리글만 이어 붙인다
+  var width = sheet.getLastColumn();
+  if (width < PHASE_HEADERS.length) {
+    sheet.getRange(1, width + 1, 1, PHASE_HEADERS.length - width)
+      .setValues([PHASE_HEADERS.slice(width)]).setFontWeight('bold');
   }
   return sheet;
 }
 
 function phaseRow_(line) {
   var spans = {};
-  PHASE_NAMES.forEach(function (name, i) {
-    spans[name] = { since: naverDay_(line[1 + i * 2]), until: naverDay_(line[2 + i * 2]) };
+  PHASE_NAMES.forEach(function (name) {
+    var at = PHASE_AT[name];
+    spans[name] = { since: naverDay_(line[at]), until: naverDay_(line[at + 1]) };
   });
   return {
     word: String(line[0] || ''),
@@ -838,16 +857,21 @@ function phasePut_(payload) {
       }
     }
 
-    var line = [word];
+    // 칸 자리를 못 박아 채운다 (상시가 맨 뒤라 차례로 밀어 넣을 수 없다)
+    var line = [];
+    for (var k = 0; k < PHASE_HEADERS.length; k++) line.push('');
+    line[0] = word;
     var any = false;
     PHASE_NAMES.forEach(function (name) {
       var one = spans[name] || {};
       var since = String(one.since || '').slice(0, 10);
       var until = String(one.until || '').slice(0, 10);
       if (since || until) any = true;
-      line.push(since, until);
+      line[PHASE_AT[name]] = since;
+      line[PHASE_AT[name] + 1] = until;
     });
-    line.push(who, new Date());
+    line[7] = who;
+    line[8] = new Date();
 
     if (!any) {
       // 날짜를 다 지운 것이다. 줄도 없앤다 (모두에게 지워진다).
@@ -1608,6 +1632,7 @@ function handleAction_(payload) {
     if (payload.action === 'clarityPages') return clarityPages_(payload);
     if (payload.action === 'clarityPage') return clarityPage_(payload);
     if (payload.action === 'budgetGet') return budgetGet_(payload);
+    if (payload.action === 'budgetTrend') return budgetTrend_();
     if (payload.action === 'budgetPut') return budgetPut_(payload);
     if (payload.action === 'budgetDrop') return budgetDrop_(payload);
     if (payload.action === 'promoCalendar') return promoCalendar_(payload);
@@ -6102,6 +6127,157 @@ function monthBudgetParse_(text, fallback) {
   }
 }
 
+/* ── 사람이 읽는 거울 (월별 예산 시트) ─────────────────────────────────
+   '월별예산' 탭은 앱이 읽는 자리라 한 달이 한 줄이고, 내용은 JSON 한 칸에 들어 있다.
+   시트를 열어도 사람은 못 읽는다. 그래서 저장할 때마다 그 판을 **펴서** 옮겨 적는다.
+
+   옮겨 적는 곳은 적재 시트가 아니라 **따로 만든 월별 예산 문서**다.
+   팀이 달마다 탭을 만들어 두고 보는 곳이라, 앱의 적재 시트를 열지 않아도 되게 갈라 두었다.
+   주소가 바뀌면 스크립트 속성 BUDGET_TABLE_SHEET_ID 에 새 주소(또는 ID)만 넣으면 된다.
+
+   읽기 전용 거울이다 — 앱은 이 문서를 **절대 읽지 않는다.**
+   여기서 고쳐도 앱에는 안 돌아가고, 다음 저장 때 덮인다.
+   (두 곳에서 같은 값을 고칠 수 있게 두면 어느 쪽이 맞는지 아무도 모르게 된다.
+    시트에서 고친 것을 앱으로 되돌리려면 어느 쪽이 이기는지부터 정해야 한다.)             */
+var MONTH_TABLE_BOOK_ID = '1rWiV6YKrfB3MNvM7Kv7Alm3hmCquknpBOBeT-rxi2U8';
+var MONTH_TABLE_HEADERS = ['월', '구분', '카테고리', '상세 SKU', '판매채널 · 항목',
+  '유형', '라이브일정', '광고시작', '광고종료', '목표수량', '목표 CPS',
+  '브랜드검색비', '사용예정', '실사용비', '잔여비', '진행광고매체', '수정시각'];
+// 돈 · 개수 칸 (위 차례에서 1부터 센다). 이 칸만 천 단위로 끊어 준다.
+var MONTH_TABLE_NUMS = [10, 11, 12, 13, 14, 15];
+
+function monthTableBookId_() {
+  var found = cleanToken_(PropertiesService.getScriptProperties().getProperty('BUDGET_TABLE_SHEET_ID'));
+  var picked = found || MONTH_TABLE_BOOK_ID;
+  var inside = String(picked).match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  return inside ? inside[1] : picked;
+}
+
+function monthTableUrl_() {
+  return 'https://docs.google.com/spreadsheets/d/' + monthTableBookId_() + '/edit';
+}
+
+/* 탭 이름을 달로 읽는다. 사람이 붙이는 이름이 제각각이라 넓게 받는다.
+     2026-09 · 2026.09 · 2026/09 · 202609 · 2026년 9월  → '2026-09'
+     9월 · 09 · 9                                      → '#09'  (해가 없는 이름)
+   해가 없는 이름은 어느 해인지 알 수 없다. 그래서 따로 표시해 두고,
+   해까지 맞는 탭이 없을 때만 이른 달부터 하나씩 가져다 쓴다.                        */
+function monthTabKey_(name) {
+  var text = String(name || '').trim();
+  var full = text.match(/(20\d{2})\s*[-.\/년]?\s*(1[0-2]|0?[1-9])(?!\d)/);
+  if (full) return full[1] + '-' + ('0' + full[2]).slice(-2);
+  var only = text.match(/^(1[0-2]|0?[1-9])\s*월?$/);
+  if (only) return '#' + ('0' + only[1]).slice(-2);
+  return '';
+}
+
+// 판 하나를 사람이 읽는 줄로 편다. 고정비를 먼저, 프로모션을 뒤에 둔다 (화면 차례와 같다).
+function budgetTableRows_(month, plan, stamp) {
+  var out = [];
+  var catOf = {};
+  ((plan && plan.skus) || []).forEach(function (one) {
+    catOf[String(one.name || '')] = String(one.category || '');
+  });
+
+  ((plan && plan.fixed) || []).forEach(function (one) {
+    var want = Number(one.plan) || 0;
+    var used = Number(one.used) || 0;
+    out.push([month, '고정비', String(one.category || ''),
+      String(one.sku || '') || '공통', String(one.item || ''),
+      '', '', '', '', '', '', '',
+      want, used, want - used, '', stamp]);
+  });
+
+  ((plan && plan.rows) || []).forEach(function (one) {
+    var goal = Number(one.goal) || 0;
+    var cps = Number(one.cps) || 0;
+    /* 광고비는 목표수량 × 목표 CPS. 그 줄에 금액을 직접 적어 두었으면 그것이 이긴다
+       (정액 상품 · 협찬비처럼 수량으로 안 떨어지는 줄이 있다). 화면과 같은 셈이다.
+       브랜드검색비는 더하지 않는다 — 고정비의 '브랜드검색' 에 이미 들어 있다.        */
+    var want = (Number(one.cost) || 0) > 0 ? Number(one.cost) : goal * cps;
+    var used = Number(one.used) || 0;
+    out.push([month, String(one.group || '') || '(구분 없음)',
+      catOf[String(one.sku || '')] || '', String(one.sku || ''),
+      String(one.channel || ''), String(one.kind || ''), String(one.live || ''),
+      String(one.since || ''), String(one.until || ''),
+      goal || '', cps || '', Number(one.brand) || '',
+      want, used, want - used,
+      ((one.media || []).join(' · ')), stamp]);
+  });
+  return out;
+}
+
+/* 탭 하나를 그린다. 탭 이름이 곧 그 달이라 '월' 칸은 넣지 않는다.
+   **우리가 쓰는 칸만** 지운다 — 오른쪽에 사람이 적어 둔 메모가 있으면 살려 둔다. */
+function budgetTableDraw_(sheet, rows) {
+  var head = MONTH_TABLE_HEADERS.slice(1);
+  var grid = rows.map(function (line) { return line.slice(1); });
+  var width = head.length;
+
+  if (sheet.getMaxColumns() < width) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), width - sheet.getMaxColumns());
+  }
+  var need = grid.length + 1;
+  if (sheet.getMaxRows() < need) sheet.insertRowsAfter(sheet.getMaxRows(), need - sheet.getMaxRows());
+
+  sheet.getRange(1, 1, sheet.getMaxRows(), width).clearContent();
+  sheet.getRange(1, 1, 1, width).setValues([head]).setFontWeight('bold');
+  if (grid.length) sheet.getRange(2, 1, grid.length, width).setValues(grid);
+  sheet.setFrozenRows(1);
+  MONTH_TABLE_NUMS.forEach(function (at) {
+    sheet.getRange(2, at - 1, Math.max(grid.length, 1), 1).setNumberFormat('#,##0');
+  });
+  return grid.length;
+}
+
+/* 월별예산 탭 전체를 거울 문서에 다시 그린다 — **달마다 탭 하나**.
+   사람이 미리 만들어 둔 탭이 있으면 그 탭에 그대로 올리고, 없으면 'YYYY-MM' 으로 만든다.
+   한 달만 골라 올리지 않고 통째로 다시 쓰는 까닭: 어느 달이 언제 고쳐졌는지 앱이 따로
+   기억하지 않아서다. 달이 열두 개라도 탭 열둘에 몇 백 줄이라 한 번에 끝난다.           */
+function budgetTableSync_(lines) {
+  var book = SpreadsheetApp.openById(monthTableBookId_());
+
+  var packs = [];
+  lines.forEach(function (line) {
+    var month = monthBudgetKey_(line[0]);
+    if (!month) return;
+    var plan = monthBudgetParse_(line[2], null);
+    if (!plan) return;
+    var when = line[5] instanceof Date
+      ? Utilities.formatDate(line[5], 'Asia/Seoul', 'yyyy-MM-dd HH:mm') : String(line[5] || '');
+    packs.push({ month: month, rows: budgetTableRows_(month, plan, when) });
+  });
+  packs.sort(function (a, b) { return a.month < b.month ? -1 : (a.month > b.month ? 1 : 0); });
+
+  // 이미 있는 탭을 달로 훑어 둔다
+  var byMonth = {};
+  var loose = {};
+  book.getSheets().forEach(function (sheet) {
+    var key = monthTabKey_(sheet.getName());
+    if (!key) return;
+    if (key.charAt(0) === '#') { if (!loose[key]) loose[key] = sheet; return; }
+    if (!byMonth[key]) byMonth[key] = sheet;
+  });
+
+  var made = [];
+  var total = 0;
+  packs.forEach(function (pack) {
+    var sheet = byMonth[pack.month];
+    if (!sheet) {
+      // 해가 안 적힌 탭('9월')은 이른 달부터 하나씩 가져다 쓴다
+      var mark = '#' + pack.month.slice(5, 7);
+      if (loose[mark]) { sheet = loose[mark]; delete loose[mark]; }
+    }
+    if (!sheet) {
+      sheet = book.insertSheet(pack.month, book.getNumSheets());
+      made.push(pack.month);
+    }
+    total += budgetTableDraw_(sheet, pack.rows);
+  });
+
+  return { rows: total, tabs: packs.length, made: made, url: monthTableUrl_() };
+}
+
 function monthBudgetRow_(line) {
   return {
     month: monthBudgetKey_(line[0]),
@@ -6110,6 +6286,91 @@ function monthBudgetRow_(line) {
     spend: monthBudgetParse_(line[3], null),
     updatedBy: String(line[4] || ''),
     updatedAt: line[5] instanceof Date ? line[5].toISOString() : String(line[5] || '')
+  };
+}
+
+/* 판매채널별 달 추이.
+   월별예산 탭을 **한 번만** 훑어 달 × 판매채널로 모아 준다.
+   달마다 budgetGet 을 부르면 달이 늘어난 만큼 요청이 늘고, 이 웹앱은 팀 전체가
+   실행 줄 하나를 같이 쓰기 때문에 그만큼 남의 화면이 밀린다. 그래서 한 번에 모은다.
+
+   SKU 가 달라도 **판매채널이 같으면 한 줄로 합친다** — 채널 하나가 행사 하나라서다
+   (같은 행사에 더 플렌더mini 와 MAX 를 함께 태우면 예산에는 두 줄로 적힌다).
+   합칠 때 광고기간은 **가장 이른 시작 ~ 가장 늦은 종료**로 잡고,
+   라이브일정은 적힌 것을 모아 둔다 (줄마다 다를 수 있다).
+
+   매출채널 표(설정 탭 K:L)도 함께 준다 — 화면이 전매체 파일의 광고그룹 이름
+   ('[행사]_타겟팅_**매출채널**') 을 판매채널에 붙일 때 쓴다. */
+function budgetTrend_() {
+  var sheet = monthBudgetSheet_();
+  var last = sheet.getLastRow();
+  var months = [];
+  var cells = {};        // '달|채널' → 모은 값
+  var channels = {};
+
+  if (last > 1) {
+    sheet.getRange(2, 1, last - 1, MONTH_BUDGET_HEADERS.length).getValues().forEach(function (line) {
+      var month = monthBudgetKey_(line[0]);
+      if (!month) return;
+      if (months.indexOf(month) < 0) months.push(month);
+      var plan = monthBudgetParse_(line[2], null);
+      var rows = (plan && plan.rows) || [];
+      if (!rows.length) return;
+
+      rows.forEach(function (row) {
+        var name = String(row.channel || '').trim() || '(판매채널 없음)';
+        var key = month + '|' + name;
+        if (!cells[key]) {
+          cells[key] = { month: month, channel: name, plan: 0, used: 0, goal: 0, rows: 0,
+            skus: [], live: [], since: '', until: '' };
+          channels[name] = true;
+        }
+        var one = cells[key];
+        var typed = Number(row.cost) || 0;
+        one.plan += typed > 0 ? typed : (Number(row.goal) || 0) * (Number(row.cps) || 0);
+        one.used += Number(row.used) || 0;
+        one.goal += Number(row.goal) || 0;
+        one.rows += 1;
+
+        var sku = String(row.sku || '').trim();
+        if (sku && one.skus.indexOf(sku) < 0) one.skus.push(sku);
+        var live = String(row.live || '').trim();
+        if (live && one.live.indexOf(live) < 0) one.live.push(live);
+
+        // 광고기간은 합친 줄 전체를 감싸는 기간으로 잡는다
+        var since = String(row.since || '').slice(0, 10);
+        var until = String(row.until || '').slice(0, 10);
+        if (since && (!one.since || since < one.since)) one.since = since;
+        if (until && (!one.until || until > one.until)) one.until = until;
+      });
+    });
+  }
+
+  months.sort();
+  var out = [];
+  Object.keys(cells).forEach(function (key) { out.push(cells[key]); });
+
+  // 행사채널 → 매출채널 (광고그룹 이름 마지막 토막). 못 읽어도 추이는 그대로 보여 준다.
+  var sales = [];
+  try {
+    var book = SpreadsheetApp.openById(SHEET_ID);
+    var config = book.getSheetByName(CONFIG_SHEET_NAME);
+    if (config) sales = configRead_(config, 11, 2);
+  } catch (error) { sales = []; }
+
+  return {
+    ok: true,
+    months: months,
+    channels: Object.keys(channels).sort(),
+    cells: out,
+    sales: sales,
+    // 제휴처럼 한글 판매채널이 영문 광고그룹으로 도는 것은 규칙으로 못 붙는다.
+    // 실사용비를 받을 때 쓰는 그 표를 그대로 준다 (한 군데서만 고치게).
+    channelAds: BUDGET_CHANNEL_ADS.map(function (one) {
+      return { channel: one.channel, match: one.match };
+    }),
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
   };
 }
 
@@ -6138,6 +6399,10 @@ function budgetGet_(payload) {
     budget: found || { month: want, total: 0, plan: { skus: [], rows: [] }, spend: null,
       updatedBy: '', updatedAt: '' },
     url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    // 사람이 보는 월별 예산 문서 (달마다 탭 하나). [시트 열기] 가 이쪽으로 간다.
+    tableUrl: monthTableUrl_(),
+    // 아침 자동 올리기 — 켜져 있나 · 마지막으로 언제 돌았나
+    auto: { on: budgetDailyOn_(), hour: BUDGET_DAILY_HOUR, last: budgetDailyLast_() },
     fetchedAt: new Date().toISOString()
   };
 }
@@ -6176,11 +6441,450 @@ function budgetPut_(payload) {
     sheet.getRange(at, 1, 1, MONTH_BUDGET_HEADERS.length).setValues([[
       month, total, JSON.stringify(plan), spend ? JSON.stringify(spend) : '', who, new Date()
     ]]);
-    return { ok: true, month: month, savedAt: new Date().toISOString() };
+
+    /* 사람이 읽는 거울 탭('월별예산표') 도 다시 그린다.
+       거울이 안 되더라도 저장은 성공이다 — 앱이 읽는 자리는 위의 '월별예산' 탭이고,
+       거울은 시트를 열어 보는 사람을 위한 것이라서다. */
+    var tableNote = '';
+    var table = { rows: 0, tabs: 0, made: [], url: monthTableUrl_() };
+    try {
+      var last2 = sheet.getLastRow();
+      table = budgetTableSync_(last2 > 1
+        ? sheet.getRange(2, 1, last2 - 1, MONTH_BUDGET_HEADERS.length).getValues() : []);
+    } catch (error) {
+      tableNote = String((error && error.message) || error);
+    }
+
+    return { ok: true, month: month, savedAt: new Date().toISOString(),
+      tableRows: table.rows, tableTabs: table.tabs, tableMade: table.made,
+      tableUrl: table.url, tableNote: tableNote };
   } finally {
     lock.releaseLock();
   }
 }
+/* ── 아침마다 저절로 올리기 (시간 트리거) ──────────────────────────────
+   사람이 [구글시트 받기] 를 누르는 것과 **같은 일**을 서버가 혼자 한다 —
+   이 달 실사용비를 매체에서 받아 채우고, 적재 시트에 담고, 월별 예산 문서를 다시 그린다.
+
+   켜는 법: 시트 메뉴 UTM → '월별 예산 · 아침 자동 올리기 켜기'.
+   (트리거는 **켠 사람의 권한**으로 돈다. 그 사람이 월별 예산 문서에 편집 권한이 있어야 한다)
+
+   화면에서 하던 '어느 줄에 넣을지 고르는 규칙' 을 여기로 옮겨 왔다. 같은 규칙이 두 곳에
+   있으면 언젠가 갈라지므로, 고칠 때는 app.js 의 fixedPull 과 **함께** 고쳐야 한다.
+   화면 쪽을 없애지 않은 까닭: 사람이 아무 때나 눌러 지금 값을 보고 싶어 하기 때문이다.   */
+var BUDGET_DAILY_FN = 'budgetDailyRun';
+var BUDGET_DAILY_HOUR = 11;                 // 한국 시간 오전 11시
+var BUDGET_DAILY_MARK = 'BUDGET_DAILY_LAST';
+var BUDGET_DAILY_ON = 'BUDGET_DAILY_ON';
+
+// 화면(app.js) 의 SKU_TREE 와 같아야 한다
+var BUDGET_SKU_TREE = [
+  ['더 플렌더', ['더 플렌더mini', '더 플렌더MAX', '더 플렌더PRO']],
+  ['생활가전', ['더 에어드라이', '더 시프트']]
+];
+
+// 제품 이름은 곳마다 조금씩 다르게 적힌다 — '더 플렌더MAX' 와 '더 플렌더(MAX)'.
+// 띄어쓰기 · 괄호 · 대소문자를 지워 같은 열쇠로 만든다.
+function budgetNameKey_(name) {
+  return String(name || '').toLowerCase().replace(/[\s()_·\-.]/g, '');
+}
+
+/* 캠페인에서 발라낸 제품 이름이 갈 자리를 정한다.
+     상세 SKU 와 같으면 그 줄로, 카테고리와 같으면 그 카테고리의 **공통** 줄로.
+   둘 다 아니면 null — 못 붙였다고 남기고 사람이 손으로 옮긴다. */
+function budgetSpotOf_(product) {
+  var want = budgetNameKey_(product);
+  if (!want) return null;
+  var found = null;
+  BUDGET_SKU_TREE.forEach(function (pair) {
+    if (found) return;
+    pair[1].forEach(function (sku) {
+      if (!found && budgetNameKey_(sku) === want) found = { category: pair[0], sku: sku };
+    });
+  });
+  if (found) return found;
+  BUDGET_SKU_TREE.forEach(function (pair) {
+    if (!found && budgetNameKey_(pair[0]) === want) found = { category: pair[0], sku: '' };
+  });
+  return found;
+}
+
+function budgetUid_() {
+  return 'a' + Utilities.getUuid().replace(/-/g, '').slice(0, 10);
+}
+
+// 받아 온 광고비를 판에 채운다. 화면의 fixedPull 과 같은 규칙이다.
+function budgetFillSpend_(plan, body) {
+  var note = { filled: 0, made: 0, missed: [], channels: [], many: [], none: [] };
+  if (!plan.fixed) plan.fixed = [];
+  if (!plan.rows) plan.rows = [];
+
+  // 고정비 — 항목 × 카테고리 × 상세SKU 한 칸에 모아 넣는다
+  var found = {};
+  (body.rows || []).forEach(function (row) {
+    var spot = budgetSpotOf_(row.product);
+    if (!spot) { note.missed.push(row.campaign); return; }
+    var key = row.item + '|' + spot.category + '|' + spot.sku;
+    // salesAmt 는 부가세 별도다 — 그대로 쓴다 (공급가 기준)
+    found[key] = (found[key] || 0) + Math.round(row.spend);
+  });
+  plan.fixedAt = { at: new Date().toISOString(), gfa: body.gfaLoadedAt || '' };
+
+  Object.keys(found).forEach(function (key) {
+    var parts = key.split('|');
+    var line = null;
+    plan.fixed.forEach(function (one) {
+      if (line) return;
+      if (String(one.item) === parts[0] && String(one.category || '') === parts[1]
+        && String(one.sku || '') === parts[2]) line = one;
+    });
+    if (!line) {
+      line = { id: budgetUid_(), category: parts[1], sku: parts[2], item: parts[0], plan: 0, used: 0 };
+      plan.fixed.push(line);
+      note.made += 1;
+    }
+    line.used = found[key];
+    note.filled += 1;
+  });
+
+  /* 판매채널 — 규칙에 걸린 줄의 실사용비를 채운다.
+     같은 판매채널 줄이 여럿이면 **건드리지 않는다.** 어느 줄 몫인지 알 수 없어서다
+     (사람이 손으로 나눠 적는다). 조용히 한 줄에 몰아 넣으면 나머지가 0 으로 남는다. */
+  (body.channels || []).forEach(function (one) {
+    var want = String(one.channel || '').trim();
+    var mine = plan.rows.filter(function (row) {
+      return String(row.channel || '').trim() === want;
+    });
+    if (!mine.length) { if (one.spend) note.none.push(want); return; }
+    if (mine.length > 1) { note.many.push(want); return; }
+    mine[0].used = one.spend;
+    note.channels.push(want);
+  });
+
+  return note;
+}
+
+// 그 달의 말일 (2월 · 31일 달을 손으로 세지 않는다)
+function budgetLastDay_(month) {
+  var year = Number(String(month).slice(0, 4));
+  var at = Number(String(month).slice(5, 7));
+  return new Date(year, at, 0).getDate();
+}
+
+/* 한 달을 받아 채우고 담고 거울까지 그린다.
+   매체를 부르는 동안에는 **자물쇠를 잡지 않는다** — 몇 초에서 몇십 초가 걸리는데
+   그동안 다른 사람의 저장까지 멈추기 때문이다. 잠그는 것은 읽고 쓰는 순간뿐이다. */
+function budgetDaily_(want) {
+  var month = monthBudgetKey_(want || '')
+    || Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM');
+  var sheet = monthBudgetSheet_();
+
+  // ① 아직 짜 두지 않은 달이면 매체를 부르지 않는다.
+  //    없는 달을 만들어 두면 달 고르개에 '짜다 만 달' 이 생긴다. 거울만 다시 그린다.
+  var last = sheet.getLastRow();
+  var planned = false;
+  if (last > 1) {
+    sheet.getRange(2, 1, last - 1, 1).getValues().forEach(function (line) {
+      if (monthBudgetKey_(line[0]) === month) planned = true;
+    });
+  }
+  if (!planned) {
+    var only = budgetTableSync_(last > 1
+      ? sheet.getRange(2, 1, last - 1, MONTH_BUDGET_HEADERS.length).getValues() : []);
+    return { ok: true, month: month, planned: false, ranAt: new Date().toISOString(),
+      tabs: only.tabs, rows: only.rows, url: only.url,
+      note: month + ' 은 아직 짜 두지 않아 실사용비는 받지 않았습니다 (거울만 다시 그렸습니다).' };
+  }
+
+  // ② 매체에서 이 달 실사용비를 받는다 (자물쇠 밖에서)
+  var body = budgetFixedSpend_({ since: month + '-01',
+    until: month + '-' + ('0' + budgetLastDay_(month)).slice(-2) });
+
+  // ③ 읽고 · 채우고 · 쓰고 · 거울까지 (여기만 잠근다)
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var rows = sheet.getLastRow() > 1
+      ? sheet.getRange(2, 1, sheet.getLastRow() - 1, MONTH_BUDGET_HEADERS.length).getValues() : [];
+    var at = 0;
+    var kept = null;
+    for (var i = 0; i < rows.length; i++) {
+      if (monthBudgetKey_(rows[i][0]) !== month) continue;
+      at = i + 2;
+      kept = monthBudgetRow_(rows[i]);
+      break;
+    }
+    if (!at) throw new Error(month + ' 줄이 사라졌습니다 (받는 사이에 지워진 듯합니다).');
+
+    var plan = kept.plan || { skus: [], rows: [] };
+    var note = budgetFillSpend_(plan, body);
+
+    sheet.getRange(at, 1, 1, MONTH_BUDGET_HEADERS.length).setValues([[
+      month, kept.total, JSON.stringify(plan),
+      kept.spend ? JSON.stringify(kept.spend) : '', '자동 올리기', new Date()
+    ]]);
+
+    rows[at - 2] = sheet.getRange(at, 1, 1, MONTH_BUDGET_HEADERS.length).getValues()[0];
+    var table = budgetTableSync_(rows);
+
+    return { ok: true, month: month, planned: true, ranAt: new Date().toISOString(),
+      filled: note.filled, made: note.made, channels: note.channels,
+      many: note.many, none: note.none, missed: note.missed.length,
+      gfaNote: body.gfaNote || '', channelNotes: body.channelNotes || [],
+      tabs: table.tabs, rows: table.rows, made2: table.made, url: table.url };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 마지막으로 돈 결과를 적어 둔다. 화면이 '언제 올라갔나' 를 보여 줄 수 있게.
+// 스크립트 속성은 9KB 까지라 짧게만 남긴다.
+function budgetDailyMark_(found) {
+  var slim = {
+    at: found.ranAt || new Date().toISOString(),
+    ok: found.ok !== false,
+    month: found.month || '',
+    tabs: found.tabs || 0,
+    rows: found.rows || 0,
+    note: String(found.note || found.error || '').slice(0, 300)
+  };
+  slim.how = found.how || '';
+  try {
+    PropertiesService.getScriptProperties().setProperty(BUDGET_DAILY_MARK, JSON.stringify(slim));
+  } catch (error) { /* 적어 두기는 거들기다 */ }
+  return slim;
+}
+
+function budgetDailyLast_() {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty(BUDGET_DAILY_MARK);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/* 자동 올리기가 돌 때마다 한 줄씩 적어 둔다.
+   이게 없으면 '돌았는데 실패' 인지 '아예 안 돌았는지' 를 가릴 수가 없다 —
+   트리거는 조용히 돌고 조용히 죽어서, 시트만 봐서는 둘이 똑같아 보인다.
+   Apps Script 의 실행 기록으로도 볼 수 있지만, 시트를 보는 사람은 거기까지 안 간다.
+   줄이 끝없이 쌓이지 않게 마지막 몇 백 줄만 남긴다.                                   */
+var BUDGET_LOG_SHEET_NAME = '자동올리기기록';
+var BUDGET_LOG_HEADERS = ['시각', '결과', '달', '탭', '줄', '어떻게', '메모'];
+var BUDGET_LOG_KEEP = 300;
+
+function budgetLogSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(BUDGET_LOG_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(BUDGET_LOG_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, BUDGET_LOG_HEADERS.length)
+      .setValues([BUDGET_LOG_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 150);
+    sheet.setColumnWidth(7, 520);
+  }
+  return sheet;
+}
+
+// how 는 '자동(트리거)' 또는 '손으로' — 아침에 저절로 돈 것인지 가릴 수 있어야 한다.
+function budgetDailyLog_(slim, how) {
+  try {
+    var sheet = budgetLogSheet_();
+    sheet.appendRow([
+      new Date(), slim.ok ? '성공' : '실패', slim.month || '',
+      slim.tabs || 0, slim.rows || 0, how || '', String(slim.note || '').slice(0, 500)
+    ]);
+    // 오래된 줄은 지운다 (머리글 한 줄 + 남길 줄)
+    var over = sheet.getLastRow() - (BUDGET_LOG_KEEP + 1);
+    if (over > 0) sheet.deleteRows(2, over);
+  } catch (error) { /* 기록은 거들기다. 여기서 넘어져도 올리기는 이미 끝났다 */ }
+}
+
+// 트리거가 부르는 자리. **오류를 밖으로 던지지 않는다** — 던지면 구글이 트리거를 몇 번
+// 실패시킨 뒤 통째로 꺼 버린다. 대신 까닭을 적어 두고 다음 날 다시 시도한다.
+function budgetDailyRun(event) {
+  var found;
+  try {
+    found = budgetDaily_();
+  } catch (error) {
+    found = { ok: false, error: String((error && error.message) || error),
+      ranAt: new Date().toISOString() };
+  }
+  // 트리거가 부르면 event 가 들어온다. 메뉴에서 누르면 안 들어온다.
+  // 이 한 칸이 '아침에 진짜 돌았나' 를 가리는 유일한 표다.
+  found.how = event ? '자동(트리거)' : '손으로';
+  var slim = budgetDailyMark_(found);
+  budgetDailyLog_(slim, slim.how);
+  Logger.log(JSON.stringify(found));
+  return slim;
+}
+
+// 이 스크립트가 걸어 둔 자동 올리기 트리거들
+function budgetDailyTriggers_() {
+  return ScriptApp.getProjectTriggers().filter(function (one) {
+    return one.getHandlerFunction() === BUDGET_DAILY_FN;
+  });
+}
+
+function budgetDailyClear_() {
+  var gone = 0;
+  budgetDailyTriggers_().forEach(function (one) { ScriptApp.deleteTrigger(one); gone += 1; });
+  return gone;
+}
+
+/* 켜져 있나. **트리거를 직접 세지 않는다** — 트리거를 읽으려면 권한이 하나 더 필요해서,
+   승인 전에는 그 한 줄 때문에 월별 예산 화면이 통째로 못 열린다.
+   켜고 끌 때 여기 적어 두고, 화면은 이것만 읽는다. */
+function budgetDailyOn_(value) {
+  var store = PropertiesService.getScriptProperties();
+  if (value !== undefined) store.setProperty(BUDGET_DAILY_ON, value ? '1' : '');
+  return String(store.getProperty(BUDGET_DAILY_ON) || '') === '1';
+}
+
+/* 트리거를 다루려면 권한(scope)이 하나 더 있어야 한다 —
+     https://www.googleapis.com/auth/script.scriptapp
+   Apps Script 는 보통 쓰는 코드를 보고 권한을 알아서 붙이는데, 이 프로젝트처럼
+   appsscript.json 에 oauthScopes 를 **손으로 적어 둔** 경우에는 안 붙는다.
+   그때 '지정된 권한으로는 ScriptApp.getProjectTriggers 를 호출할 수 없습니다' 가 뜬다.
+
+   메뉴가 통째로 죽지 않게 붙잡아, 무엇을 하면 되는지 그대로 알려 준다.
+   권한을 못 넣는 상황도 있으므로 손으로 트리거를 거는 길도 함께 적어 둔다 —
+   그 길은 budgetDailyRun 만 부르므로 이 권한이 아예 필요 없다.                        */
+var BR2 = "\n\n";   // 줄바꿈 둘 (알림창 문단 나누기)
+var BUDGET_DAILY_SCOPE = 'https://www.googleapis.com/auth/script.scriptapp';
+
+function budgetDailyHelp_(error) {
+  return '트리거를 다루려면 권한이 하나 더 필요합니다.\n\n'
+    + (error ? String((error && error.message) || error) + '\n\n' : '')
+    + '── 둘 중 하나만 하시면 됩니다 ──\n\n'
+    + '① 권한 한 줄 넣기 (메뉴로 켜고 끌 수 있게 됩니다)\n'
+    + '   Apps Script → 프로젝트 설정(톱니)\n'
+    + '   → "appsscript.json 매니페스트 파일을 편집기에 표시" 켜기\n'
+    + '   → 편집기에서 appsscript.json 을 열고 oauthScopes 목록에 이 줄을 더합니다\n'
+    + '       "' + BUDGET_DAILY_SCOPE + '"\n'
+    + '   → 저장하고 이 메뉴를 다시 누르면 권한 창이 한 번 뜹니다 (승인)\n\n'
+    + '② 손으로 트리거 걸기 (권한을 안 건드리는 길)\n'
+    + '   Apps Script 왼쪽 ⏰ 트리거 → 트리거 추가\n'
+    + '     실행할 함수 : budgetDailyRun\n'
+    + '     이벤트 소스 : 시간 기반\n'
+    + '     트리거 유형 : 일 단위 타이머\n'
+    + '     시간       : 오전 11시~정오\n'
+    + '   → 저장한 뒤 UTM → 월별 예산 → "손으로 건 트리거 표시하기" 를 한 번 눌러 주세요.\n'
+    + '     (화면에 "아침 11시에 저절로 올라갑니다" 가 뜨게 하는 표시일 뿐입니다)\n\n'
+    + '   ※ ② 로 걸면 프로젝트 시간대를 따릅니다. 프로젝트 설정에서 시간대가\n'
+    + '     (GMT+09:00) 서울 인지 확인해 주세요.';
+}
+
+// 손으로 건 트리거를 화면에 알려 주기 위한 표시. 트리거를 만들지는 않는다.
+function budgetDailyMarkOn() {
+  budgetDailyOn_(true);
+  var message = '켜짐으로 표시했습니다.\n\n'
+    + '월별 예산 화면에 "아침 ' + BUDGET_DAILY_HOUR + '시에 저절로 올라갑니다" 가 뜹니다.\n'
+    + '표시일 뿐이라, Apps Script 트리거 화면에 budgetDailyRun 이 실제로 걸려 있어야 합니다.\n\n'
+    + '끄실 때는 트리거를 지우고 "아침 자동 올리기 끄기" 를 눌러 주세요.';
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
+}
+
+/* 아침 자동 올리기를 켠다 (시트 메뉴에서 부른다).
+   두 번 눌러도 트리거가 겹치지 않게 먼저 지우고 하나만 건다.
+   구글의 일별 트리거는 '정각' 이 아니라 **그 시각 앞뒤로 조금 흔들린다** —
+   nearMinute(0) 을 붙여도 10:45~11:15 사이다. 하루 한 번이면 그 정도로 충분하다. */
+function budgetDailyInstall() {
+  var message;
+  try {
+    budgetDailyClear_();
+    ScriptApp.newTrigger(BUDGET_DAILY_FN).timeBased()
+      .atHour(BUDGET_DAILY_HOUR).nearMinute(0).everyDays(1).inTimezone('Asia/Seoul').create();
+  } catch (error) {
+    // 권한이 없으면 무엇을 하면 되는지 알려 준다 (날것의 예외를 그대로 보여 주지 않는다)
+    message = budgetDailyHelp_(error);
+    Logger.log(message);
+    try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+    return message;
+  }
+  budgetDailyOn_(true);
+  message = '아침 자동 올리기를 켰습니다.\n\n'
+    + '한국 시간 매일 오전 ' + BUDGET_DAILY_HOUR + '시쯤(10:45~11:15) 이 달 실사용비를 매체에서 받아\n'
+    + '월별 예산 문서에 올립니다.\n\n' + monthTableUrl_()
+    + '\n\n· 트리거는 켠 사람' + (budgetDailyWho_() ? '(' + budgetDailyWho_() + ')' : '') + '의 권한으로 돕니다.\n'
+    + '· 그 계정이 월별 예산 문서에 편집 권한이 있어야 합니다.\n'
+    + '· 아직 짜 두지 않은 달은 건드리지 않습니다.';
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
+}
+
+function budgetDailyRemove() {
+  var message;
+  var gone = 0;
+  try {
+    gone = budgetDailyClear_();
+  } catch (error) {
+    // 권한이 없어 못 지운다. 표시만 끄고 손으로 지우는 길을 알려 준다.
+    budgetDailyOn_(false);
+    message = '표시는 껐습니다. 트리거는 Apps Script 의 ⏰ 트리거 화면에서 '
+      + 'budgetDailyRun 을 직접 지워 주세요.' + BR2 + budgetDailyHelp_(error);
+    Logger.log(message);
+    try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+    return message;
+  }
+  budgetDailyOn_(false);
+  message = gone ? ('아침 자동 올리기를 껐습니다 (트리거 ' + gone + '개).')
+    : '켜져 있는 자동 올리기가 없습니다.';
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
+}
+
+/* 담아 둘 때는 UTC(ISO) 로 둔다 — 화면이 그걸 받아 브라우저 시간으로 그린다.
+   알림창은 사람이 바로 읽는 자리라 한국 시간으로 편다.
+   ('…T05:56:51Z' 를 아침 11시와 견주려면 머릿속으로 9시간을 더해야 한다) */
+/* 이메일을 읽으려면 권한이 또 하나 필요하다 (userinfo.email).
+   알림창에 '누구 권한으로 돕니다' 를 적자고 권한을 늘릴 이유가 없다 — 못 읽으면 안 적는다.
+   이것 하나 때문에 [켜기] 가 통째로 막혔었다. */
+function budgetDailyWho_() {
+  try {
+    return String(Session.getEffectiveUser().getEmail() || '');
+  } catch (error) {
+    return '';
+  }
+}
+
+function budgetDailyWhen_(iso) {
+  if (!iso) return '';
+  var when = new Date(iso);
+  if (!when || isNaN(when.getTime())) return String(iso);
+  return Utilities.formatDate(when, 'Asia/Seoul', 'yyyy-MM-dd HH:mm') + ' (한국)';
+}
+
+// 지금 켜져 있나 · 마지막으로 언제 돌았나 (메뉴에서 확인용)
+function budgetDailyCheck() {
+  var on = -1;                     // -1 = 권한이 없어 트리거를 못 읽었다
+  try {
+    on = budgetDailyTriggers_().length;
+    budgetDailyOn_(on > 0);        // 편집기에서 손으로 지웠을 수도 있다 — 여기서 맞춰 둔다
+  } catch (error) { on = -1; }
+  var last = budgetDailyLast_();
+  var message = (on < 0
+    ? ('트리거를 읽을 권한이 없습니다. 표시는 ' + (budgetDailyOn_() ? '켜짐' : '꺼짐') + ' 입니다. '
+      + '(Apps Script → ⏰ 트리거 에서 budgetDailyRun 이 걸려 있는지 직접 보실 수 있습니다)')
+    : on ? '켜져 있습니다 (트리거 ' + on + '개 · 매일 오전 ' + BUDGET_DAILY_HOUR + '시쯤).'
+      : '꺼져 있습니다. UTM 메뉴 → 월별 예산 → 아침 자동 올리기 켜기.')
+    + '\n\n' + (last
+      ? ('마지막 실행 ' + budgetDailyWhen_(last.at)
+        + (last.how ? ' · ' + last.how : '') + '\n'
+        + last.month + ' · 탭 ' + last.tabs + '개 · ' + last.rows + '줄'
+        + (last.ok ? '' : ' · 실패') + (last.note ? '\n' + last.note : ''))
+      : '아직 한 번도 돌지 않았습니다.')
+    + '\n\n' + monthTableUrl_();
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
+}
+
 // 한 달을 통째로 지운다. 줄을 없애므로 달 고르개에서도 사라진다.
 // (빈 값으로 덮지 않고 줄을 지우는 까닭: 남겨 두면 '짜다 만 달' 처럼 보인다)
 function budgetDrop_(payload) {

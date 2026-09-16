@@ -100,6 +100,8 @@ if (creativeBoard) {
   // 요청 건수는 SKU 단위로 센다 (카드 하나에 SKU 2개면 2건, SKU 미지정 카드는 1건)
   const skuCount = (week) => week.rows.reduce((sum, row) => sum + Math.max(row.sku.length, 1), 0);
   const shareLink = (week) => `${window.location.origin}${window.location.pathname}#creative-planning/${week.id}`;
+  // 카드 한 장으로 가는 링크 — 주차 링크 뒤에 카드 번호를 붙인다 (열면 그 카드가 펼쳐진다)
+  const cardLink = (weekId, cardId) => `${window.location.origin}${window.location.pathname}#creative-planning/${weekId}/${cardId}`;
 
   /* 처음 여는 브라우저는 **빈 목록**으로 시작한다 — 시트가 원본이다.
      예전에 만들어 두던 보기용 주차를 여기서 만들면, 새 브라우저마다 그 주차가 생겨
@@ -338,7 +340,8 @@ if (creativeBoard) {
     board.innerHTML = STATUS_OPTIONS.map(([status]) => {
       const group = shown.filter((row) => row.status === status);
       const cards = group.map((row) => `
-        <article class="notion-card" draggable="true" data-id="${row.id}">
+        <article class="notion-card" draggable="true" data-id="${row.id}"
+          title="끌어서 옮기기 (칸 · 차례) · 오른쪽 클릭 — 복제 · 링크 복사 · 삭제">
           <h3>${escapeHtml(row.name || '제목 없음')}</h3>
           ${CARD_PROPS.map((key) => cardLine(row, key)).join('')}
         </article>`).join('');
@@ -353,6 +356,20 @@ if (creativeBoard) {
   };
 
   const closePeek = () => { openId = null; peek.innerHTML = ''; peek.classList.remove('is-open'); };
+
+  // 카드를 그대로 한 장 더. 배열 · 날짜는 **새로 만들어** 담는다 —
+  // normalize 는 배열을 그대로 물려주므로, 복사본과 원본이 같은 배열을 보게 된다
+  // (한쪽에서 매체를 지우면 다른 쪽에서도 사라진다).
+  const cloneRow = (row) => normalize({
+    ...row,
+    id: '',
+    name: `${row.name || '제목 없음'} (사본)`,
+    media: row.media.slice(),
+    owners: row.owners.slice(),
+    sku: row.sku.slice(),
+    eventDate: row.eventDate ? { ...row.eventDate } : null,
+    dueDate: row.dueDate ? { ...row.dueDate } : null,
+  });
 
   const propertyControl = (row, prop) => {
     if (prop.type === 'computed') {
@@ -465,24 +482,121 @@ if (creativeBoard) {
     }
   });
 
+  // 카드를 오른쪽 클릭하면 복제 · 링크 복사 · 삭제가 뜬다 (카드 밖에서는 브라우저 메뉴 그대로).
+  // 메뉴는 달력들이 쓰는 공용 cardMenu 라 생김새 · 손놀림이 같다.
+  board.addEventListener('contextmenu', (event) => {
+    const card = event.target.closest('.notion-card');
+    if (!card) return;
+    const row = rows.find((one) => one.id === card.dataset.id);
+    if (!row) return;
+    cardMenu(event, [
+      { key: 'twin', label: '복제', icon: 'copy' },
+      { key: 'link', label: '링크 복사', icon: 'link' },
+      { key: 'drop', label: '삭제', icon: 'trash-2', warn: true },
+    ], (what) => {
+      if (what === 'twin') {
+        const at = rows.findIndex((one) => one.id === row.id);
+        const twin = cloneRow(row);
+        rows.splice(at < 0 ? rows.length : at + 1, 0, twin);   // 원본 바로 뒤에 둔다
+        save();
+        renderBoard();
+        flashNote('복제했습니다');
+        return;
+      }
+      if (what === 'link') {
+        copyText(cardLink(currentWeekId, row.id))
+          .then(() => flashNote('링크를 복사했습니다'))
+          .catch(() => flashNote('복사를 못 했습니다 — 주소창의 주소를 그대로 쓰세요'));
+        return;
+      }
+      if (what === 'drop') {
+        if (!window.confirm(`'${row.name || '제목 없음'}' 카드를 지울까요?`)) return;
+        const gone = rows.findIndex((one) => one.id === row.id);
+        if (gone >= 0) rows.splice(gone, 1);
+        if (openId === row.id) closePeek();
+        save();
+        renderBoard();
+        flashNote('지웠습니다');
+      }
+    });
+  });
+
+  /* 카드 끌어 옮기기 — 칸(상태)뿐 아니라 **그 칸 안의 차례**까지 바꾼다.
+     예전에는 칸만 바꾸고 자리는 rows 에 담긴 차례 그대로였다. 급한 것을 위로 올리려면
+     지우고 다시 만드는 수밖에 없었다. */
   let draggingId = null;
+
+  // 커서가 어느 카드의 **위쪽 절반**에 있으면 그 앞에 넣는다. 아무 데도 안 걸리면 맨 뒤.
+  // 끌고 있는 카드는 세지 않는다 (자기 자신 앞에 넣는 셈이 되어 자리가 안 움직인다).
+  const dropSpot = (column, y) => {
+    const cards = [...column.querySelectorAll('.notion-card:not(.is-dragging)')];
+    for (let at = 0; at < cards.length; at += 1) {
+      const box = cards[at].getBoundingClientRect();
+      if (y < box.top + box.height / 2) return cards[at].dataset.id;
+    }
+    return null;
+  };
+
+  const clearMarks = () => {
+    board.querySelectorAll('.nc-drop').forEach((one) => one.classList.remove('nc-drop'));
+    board.querySelectorAll('.nc-drop-end').forEach((one) => one.classList.remove('nc-drop-end'));
+  };
+
+  /* rows 는 week.rows 를 **그대로 가리킨다** — 여기서 splice 하면 시트에도 그 차례로 담긴다.
+     새 배열을 만들어 rows 에 넣으면 그 연결이 끊겨 저장이 안 된다.
+     바뀐 것이 없으면 false 를 준다 (제자리에 놓았을 때 괜히 저장하지 않으려고). */
+  const moveCard = (id, status, beforeId) => {
+    const at = rows.findIndex((one) => one.id === id);
+    if (at < 0) return false;
+    const mark = (list, kind) => list.map((one) => one.id).join('|') + '#' + kind;
+    const was = mark(rows, rows[at].status);
+
+    const [row] = rows.splice(at, 1);
+    row.status = status;
+    let to = beforeId ? rows.findIndex((one) => one.id === beforeId) : -1;
+    if (to < 0) {
+      // 그 칸의 마지막 뒤에 넣는다. 칸이 비어 있으면 맨 뒤로.
+      let last = -1;
+      rows.forEach((one, index) => { if (one.status === status) last = index; });
+      to = last + 1;
+    }
+    rows.splice(to, 0, row);
+    return was !== mark(rows, status);
+  };
+
   board.addEventListener('dragstart', (event) => {
     const card = event.target.closest('.notion-card');
     if (!card) return;
     draggingId = card.dataset.id;
     card.classList.add('is-dragging');
   });
-  board.addEventListener('dragend', (event) => event.target.closest('.notion-card')?.classList.remove('is-dragging'));
-  board.addEventListener('dragover', (event) => { if (event.target.closest('.notion-column')) event.preventDefault(); });
+  board.addEventListener('dragend', (event) => {
+    event.target.closest('.notion-card')?.classList.remove('is-dragging');
+    draggingId = null;
+    clearMarks();
+  });
+  board.addEventListener('dragover', (event) => {
+    const column = event.target.closest('.notion-column');
+    if (!column || !draggingId) return;
+    event.preventDefault();          // 여기는 받는 자리라고 브라우저에 알린다
+    const before = dropSpot(column, event.clientY);
+    clearMarks();
+    if (before) {
+      const card = column.querySelector(`.notion-card[data-id="${CSS.escape(before)}"]`);
+      if (card) card.classList.add('nc-drop');
+    } else {
+      column.classList.add('nc-drop-end');
+    }
+  });
   board.addEventListener('drop', (event) => {
     const column = event.target.closest('.notion-column');
     if (!column || !draggingId) return;
     event.preventDefault();
-    const row = rows.find((entry) => entry.id === draggingId);
+    const before = dropSpot(column, event.clientY);
+    const id = draggingId;
     draggingId = null;
-    if (!row || row.status === column.dataset.status) return;
-    row.status = column.dataset.status;
-    commit();
+    clearMarks();
+    if (moveCard(id, column.dataset.status, before)) commit();
   });
 
   peek.addEventListener('click', (event) => {
@@ -894,8 +1008,15 @@ if (creativeBoard) {
   renderWeekList();
   window.setTimeout(pullWeeks, 0);
 
-  const linkedId = window.location.hash.startsWith('#creative-planning/') ? window.location.hash.slice('#creative-planning/'.length) : '';
-  if (linkedId && weeks.some((week) => week.id === linkedId)) openWeek(linkedId);
+  // '#creative-planning/<주차>' 또는 '#creative-planning/<주차>/<카드>'
+  const linked = window.location.hash.startsWith('#creative-planning/')
+    ? window.location.hash.slice('#creative-planning/'.length).split('/') : [];
+  const linkedId = linked[0] || '';
+  if (linkedId && weeks.some((week) => week.id === linkedId)) {
+    openWeek(linkedId);
+    // 카드까지 적혀 있으면 그 카드를 펼친다 (없는 카드면 주차만 열고 만다)
+    if (linked[1] && rows.some((row) => row.id === linked[1])) openPeek(linked[1]);
+  }
 }
 
 document.querySelectorAll('.tree-group').forEach((group) => {
@@ -909,7 +1030,7 @@ document.querySelectorAll('.tree-group').forEach((group) => {
 
 // 전용 화면을 가진 메뉴 (그 외에는 대시보드를 보여준다)
 const VIEWS = {
-  '행사별 성과': { section: '#event-result', hash: '#event' },
+  '판매채널 추이': { section: '#event-result', hash: '#event' },
   '콘텐츠 일정': { section: '#content-schedule', hash: '#content-cal' },
   '광고소재 기획': { section: '#creative-board', hash: '#creative-planning' },
   '광고소재 파일명': { section: '#filename-tool', hash: '#filename' },
@@ -952,29 +1073,6 @@ document.querySelectorAll('[data-view]').forEach((item) => {
 // 로그인은 그쪽 쿠키를 쓴다. 그 쿠키가 sameSite=lax 라 **iframe 에는 안 실려 간다** —
 // 그래서 로그인 안 된 것처럼 보일 수 있다. 그때는 [새 탭에서 열기] 로 열어 보면 된다.
 // (고치려면 my-pages 의 세션 쿠키를 sameSite=none 으로 바꿔야 한다)
-const eventResult = document.querySelector('#event-result');
-if (eventResult) {
-  const frame = eventResult.querySelector('iframe');
-  const load = () => {
-    if (frame.getAttribute('src')) return;
-    frame.src = frame.dataset.src;
-  };
-  new MutationObserver(() => {
-    if (eventResult.hidden) return;
-    load();
-  }).observe(eventResult, { attributes: true, attributeFilter: ['hidden'] });
-  if (!eventResult.hidden) load();
-
-  eventResult.addEventListener('click', (event) => {
-    if (event.target.closest('.event-reload')) {
-      frame.removeAttribute('src');
-      load();
-      return;
-    }
-    if (event.target.closest('.event-open')) window.open(frame.dataset.src, '_blank', 'noopener');
-  });
-}
-
 // ── 광고소재 검수 ──────────────────────────────────────────────────
 // 검수 사이트(ad-creative-checker)를 이 화면 안에 띄운다. 행사명 · 문구는 그 사이트에서
 // 직접 적는다 — 워크스페이스에서 값을 넘겨 주지 않는다 (넘기는 다리를 걷어냈다).
@@ -1632,6 +1730,42 @@ const perfNameHit = (name, wanted, bracketOnly) => {
   if (!wanted) return true;
   const text = String(bracketOnly ? perfBracket(name) : (name || '')).toLowerCase();
   return Boolean(text) && text.indexOf(wanted) >= 0;
+};
+
+/* 전매체 검색을 **제품으로 먼저 좁힌다.**
+   광고그룹 이름에는 행사만 들어 있고 제품은 **캠페인 이름**에 들어 있다
+   ('google_미닉스 더 플렌더(mini)_purchase'). 그래서 제품은 캠페인으로 고르고,
+   그 안에서 검색어로 광고그룹을 고른다 — '더 플렌더 체크 → 카카오 검색' 이 그 뜻이다.
+
+   이름을 적는 방식이 사람마다 다르다 — '더 플렌더' · '더플렌더' · '플렌더' · 'Flender'.
+   그래서 견줄 때 **띄어쓰기 · 가운뎃점 · 밑줄 · 붙임표를 다 털고** 소문자로 맞춘다.
+   찾는 말은 '더' 를 뗀 토막(플렌더 · 시프트)이라 '더' 가 있든 없든 걸린다.
+   mini · MAX · PLUS 도 다 '플렌더' 를 품고 있어 한 번에 걸린다.
+   제품을 더 넣으려면 여기 한 줄만 보태면 된다. */
+const CROSS_PRODUCTS = [
+  { id: 'flender', name: '더 플렌더', words: ['플렌더', 'flender'] },
+  { id: 'shift', name: '더 시프트', words: ['시프트', 'shift'] },
+  { id: 'dryer', name: '건조기', words: ['건조기', 'dryer'] },
+];
+
+const crossTrim = (text) => String(text || '').toLowerCase()
+  .replace(/[\s·ㆍ・_\-]/g, '');
+
+// 고른 제품의 찾을 말을 한 벌로 편다 (한 줄마다 다시 펴지 않게 미리 만들어 넘긴다)
+const crossProdWords = (picked) => CROSS_PRODUCTS
+  .filter((one) => (picked || []).indexOf(one.id) >= 0)
+  .reduce((into, one) => into.concat(one.words), [])
+  .map(crossTrim);
+
+/* 이 줄이 고른 제품의 것인가. 아무것도 안 골랐으면 다 본다.
+   캠페인 이름으로 견주되 두 가지는 광고그룹 이름도 본다.
+     · 네이버 검색광고 — 캠페인을 브랜드 키워드로 짓고 제품을 안 적는다
+     · 캠페인 이름이 아예 안 온 줄 — 안 그러면 통째로 사라진다 */
+const crossProdHit = (key, row, words) => {
+  if (!words || !words.length) return true;
+  const camp = crossTrim(row.campaignName || '');
+  const also = (key === 'naverSa' || !camp) ? crossTrim(row.name || '') : '';
+  return words.some((one) => (camp && camp.indexOf(one) >= 0) || (also && also.indexOf(one) >= 0));
 };
 
 // 표를 엑셀에서 열 수 있는 파일로 내려 준다. 화면의 '표 복사' 와 같은 내용이다.
@@ -7916,8 +8050,10 @@ if (mediaPerformance) {
   // 단계 나누기 — 날짜로 가른다.
   // 한 캠페인이 사전에도 당일에도 걸쳐 있어 광고그룹 단위로는 가를 수 없다. 그래서 단계마다
   // 그 기간만 매체에 따로 물어 온다 (매체가 그 날짜 범위만 합쳐서 준다). 하루가 한 단계에만
-  // 들어가므로 사전 + 당일 + 사후가 조회 합계와 그대로 맞는다.
-  const PHASES = ['사전', '당일', '사후'];
+  // 들어가므로 네 단계가 조회 합계와 그대로 맞는다.
+  // 상시는 늘 도는 광고(브랜드검색 · 파워링크 같은 것)를 담는 자리다.
+  // 다른 단계와 겹쳐 적으면 광고비가 두 번 세지므로, 겹치지 않게 날짜를 잡아 쓴다.
+  const PHASES = ['사전', '당일', '사후', '상시'];
   const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
   const blankSpans = () => {
     const out = {};
@@ -8022,6 +8158,7 @@ if (mediaPerformance) {
     (((cross[key] || {}).rows) || []).map((row) => ({ key: key, row: row })),
   ), []);
   let crossBracket = true;   // 전매체 검색: 대괄호 안(행사 이름)만 볼지
+  let crossProd = [];        // 전매체 검색: 체크해 둔 제품 (빈 목록이면 전 제품)
   let loadStart = 0;         // 매체 성과를 부르기 시작한 시각
   let loadTick = null;       // 흐른 시간을 고쳐 쓰는 타이머
   let loadWaitOff = false;   // 불러오는 중 알림을 사람이 닫았는지
@@ -8549,8 +8686,46 @@ if (mediaPerformance) {
   // 광고그룹 줄에는 캠페인 id 만 실려 온다 (네이버만 이름까지 온다). 같은 응답의 campaigns 로
   // 이름을 되짚는다 — 이름이 똑같은 광고그룹이 여러 매체 · 여러 캠페인에 걸쳐 있어서다.
   // only 를 주면 그 계정만 본다 (검색에서 걸린 계정. 빈 목록이면 아예 묻지 않는다).
+  /* 이름이 검색어에 걸리나.
+     다른 매체는 광고그룹을 '[행사]_타겟팅_매출채널' 로 짓기 때문에 '대괄호 안만' 이 쓸모 있다.
+     **네이버 검색광고(브랜드검색)만 그 규칙을 안 쓴다** — 광고그룹은 브랜드 키워드고
+     소재 이름은 문구에서 따 오므로 대괄호가 아예 없다. 그러면 perfBracket 이 빈 글자를 주고
+     한 줄도 안 걸린다. 이 매체만 결과가 통째로 비던 까닭이 이것이다.
+     그래서 여기서는 **이름 전체**로 보고, 소재 이름과 광고그룹 이름을 둘 다 본다. */
+  /* 검색어는 **쉼표로 여러 개** 넣을 수 있다 ('kakao, 카카오').
+     같은 행사인데 매체마다 한글 · 영문으로 다르게 적어 둔 것을 한 번에 보려는 것이다.
+     하나라도 걸리면 그 줄을 가져온다 (모두 걸려야 하는 것이 아니다 — 서로 다른 표기라서).
+     쉼표만 가른다. 공백으로도 가르면 행사명 안의 띄어쓰기까지 쪼개져 엉뚱한 줄이 걸린다. */
+  const crossWords = (text) => String(text || '').split(',')
+    .map((one) => one.trim().toLowerCase())
+    .filter(Boolean);
+
+  const crossHit = (key, row, words) => {
+    if (!words.length) return true;          // 검색어가 비면 다 본다
+    return words.some((one) => (key === 'naverSa'
+      ? perfNameHit(row.name, one, false) || perfNameHit(row.campaignName || '', one, false)
+      : perfNameHit(row.name, one, crossBracket)));
+  };
+
+  /* 제품 체크는 **받아 둔 줄을 다시 거를 뿐** 매체에 다시 묻지 않는다.
+     웹앱은 팀이 실행 자리 하나를 나눠 쓰기 때문에, 체크 한 번에 네 매체를 다시 훑으면
+     남이 기다린다. 그래서 거르지 않은 줄(raw)을 그대로 쥐고 있다가 여기서 걸러 낸다.
+     단계별로 받아 둔 값도 같이 걸러야 화면 위아래 숫자가 어긋나지 않는다. */
+  const crossRefilter = () => {
+    const words = crossProdWords(crossProd);
+    Object.keys(cross).forEach((key) => {
+      const one = cross[key];
+      if (one && one.raw) one.rows = one.raw.filter((row) => crossProdHit(key, row, words));
+    });
+    PHASES.forEach((name) => {
+      const pack = phaseData[name];
+      if (pack && pack.raw) pack.rows = pack.raw.filter((one) => crossProdHit(one.key, one.row, words));
+    });
+  };
+
   const crossAsk = (key, since, until, wanted, only) => {
     if (only && !only.length) return Promise.resolve({ rows: [], note: '', hits: [], accountName: '', tried: 0 });
+    const words = crossWords(wanted);        // 줄마다 다시 가르지 않게 한 번만 갈라 둔다
     return askAccounts(key).then((list) => {
       const use = only && only.length ? list.filter((one) => only.indexOf(one.accountId) >= 0) : list;
       if (!use.length) throw new Error('볼 수 있는 광고 계정이 없습니다.');
@@ -8561,18 +8736,17 @@ if (mediaPerformance) {
         .then((body) => {
           const named = {};
           (body.campaigns || []).forEach((each) => { named[each.id] = each.name; });
-          /* 브랜드검색 소재에는 사람이 정한 이름이 없다 (문구에서 따 온다).
-             행사명은 광고그룹 이름에 들어가므로 이 매체만 광고그룹 이름도 같이 본다. */
-          const rows = (body.adsets || []).filter((row) => perfNameHit(row.name, wanted.toLowerCase(), crossBracket)
-            || (key === 'naverSa' && perfNameHit(row.campaignName || '', wanted.toLowerCase(), crossBracket)))
-            .map((row) => ({
-              ...row,
-              campaignName: row.campaignName || named[row.campaignId] || '',
-              accountId: one.accountId,
-              accountName: (body.account || {}).name || one.name || one.accountId,
-            }));
+          const got = (body.adsets || []).map((row) => ({
+            ...row,
+            campaignName: row.campaignName || named[row.campaignId] || '',
+            accountId: one.accountId,
+            accountName: (body.account || {}).name || one.name || one.accountId,
+          }));
+          const rows = got.filter((row) => crossHit(key, row, words));
           // 네이버 GFA 만 적재한 값을 읽는다. 빠진 날이 있으면 그만큼 광고비가 적게 나온다.
           rows.coverage = body.coverage || null;
+          // 매체가 준 줄 수. 0줄일 때 '매체가 안 줬나 · 이름이 안 걸렸나' 를 가리려고 센다.
+          rows.all = got.length;
           return rows;
         })
         .catch((reason) => {
@@ -8581,8 +8755,10 @@ if (mediaPerformance) {
         }))).then((packs) => {
         const rows = packs.reduce((into, each) => into.concat(each), []);
         let coverage = null;
+        let all = 0;
         packs.forEach((each) => {
           if (each.coverage && (each.coverage.missing || []).length) coverage = each.coverage;
+          all += each.all || 0;
         });
         // 계정을 다 물어봤는데 다 실패했으면 그건 오류다 (한 곳만 실패한 것은 알려만 준다)
         if (!rows.length && trouble.length === use.length) throw new Error(trouble.join(' · '));
@@ -8591,10 +8767,13 @@ if (mediaPerformance) {
         const hits = [];
         rows.forEach((row) => { if (hits.indexOf(row.accountId) < 0) hits.push(row.accountId); });
         return { rows: rows, note: trouble.join(' · '), hits: hits, tried: use.length,
-          coverage: coverage, accountName: names.join(' · ') };
+          all: all, coverage: coverage, accountName: names.join(' · ') };
       });
     });
   };
+
+  const crossProdText = () => CROSS_PRODUCTS
+    .filter((one) => crossProd.indexOf(one.id) >= 0).map((one) => one.name).join(' · ');
 
   const crossSearch = () => {
     const wanted = crossText.trim();
@@ -8624,7 +8803,8 @@ if (mediaPerformance) {
           tried: got.tried,
           note: got.note,
           coverage: got.coverage,
-          rows: got.rows,
+          raw: got.rows,          // 제품으로 거르기 전 (체크를 바꿔도 다시 안 묻는다)
+          rows: got.rows.filter((row) => crossProdHit(key, row, crossProdWords(crossProd))),
         };
         render();
       })
@@ -8664,11 +8844,14 @@ if (mediaPerformance) {
           return [];
         })))
         .then((packs) => {
+          const all = packs.reduce((into, one) => into.concat(one), []);
+          const words = crossProdWords(crossProd);
           phaseData[name] = {
             status: 'ready',
             error: trouble.join(' · '),
             gap: gaps.join(' · '),
-            rows: packs.reduce((into, one) => into.concat(one), []),
+            raw: all,             // 제품으로 거르기 전
+            rows: all.filter((one) => crossProdHit(one.key, one.row, words)),
           };
           render();
         });
@@ -8770,15 +8953,28 @@ if (mediaPerformance) {
      하나를 두는 구조라, 단계까지 파일로 가르면 마지막에 올린 것만 남는다.
      단계마다 그 기간만 따로 받아 온 값이므로, 같은 광고그룹이 사전 · 당일에 다 나와도
      광고비는 각 기간의 값으로 갈라져 있다. */
+  /* 같은 제품을 캠페인마다 다르게 적어 둔다 — '더 플렌더(mini)' 와 '더 플렌더(MINI)'.
+     **대소문자만 다르면 한 제품으로 묶는다.** 갈라 두면 파일이 둘로 나와 받는 쪽에서
+     같은 상품에 두 번 올려야 하고, 한 번 올릴 때마다 앞의 것이 덮인다.
+     (월별 예산도 이미 대소문자를 무시해 SKU 를 붙인다 — 두 화면의 기준을 맞추는 것이기도 하다) */
+  const productKey = (name) => String(name || '').trim().toLowerCase();
+
   const productFiles = () => {
     const order = [];
     const box = {};
+    /* 보여 줄 이름은 **줄이 가장 많은 표기**를 쓴다 (계정에서 실제로 많이 쓰는 철자다).
+       같은 수면 먼저 나온 것을 쓴다 — 볼 때마다 이름이 바뀌지 않게. */
     const room = (product) => {
-      if (!box[product]) {
-        box[product] = { product: product, searched: [], byPhase: {} };
-        order.push(product);
+      const key = productKey(product);
+      if (!box[key]) {
+        box[key] = { product: product, names: [], searched: [], byPhase: {} };
+        order.push(key);
       }
-      return box[product];
+      const pack = box[key];
+      const seen = pack.names.filter((one) => one.name === product)[0];
+      if (seen) seen.count += 1;
+      else pack.names.push({ name: product, count: 1 });
+      return pack;
     };
 
     crossFlat().forEach((one) => {
@@ -8794,20 +8990,29 @@ if (mediaPerformance) {
       const rows = PHASES.reduce((into, phase) => into.concat(pack.byPhase[phase] || []), []);
       return totalsOf((rows.length ? rows : pack.searched).map((one) => one.row)).spend;
     };
+    // 이름을 정한다 (가장 많이 쓰인 철자)
+    order.forEach((key) => {
+      const pack = box[key];
+      pack.product = pack.names.slice().sort((a, b) => b.count - a.count)[0].name;
+    });
+
     // 광고비가 큰 제품을 앞에 둔다. 제품을 못 바른 줄은 맨 뒤로 보낸다.
+    const lost = (key) => box[key].product === NO_PRODUCT;
     order.sort((a, b) => {
-      if ((a === NO_PRODUCT) !== (b === NO_PRODUCT)) return a === NO_PRODUCT ? 1 : -1;
+      if (lost(a) !== lost(b)) return lost(a) ? 1 : -1;
       return spendOf(box[b]) - spendOf(box[a]);
     });
 
-    return order.map((product) => {
-      const pack = box[product];
+    return order.map((key) => {
+      const pack = box[key];
       const phases = PHASES.filter((phase) => (pack.byPhase[phase] || []).length)
         .map((phase) => ({ name: phase, rows: pack.byPhase[phase] }));
       const rows = phases.length
         ? phases.reduce((into, one) => into.concat(one.rows), [])
         : pack.searched;
-      return { product: product, searched: pack.searched, phases: phases, rows: rows,
+      return { product: pack.product, searched: pack.searched, phases: phases, rows: rows,
+        // 대소문자만 다른 철자가 섞여 있었으면 무엇을 합쳤는지 알려 준다
+        merged: pack.names.length > 1 ? pack.names.map((one) => one.name) : [],
         spend: totalsOf(rows.map((one) => one.row)).spend };
     });
   };
@@ -8822,6 +9027,8 @@ if (mediaPerformance) {
       word: crossFor,
       product: file.product,
       bracketOnly: crossBracket,
+      // 제품을 골라 놓고 받았으면 그 제품 캠페인만 들어 있다고 적어 둔다
+      products: crossProdText(),
       range: { since: period.since, until: period.until },
       madeAt: new Date().toISOString(),
       note: `제품 '${file.product}' 만 담은 파일입니다. `
@@ -8850,6 +9057,8 @@ if (mediaPerformance) {
   const safeName = (text) => String(text || '').replace(/[\\/:*?"<>|]/g, '').trim();
   const productName = (file) => `행사별결과_${safeName(crossFor || '검색')}`
     + `_${safeName(file.product) || '제품미상'}.json`;
+  const productPick = (want) => productFiles()
+    .filter((one) => productKey(one.product) === productKey(want))[0] || null;
 
   // 세일즈 워크스페이스(행사별 결과 → 매체결과)가 우리 화면과 똑같이 그릴 수 있게,
   // 화면이 쓰는 값을 그대로 담는다. 비율(CTR · CPC · ROAS …)은 담지 않는다 —
@@ -8859,6 +9068,11 @@ if (mediaPerformance) {
     sourceName: SOURCES[key].name,
     adset: row.name,
     campaign: row.campaignName || '',
+    // 번호도 담는다 — 받는 쪽(판매채널 추이)이 이걸로 게재지면 · 연령 · 성별 · 소재를
+    // 그때그때 물어본다. 이름만으로는 매체에 되물을 수가 없다.
+    id: String(row.id || ''),
+    campaignId: String(row.campaignId || ''),
+    account: String(row.accountId || ''),
     begin: row.begin || '',
     end: row.end || '',
     spend: Math.round(row.spend),
@@ -8876,6 +9090,8 @@ if (mediaPerformance) {
       version: 1,
       word: crossFor,
       bracketOnly: crossBracket,
+      // 제품을 골라 놓고 받았으면 그 제품 캠페인만 들어 있다고 적어 둔다
+      products: crossProdText(),
       range: { since: period.since, until: period.until },
       madeAt: new Date().toISOString(),
       note: '카카오모먼트 · 메타 · 구글은 매체가 준 값 그대로, 네이버는 부가세를 뺀 공급가입니다.',
@@ -8918,12 +9134,12 @@ if (mediaPerformance) {
   const mixCard = () => {
     const all = productFiles();
     if (!all.length) return '';
-    // 단계(사전 · 당일 · 사후)를 받아 둔 제품만 내놓는다. 파일에 조회 기간 줄을 담지 않으니
+    // 단계(사전 · 당일 · 사후 · 상시)를 받아 둔 제품만 내놓는다. 파일에 조회 기간 줄을 담지 않으니
     // 단계가 없는 제품은 빈 파일이 된다 — 받을 것이 없는 단추는 아예 두지 않는다.
     const files = all.filter((one) => one.phases.length);
     return `<div class="perf-mix">
       <div class="perf-mix-head"><b>행사별 결과로 보내기 (제품별)</b>
-        <small>제품마다 파일 하나입니다. 매체는 가르지 않고 <b>단계(사전 · 당일 · 사후)</b>로만
+        <small>제품마다 파일 하나입니다. 매체는 가르지 않고 <b>단계(사전 · 당일 · 사후 · 상시)</b>로만
           담습니다 — 받는 쪽이 매체 · 캠페인으로 다시 묶어 보여 줍니다.
           세일즈 워크스페이스 <b>행사별 결과 → 매체결과</b> 에서 그 <b>상품</b>을 고르고 이 파일을 올리세요.
           캠페인명이 규칙(<b>소스_제품_목적</b>)을 안 따르는 줄은
@@ -8934,7 +9150,8 @@ if (mediaPerformance) {
           <i data-lucide="download"></i>
           <span><b>${escapeHtml(one.product)}</b>
           <small>${one.phases.map((each) => `${escapeHtml(each.name)} ${count(each.rows.length)}줄`).join(' · ')}
-            · ${money(one.spend)}</small></span>
+            · ${money(one.spend)}${one.merged.length
+    ? ` · ${escapeHtml(one.merged.join(' + '))} 합침` : ''}</small></span>
         </button>`).join('')}
       </div>` : ''}
       <p class="perf-mix-note">${files.length
@@ -9099,7 +9316,9 @@ if (mediaPerformance) {
             <i data-lucide="${open ? 'chevron-down' : 'chevron-right'}"></i></button>
           <span><b>${escapeHtml(SOURCES[key].name)}</b><small>${one.status === 'loading' ? '찾는 중…'
         : one.status === 'error' ? escapeHtml(one.error || '오류')
-          : `광고그룹 ${count(rows.length)}${one.accountName ? ` · ${escapeHtml(one.accountName)}` : ''}${
+          : `광고그룹 ${count(rows.length)}${!rows.length && one.all
+        ? ` (매체가 준 ${count(one.all)}개 중 이름이 걸린 것 없음)` : ''}${
+        one.accountName ? ` · ${escapeHtml(one.accountName)}` : ''}${
         one.tried ? ` · 계정 ${count(one.tried)}곳 훑음` : ''}${
         one.note ? ` · 못 읽은 계정: ${escapeHtml(one.note)}` : ''}`}</small></span>
         </td>
@@ -9127,13 +9346,22 @@ if (mediaPerformance) {
             <i data-lucide="share-2"></i>세일즈용 파일</button>
         </div>
       </div>
+      <div class="perf-filter perf-cross-prod">
+        <span class="perf-phase-label">제품</span>
+        ${CROSS_PRODUCTS.map((one) => `<label class="perf-check"
+          title="캠페인 이름에 ${escapeHtml(one.words.join(' · '))} 가 든 것만 봅니다 (띄어쓰기와 '더' 는 안 봅니다)">
+          <input type="checkbox" data-perf="cross-prod" data-prod="${escapeHtml(one.id)}"${crossProd.indexOf(one.id) >= 0 ? ' checked' : ''}>${escapeHtml(one.name)}</label>`).join('')}
+        <span class="perf-phase-state">${crossProdText()
+      ? `${escapeHtml(crossProdText())} 캠페인 안에서만 찾습니다`
+      : '안 고르면 전 제품에서 찾습니다 · 골라 두면 그 캠페인 안에서만 검색어를 봅니다'}</span>
+      </div>
       <div class="perf-filter">
         <div class="perf-search">
           <i data-lucide="search"></i>
           <input type="search" data-perf="cross-text" value="${escapeHtml(crossText)}"
-            placeholder="광고그룹 이름 (예: 260902_cj)" autocomplete="off">
+            placeholder="광고그룹 이름 · 쉼표로 여러 개 (예: kakao, 카카오)" autocomplete="off">
         </div>
-        <label class="perf-check" title="[cj-260901]_none_cj 에서 대괄호 안의 cj-260901 만 봅니다">
+        <label class="perf-check" title="[cj-260901]_none_cj 에서 대괄호 안의 cj-260901 만 봅니다 · 네이버 검색광고는 대괄호를 안 써서 늘 이름 전체로 봅니다">
           <input type="checkbox" data-perf="cross-bracket"${crossBracket ? ' checked' : ''}>대괄호 안만</label>
         <button type="button" class="tool-add" data-perf="cross-go"${busy ? ' disabled' : ''}>
           <i data-lucide="search"></i>${busy ? '찾는 중…' : '찾기'}</button>
@@ -9155,7 +9383,7 @@ if (mediaPerformance) {
         : '날짜를 적으면 그 기간만 따로 불러옵니다 · 시트에 함께 담깁니다')}</span>
         ${PHASES.some((name) => phaseSpan[name].since || phaseSpan[name].until) || phaseDone().length
       ? `<button type="button" class="tool-copy-all" data-cross="phase-clear"
-          title="세 단계의 날짜와 받아 둔 값을 한 번에 지웁니다">
+          title="네 단계의 날짜와 받아 둔 값을 한 번에 지웁니다">
           <i data-lucide="eraser"></i>단계 날짜 지우기</button>` : ''}
       </div>
       ${spanClash().length ? `<p class="perf-note is-warn">단계 날짜가 겹칩니다 (${escapeHtml(spanClash().join(' / '))}) —
@@ -9164,7 +9392,7 @@ if (mediaPerformance) {
       ${searched ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
         ${crossHead('매체 · 광고그룹')}
         <tbody>${lines}
-          <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>합계</b><small>${escapeHtml(crossFor)}${crossBracket ? ' (대괄호 안)' : ' (이름 전체)'}
+          <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>합계</b><small>${escapeHtml(crossWords(crossFor).join(' 또는 ') || crossFor)}${crossBracket ? ' (대괄호 안)' : ' (이름 전체)'}${crossProdText() ? ` · ${escapeHtml(crossProdText())}` : ''}
             · ${escapeHtml(currentRange().since)} ~ ${escapeHtml(currentRange().until)} · 광고그룹 ${count(found)}</small></span></td>
             <td></td>
             ${crossCells(sum, true)}</tr>
@@ -9173,7 +9401,8 @@ if (mediaPerformance) {
       ${phaseBlocks()}
       <p class="perf-note"><em class="perf-net">네이버 GFA ${PERF_NET_TEXT}
         (메타 · 구글 · 카카오모먼트는 매체가 준 값 그대로입니다)</em></p>
-      ${found ? '' : `<p class="tool-empty">${busy ? '' : `'${escapeHtml(crossFor)}' 가 들어간 광고그룹을 찾지 못했습니다.`}</p>`}`
+      ${found ? '' : `<p class="tool-empty">${busy ? '' : `'${escapeHtml(crossFor)}' 가 들어간 광고그룹을 찾지 못했습니다.${crossProdText()
+      ? ` (${escapeHtml(crossProdText())} 캠페인 안에서만 봤습니다 — 체크를 풀면 넓게 봅니다)` : ''}`}</p>`}`
       : '<p class="tool-empty">검색어를 넣고 찾기를 누르면 메타 · 구글 · 카카오 · 네이버를 한 번에 훑습니다. 기간과 계정은 각 탭에서 고른 것을 씁니다.</p>'}
       ${busy && !crossWaitOff ? crossWait() : ''}
     </div>`;
@@ -9477,6 +9706,14 @@ if (mediaPerformance) {
       return;
     }
     if (field === 'query-bracket') { queryBracket = event.target.checked; render(); return; }
+    if (field === 'cross-prod') {
+      const id = event.target.dataset.prod;
+      const at = crossProd.indexOf(id);
+      if (at >= 0) crossProd.splice(at, 1); else crossProd.push(id);
+      crossRefilter();        // 받아 둔 줄을 다시 거르기만 한다 (매체에 다시 안 묻는다)
+      render();
+      return;
+    }
     if (field === 'cross-bracket') {
       crossBracket = event.target.checked;
       // 이미 받아 둔 값이 있으면 다시 부르지 않고 기준만 바꿔 다시 걸러 준다
@@ -9583,7 +9820,7 @@ if (mediaPerformance) {
     if (event.target.closest('[data-perf="wait-close"]')) { loadWaitOff = true; render(); return; }
     const mixBtn = event.target.closest('[data-cross="mix"]');
     if (mixBtn) {
-      const one = productFiles().find((x) => x.product === mixBtn.dataset.product);
+      const one = productPick(mixBtn.dataset.product);   // 대소문자를 가리지 않고 집는다
       // 단계가 없으면 담을 줄이 없다 (조회 기간은 파일에 넣지 않는다)
       if (one && one.phases.length) jsonDownload(productName(one), productPayload(one));
       return;
@@ -10820,6 +11057,483 @@ if (pagePerformance) {
   loadList(false);
 }
 
+const eventResult = document.querySelector('#event-result');
+if (eventResult) {
+  /* 판매채널 추이 — 달 하나를 골라 그 달의 프로모션을 **판매채널로 묶어** 본다.
+     왼쪽 세 칸(판매채널 · 라이브기간 · 광고기간)은 월별 예산에서 오고,
+     오른쪽 지표는 전매체 검색에서 내려받은 파일을 붙이면 채워진다.
+     SKU 가 달라도 판매채널이 같으면 한 줄이다 — 채널 하나가 행사 하나라서다. */
+  const escape = perfEscape;
+  const won = perfMoney('KRW');
+  const num = perfCount;
+
+  let body = null;                 // 월별 예산에서 온 추이
+  let month = '';                  // 보고 있는 달
+  let status = 'idle';
+  let error = '';
+  let file = null;                 // 모든 채널에 걸쳐 쓰는 파일 (이름 규칙으로 붙인다)
+  /* 채널마다 따로 붙인 파일. 전매체 검색은 **행사 하나씩** 찾아 내려받으므로,
+     그 파일은 통째로 그 판매채널의 것이다 — 이름 규칙으로 가릴 것이 없다.
+     그래서 채널 파일이 있으면 그 파일의 줄을 **그대로** 쓴다 (이게 더 정확하다). */
+  const byChannel = {};            // 판매채널 → { name, file }
+  let fileNote = '';
+  let open = '';                   // 펼친 판매채널
+
+  // 돈은 통째로 적는다 (줄여 쓰지 않는다). 0 은 '—' 로 둔다 — 0원과 '아직 없음'은 다르다.
+  const money = (value) => (Number(value) ? won(value) : '—');
+
+  const monthName = (ym) => `${Number(String(ym).slice(0, 4))}년 ${Number(String(ym).slice(5, 7))}월`;
+  const dayText = (value) => String(value || '').slice(5).replace('-', '/');
+  const span = (since, until) => {
+    if (!since && !until) return '';
+    if (since && until && since !== until) return `${dayText(since)}~${dayText(until)}`;
+    return dayText(since || until);
+  };
+
+  const cellsOf = () => (body ? (body.cells || []).filter((one) => one.month === month) : []);
+
+  // 큰 채널이 위로 (광고비 기준). 달을 바꿔도 기준이 같아 줄이 튀지 않는다.
+  const channelRows = () => cellsOf().slice().sort((a, b) => (b.plan - a.plan)
+    || String(a.channel).localeCompare(String(b.channel)));
+
+  /* ── 전매체 파일을 판매채널에 붙인다 ────────────────────────────
+     광고그룹 이름은 '[행사]_타겟팅_매출채널' 이라 **마지막 토막이 매출채널**이다.
+     설정 탭의 행사채널 → 매출채널 표로 되짚어 판매채널과 맞춘다
+     (카카오 → kakao · CJ → cj · KOL 라이브 → kolLive …).
+     표에 없는 채널(찰스엔터 비밀특가 같은 제휴)은 이름 조각으로 한 번 더 찾는다. */
+  const plain = (text) => String(text || '').toLowerCase().replace(/[^0-9a-z가-힣]/g, '');
+
+  const tailOf = (adset) => {
+    const parts = String(adset || '').split('_');
+    return plain(parts[parts.length - 1] || '');
+  };
+
+  // 판매채널 → 그 채널로 볼 매출채널 조각들
+  const marksOf = (channel) => {
+    const out = [plain(channel)];
+    // 제휴처럼 한글 이름이 영문 광고그룹으로 도는 것 (찰스엔터 비밀특가 → charlesenter-secret).
+    // 서버가 실사용비를 받을 때 쓰는 그 표를 그대로 준다 — 규칙을 한 군데서만 고친다.
+    ((body && body.channelAds) || []).forEach((one) => {
+      if (plain(one.channel) === plain(channel) && out.indexOf(plain(one.match)) < 0) {
+        out.push(plain(one.match));
+      }
+    });
+    ((body && body.sales) || []).forEach((pair) => {
+      const korean = plain(pair[0]);
+      const english = plain(pair[1]);
+      if (korean && english && plain(channel).indexOf(korean) === 0 && out.indexOf(english) < 0) {
+        out.push(english);
+      }
+    });
+    return out.filter(Boolean);
+  };
+
+  const fileRows = () => {
+    if (!file) return [];
+    // 단계(사전 · 당일 · 사후 · 상시) 줄을 쓰고, 없으면 조회 기간 줄을 쓴다
+    const phases = (file.phases || []).reduce((all, one) => all.concat(one.rows || []), []);
+    return phases.length ? phases : (file.searched || []);
+  };
+
+  // 채널에 붙인 파일의 줄 (단계 줄을 쓰고, 없으면 조회 기간 줄)
+  const ownRows = (channel) => {
+    const own = byChannel[channel];
+    if (!own || !own.file) return null;
+    const phases = (own.file.phases || []).reduce((all, one) => all.concat(one.rows || []), []);
+    return phases.length ? phases : (own.file.searched || []);
+  };
+
+  const rowsFor = (channel) => {
+    const own = ownRows(channel);
+    if (own) return own;            // 그 채널 파일이 있으면 통째로 그 채널 것이다
+    const marks = marksOf(channel);
+    return fileRows().filter((row) => {
+      const tail = tailOf(row.adset);
+      if (tail && marks.indexOf(tail) >= 0) return true;
+      // 제휴처럼 매출채널 표에 없는 것 — 이름 조각이 광고그룹에 들어 있는지 본다
+      return marks.some((mark) => mark.length >= 3 && plain(row.adset).indexOf(mark) >= 0);
+    });
+  };
+
+  const sumOf = (rows) => rows.reduce((into, row) => ({
+    spend: into.spend + (Number(row.spend) || 0),
+    imp: into.imp + (Number(row.imp) || 0),
+    clk: into.clk + (Number(row.clk) || 0),
+    conv: into.conv + (Number(row.conv) || 0),
+    rev: into.rev + (Number(row.rev) || 0),
+    media: into.media.indexOf(row.sourceName) < 0 ? into.media.concat(row.sourceName) : into.media,
+  }), { spend: 0, imp: 0, clk: 0, conv: 0, rev: 0, media: [] });
+
+  const ratio = (top, bottom) => (bottom > 0 ? top / bottom : null);
+  const pctText = (value) => (value === null ? '—' : perfPercent(value));
+  const moneyText = (value) => (value === null ? '—' : won(Math.round(value)));
+
+  const HEAD = ['판매채널', '라이브기간', '광고기간', '집행매체', '광고비', '전환수', '전환값',
+    'CPS', 'CVR', 'ROAS', 'CPM', 'CPC', 'CTR', '파일'];
+
+  const metricCells = (got) => {
+    if (!got) return `<td class="tr-none" colspan="${HEAD.length - 4}">파일을 붙이면 채워집니다</td>`;
+    return [
+      `<td class="tr-media">${got.media.length ? escape(got.media.join(' · ')) : '—'}</td>`,
+      `<td class="perf-num">${money(got.spend)}</td>`,
+      `<td class="perf-num">${got.conv ? num(got.conv) : '—'}</td>`,
+      `<td class="perf-num">${money(got.rev)}</td>`,
+      `<td class="perf-num">${moneyText(ratio(got.spend, got.conv))}</td>`,
+      `<td class="perf-num">${pctText(ratio(got.conv, got.clk))}</td>`,
+      `<td class="perf-num">${got.spend ? perfRoas(ratio(got.rev, got.spend) || 0) : '—'}</td>`,
+      `<td class="perf-num">${moneyText(ratio(got.spend * 1000, got.imp))}</td>`,
+      `<td class="perf-num">${moneyText(ratio(got.spend, got.clk))}</td>`,
+      `<td class="perf-num">${pctText(ratio(got.clk, got.imp))}</td>`,
+    ].join('');
+  };
+
+  /* ── 판매채널 하나를 펼쳐 본다 ──────────────────────────────────
+     파일에는 광고그룹 줄까지만 들어 있다. 게재지면 · 연령 · 성별 · 소재는
+     **누를 때** 매체에 직접 물어본다 (파일에 담아 온 번호로 부른다).
+     그래서 파일이 작게 유지되고, 값도 늘 최신이다.
+     대신 부를 때마다 몇 초 걸리므로 **탭을 누른 것만** 묻고 받아 둔 것은 다시 안 묻는다. */
+  const TABS = [
+    { key: 'placement', name: '게재지면' },
+    { key: 'age', name: '연령대' },
+    { key: 'gender', name: '성별' },
+    { key: 'creative', name: '소재별' },
+  ];
+  // 쪼개 보기를 주는 매체 (네이버 GFA · 검색광고는 그 길이 없다)
+  const SPLITS = ['meta', 'google', 'kakao'];
+
+  let tab = 'placement';
+  const got = {};          // '채널|탭' → { status, rows, notes }
+
+  const slotOf = (channel, key) => `${channel}|${key}`;
+
+  // 그 채널의 줄이 어느 파일에서 왔나 (채널에 따로 붙인 것이 공용 파일을 이긴다)
+  const fileFor = (channel) => ((byChannel[channel] && byChannel[channel].file) || file || null);
+
+  /* 상세를 물어볼 기간. 차례로 —
+       ① 그 파일의 단계 기간을 통째로 감싼 것 (단계만 담은 제품별 파일이 여기 걸린다)
+       ② 그 파일의 조회 기간
+       ③ 월별 예산에 적힌 그 채널의 광고기간 (파일이 옛날 것이라 기간이 없을 때) */
+  const rangeFor = (channel) => {
+    const mine = fileFor(channel);
+    let since = '';
+    let until = '';
+    ((mine && mine.phases) || []).forEach((one) => {
+      if (one.since && (!since || one.since < since)) since = one.since;
+      if (one.until && (!until || one.until > until)) until = one.until;
+    });
+    const range = (mine && mine.range) || {};
+    since = since || range.since || '';
+    until = until || range.until || '';
+    if (!since || !until) {
+      const cell = cellsOf().filter((one) => one.channel === channel)[0] || {};
+      since = since || cell.since || '';
+      until = until || cell.until || '';
+    }
+    return { since: since, until: until };
+  };
+
+  // 그 채널이 어느 매체 · 계정 · 광고그룹에 걸려 있나 (번호가 있는 줄만)
+  const spotsOf = (channel) => {
+    const out = [];
+    rowsFor(channel).forEach((row) => {
+      if (!row.account || !row.id) return;
+      const mark = `${row.source}|${row.account}|${row.id}`;
+      if (!out.some((one) => one.mark === mark)) {
+        out.push({ mark: mark, source: row.source, sourceName: row.sourceName,
+          account: row.account, adset: row.id, name: row.adset });
+      }
+    });
+    return out;
+  };
+
+  const askDetail = (channel, key, again) => {
+    const slot = slotOf(channel, key);
+    if (got[slot] && !again) return;
+    const spots = spotsOf(channel);
+    const range = rangeFor(channel);
+
+    // 왜 못 묻는지 먼저 말해 준다. 예전에는 그냥 빈 표가 나와 까닭을 알 수 없었다.
+    const stop = (why) => {
+      got[slot] = { status: 'ready', rows: [], notes: [why], range: range };
+      render();
+    };
+    if (!spots.length) {
+      stop(fileFor(channel)
+        ? '붙인 파일에 광고그룹 번호가 없습니다 — 전매체에서 파일을 다시 내려받아 주세요.'
+        : '이 판매채널에 붙은 파일이 없습니다 — 전매체 파일을 먼저 붙여 주세요.');
+      return;
+    }
+    if (!range.since || !range.until) {
+      stop('물어볼 기간을 알 수 없습니다 — 파일에 조회 기간이 없고, 월별 예산에도 광고기간이 비어 있습니다.');
+      return;
+    }
+
+    got[slot] = { status: 'loading', rows: [], notes: [], range: range };
+    render();
+
+    const notes = [];
+    const noSplit = [];
+    const mine = spots.filter((one) => {
+      if (key !== 'creative' && SPLITS.indexOf(one.source) < 0) {
+        if (noSplit.indexOf(one.sourceName) < 0) noSplit.push(one.sourceName);
+        return false;
+      }
+      return true;
+    });
+    if (noSplit.length) notes.push(`${noSplit.join(' · ')} 는 쪼개 보기를 주지 않습니다.`);
+    if (!mine.length) {
+      got[slot] = { status: 'ready', rows: [], notes: notes, range: range };
+      render();
+      return;
+    }
+
+    Promise.all(mine.map((one) => askSheet(key === 'creative'
+      ? { action: `${one.source}Creatives`, account: one.account, adset: one.adset,
+        since: range.since, until: range.until }
+      : { action: `${one.source}Breakdown`, account: one.account, adset: one.adset,
+        breakdown: key, since: range.since, until: range.until })
+      .then((found) => ((key === 'creative' ? found.creatives : found.rows) || [])
+        .map((row) => ({ ...row, sourceName: one.sourceName })))
+      .catch((reason) => {
+        notes.push(`${one.sourceName} · ${one.name} — ${reason.message}`);
+        return [];
+      }))).then((packs) => {
+      const rows = packs.reduce((into, each) => into.concat(each), []);
+      got[slot] = { status: 'ready', rows: rows, notes: notes, range: range };
+      render();
+    });
+  };
+
+  // 같은 이름끼리 더한다 (매체가 여럿이면 같은 '피드' 가 여러 줄로 온다)
+  const mergeRows = (rows) => {
+    const by = {};
+    rows.forEach((row) => {
+      const name = String(row.name || '(알 수 없음)') + (row.series ? ` · ${row.series}` : '');
+      if (!by[name]) by[name] = { name: name, spend: 0, impressions: 0, clicks: 0, linkClicks: 0, purchase: 0, results: 0, revenue: 0 };
+      const into = by[name];
+      into.spend += Number(row.spend) || 0;
+      into.impressions += Number(row.impressions) || 0;
+      into.clicks += Number(row.clicks) || 0;
+      into.linkClicks += Number(row.linkClicks) || 0;
+      into.purchase += Number(row.purchase) || 0;
+      into.results += Number(row.results) || 0;
+      into.revenue += Number(row.revenue) || 0;
+    });
+    return Object.keys(by).map((name) => by[name]).sort((a, b) => b.spend - a.spend);
+  };
+
+  const splitTable = (rows) => {
+    const merged = mergeRows(rows);
+    if (!merged.length) return '<p class="perf-note">받아 온 줄이 없습니다.</p>';
+    const chart = vizBars(merged.map((one) => ({ name: one.name, value: one.spend })),
+      (value) => won(value), '광고비');
+    return `${chart}
+      <div class="tool-table-wrap"><table class="tool-table tr-split">
+        <thead><tr><th>이름</th><th class="perf-num">광고비</th><th class="perf-num">노출</th>
+          <th class="perf-num">클릭</th><th class="perf-num">전환수</th><th class="perf-num">전환값</th>
+          <th class="perf-num">CPS</th><th class="perf-num">CTR</th><th class="perf-num">ROAS</th></tr></thead>
+        <tbody>${merged.map((one) => `<tr>
+          <td>${escape(one.name)}</td>
+          <td class="perf-num">${money(one.spend)}</td>
+          <td class="perf-num">${num(one.impressions)}</td>
+          <td class="perf-num">${num(one.linkClicks || one.clicks)}</td>
+          <td class="perf-num">${one.purchase ? num(one.purchase) : '—'}</td>
+          <td class="perf-num">${money(one.revenue)}</td>
+          <td class="perf-num">${moneyText(ratio(one.spend, one.purchase))}</td>
+          <td class="perf-num">${pctText(ratio(one.linkClicks || one.clicks, one.impressions))}</td>
+          <td class="perf-num">${one.spend ? perfRoas(ratio(one.revenue, one.spend) || 0) : '—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`;
+  };
+
+  const creativeCards = (rows) => {
+    const shown = rows.slice().sort((a, b) => (Number(b.spend) || 0) - (Number(a.spend) || 0)).slice(0, 24);
+    if (!shown.length) return '<p class="perf-note">받아 온 소재가 없습니다.</p>';
+    return `<div class="tr-cuts">${shown.map((one) => `<figure class="tr-cut">
+      ${one.thumbnail ? `<img src="${escape(one.thumbnail)}" alt="" loading="lazy">` : '<span class="tr-cut-none">미리보기 없음</span>'}
+      <figcaption>
+        <b>${escape(one.name || one.id)}</b>
+        <small>${escape(one.sourceName || '')}</small>
+        <em>${money(one.spend)} · 전환 ${one.purchase ? num(one.purchase) : 0} · ROAS ${one.spend ? perfRoas(ratio(one.revenue, one.spend) || 0) : '—'}</em>
+      </figcaption>
+    </figure>`).join('')}</div>`;
+  };
+
+  const detailCard = (channel) => {
+    const slot = slotOf(channel, tab);
+    const pack = got[slot];
+    const inside = !pack ? '<p class="perf-note">누르면 매체에 물어봅니다.</p>'
+      : pack.status === 'loading' ? '<p class="perf-note">매체에서 받는 중… (몇 초 걸립니다)</p>'
+        : (tab === 'creative' ? creativeCards(pack.rows) : splitTable(pack.rows));
+    // 어느 기간을 물었는지 늘 보여 준다 — 값이 비면 대개 기간이 어긋난 것이다
+    const asked = pack && pack.range && pack.range.since
+      ? `<span class="tr-asked">${escape(pack.range.since)} ~ ${escape(pack.range.until)}</span>` : '';
+    const notes = (pack && pack.notes) || [];
+    return `<div class="tr-detail">
+      <div class="tr-tabs">${TABS.map((one) => `<button type="button" data-tr="tab" data-tab="${one.key}"
+        class="${one.key === tab ? 'is-on' : ''}">${escape(one.name)}</button>`).join('')}
+        ${asked}
+        <button type="button" class="tr-redo" data-tr="redo" data-channel="${escape(channel)}"
+          title="매체에 다시 묻기"><i data-lucide="rotate-ccw"></i></button></div>
+      ${notes.map((one) => `<p class="perf-note bg-note-bad">${escape(one)}</p>`).join('')}${inside}
+    </div>`;
+  };
+
+  const lineOf = (one) => {
+    const mineFile = byChannel[one.channel] || null;
+    const mine = (mineFile || file) ? rowsFor(one.channel) : null;
+    const got = mine && mine.length ? sumOf(mine) : null;
+    return `<tr class="tr-row${open === one.channel ? ' is-open' : ''}" data-tr="pick" data-channel="${escape(one.channel)}">
+      <td class="tr-name"><i data-lucide="chevron-right"></i>${escape(one.channel)}</td>
+      <td>${one.live && one.live.length ? escape(one.live.join(' · ')) : '<span class="tool-blank">—</span>'}</td>
+      <td>${span(one.since, one.until) ? escape(span(one.since, one.until)) : '<span class="tool-blank">—</span>'}</td>
+      ${metricCells(got)}
+      <td class="tr-own" data-tr="skip">
+        <label class="tr-pick" title="이 판매채널만 담긴 전매체 파일">
+          <i data-lucide="${mineFile ? 'file-check' : 'paperclip'}"></i>${mineFile ? escape(mineFile.name) : '파일'}
+          <input type="file" accept=".json,application/json" data-tr="one" data-channel="${escape(one.channel)}" hidden>
+        </label>
+        ${mineFile ? `<button type="button" class="tr-off" data-tr="offone" data-channel="${escape(one.channel)}" title="이 파일 빼기"><i data-lucide="x"></i></button>` : ''}
+      </td>
+    </tr>${open === one.channel
+      ? `<tr class="tr-more"><td colspan="${HEAD.length}">${detailCard(one.channel)}</td></tr>` : ''}`;
+  };
+
+  const render = () => {
+    if (status === 'loading') {
+      eventResult.innerHTML = '<div class="tool-head"><h2>판매채널 추이</h2></div>'
+        + '<div class="tool-card"><p class="perf-note">시트에서 읽는 중…</p></div>';
+      return;
+    }
+    const months = (body && body.months) || [];
+    const rows = channelRows();
+    const taken = [];
+    rows.forEach((one) => {
+      rowsFor(one.channel).forEach((row) => { if (taken.indexOf(row) < 0) taken.push(row); });
+    });
+    const stray = file ? fileRows().filter((row) => taken.indexOf(row) < 0) : [];
+
+    eventResult.innerHTML = `
+      <div class="tool-head"><h2>판매채널 추이</h2></div>
+      <div class="tool-card">
+        <div class="perf-filter">
+          <label class="bg-cat">달
+            <select data-tr="month">${months.map((ym) => `<option value="${ym}"${ym === month ? ' selected' : ''}>${escape(monthName(ym))}</option>`).join('')}</select>
+          </label>
+          <label class="tool-copy-all tr-file">
+            <i data-lucide="upload"></i>${file ? '파일 바꾸기' : '전매체 파일 붙이기'}
+            <input type="file" accept=".json,application/json" data-tr="file" hidden>
+          </label>
+          ${file ? '<button type="button" class="tool-copy-all" data-tr="drop"><i data-lucide="x"></i>파일 빼기</button>' : ''}
+          <button type="button" class="tool-copy-all" data-tr="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
+        </div>
+        ${error ? `<p class="perf-note bg-note-bad">${escape(error)}</p>` : ''}
+        ${fileNote ? `<p class="perf-note">${fileNote}</p>` : ''}
+        ${!months.length ? '<p class="perf-note">아직 짜 둔 달이 없습니다. 월별 예산에서 먼저 짜 주세요.</p>'
+    : `<div class="tool-table-wrap"><table class="tool-table tr-table">
+        <thead><tr>${HEAD.map((name, at) => `<th${at >= 4 ? ' class="perf-num"' : ''}>${escape(name)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map(lineOf).join('')}</tbody>
+      </table></div>`}
+        ${stray.length ? `<p class="perf-note">파일에 있는데 어느 판매채널에도 안 붙은 광고그룹 ${num(stray.length)}개 — <b>${escape(stray.slice(0, 3).map((one) => one.adset).join(' · '))}</b>${stray.length > 3 ? ' 외' : ''}</p>` : ''}
+      </div>`;
+    lucide.createIcons();
+  };
+
+  // 붙인 파일이 전매체에서 내려받은 것인지 본다. 아니면 이유를 그대로 알려 준다.
+  const readFile = (picked) => picked.text().then((text) => {
+    let found = null;
+    try { found = JSON.parse(text); } catch (reason) { found = null; }
+    if (!found || found.kind !== 'minix-cross-result') {
+      throw new Error('전매체 검색에서 내려받은 파일이 아닙니다 (kind 가 minix-cross-result 여야 합니다).');
+    }
+    return found;
+  });
+
+  const load = () => {
+    status = 'loading';
+    error = '';
+    render();
+    askSheet({ action: 'budgetTrend' })
+      .then((found) => {
+        body = found;
+        const months = found.months || [];
+        if (!month || months.indexOf(month) < 0) month = months[months.length - 1] || '';
+        status = 'ready';
+        render();
+      })
+      .catch((reason) => { status = 'ready'; error = reason.message; render(); });
+  };
+
+  eventResult.addEventListener('change', (event) => {
+    const hit = event.target.closest('[data-tr]');
+    if (!hit) return;
+    if (hit.dataset.tr === 'month') { month = hit.value; open = ''; render(); return; }
+    if (hit.dataset.tr === 'file') {
+      const picked = hit.files && hit.files[0];
+      if (!picked) return;
+      readFile(picked).then((found) => {
+        file = found;
+        const range = found.range || {};
+        fileNote = `<b>${escape(picked.name)}</b> 를 붙였습니다 — 광고그룹 ${num(fileRows().length)}줄 · 조회 ${escape(range.since || '')} ~ ${escape(range.until || '')}`;
+      }).catch((reason) => { file = null; fileNote = escape(reason.message); })
+        .then(() => { open = ''; render(); });
+      return;
+    }
+    if (hit.dataset.tr === 'one') {
+      // 그 판매채널만 담긴 파일. 통째로 그 채널 것이라 이름 규칙을 안 쓴다.
+      const channel = hit.dataset.channel;
+      const picked = hit.files && hit.files[0];
+      if (!picked) return;
+      readFile(picked).then((found) => {
+        byChannel[channel] = { name: picked.name, file: found };
+        fileNote = `<b>${escape(channel)}</b> 에 ${escape(picked.name)} 를 붙였습니다 — 광고그룹 ${num((ownRows(channel) || []).length)}줄`;
+      }).catch((reason) => {
+        delete byChannel[channel];
+        fileNote = escape(reason.message);
+      }).then(() => {
+        Object.keys(got).forEach((slot) => { if (slot.indexOf(`${channel}|`) === 0) delete got[slot]; });
+        render();
+      });
+    }
+  });
+
+  eventResult.addEventListener('click', (event) => {
+    const hit = event.target.closest('[data-tr]');
+    if (!hit) return;
+    const what = hit.dataset.tr;
+    if (what === 'reload') { load(); return; }
+    if (what === 'drop') { file = null; fileNote = ''; open = ''; render(); return; }
+    if (what === 'skip') return;            // 파일 칸을 눌러도 줄이 펼쳐지지 않게
+    if (what === 'offone') {
+      const channel = hit.dataset.channel;
+      delete byChannel[channel];
+      Object.keys(got).forEach((slot) => { if (slot.indexOf(`${channel}|`) === 0) delete got[slot]; });
+      fileNote = '';
+      render();
+      return;
+    }
+    if (what === 'redo') {
+      const channel = hit.dataset.channel;
+      delete got[slotOf(channel, tab)];
+      askDetail(channel, tab, true);
+      return;
+    }
+    if (what === 'tab') {
+      tab = hit.dataset.tab;
+      render();
+      if (open) askDetail(open, tab);
+      return;
+    }
+    if (what === 'pick') {
+      open = open === hit.dataset.channel ? '' : hit.dataset.channel;
+      render();
+      if (open) askDetail(open, tab);
+    }
+  });
+
+  openViewOnce(eventResult, load);
+}
+
 // ── 월별 예산 (화면 안에서 짠다) ────────────────────────────────────
 // 예전에는 사람이 짜 둔 '퍼포먼스 마스터 시트' 를 읽어 그림으로만 보여 줬다. 고칠 일은 늘
 // 시트에서 해야 했고, 시트 모양이 조금만 바뀌어도 화면이 못 읽었다.
@@ -10925,11 +11639,14 @@ if (budgetPlanView) {
   let editing = false;           // 고치는 중인가 (평소에는 보기)
   let fresh = false;             // 시트에서 온 값인가 (아니면 담아 둔 옛 판)
   let fixedPulling = false;      // 고정비 사용액을 네이버에서 받는 중인가
+  let pushing = false;           // 받은 값을 구글시트에 올리는 중인가
   let fixedNote = '';            // 받아 온 결과 한 줄
   let status = 'idle';
   let error = '';
   let note = '';                 // 저장 · 불러오기 알림 한 줄
-  let sheetUrl = '';
+  let sheetUrl = '';             // 앱이 담아 두는 적재 시트
+  let tableUrl = '';             // 사람이 보는 월별 예산 문서 (달마다 탭 하나)
+  let auto = null;               // 아침 자동 올리기 { on, hour, last }
 
   const uid = () => `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
@@ -11456,7 +12173,7 @@ if (budgetPlanView) {
      스크래퍼가 쌓아 둔 네이버성과 시트에서 온다 (서버가 한 번에 묶어 준다).
      브랜드검색은 정액(CPT) 이라 광고비가 늘 0 으로 와서 넣지 않는다 — 계약서 보고 손으로 적는다.
      한 번 물으면 몇 초면 끝난다 (매체를 전부 훑던 옛 길과 다르다). */
-  const fixedPull = () => {
+  const fixedPull = (push) => {
     const last = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
     fixedPulling = true;
     fixedNote = '';
@@ -11527,6 +12244,7 @@ if (budgetPlanView) {
             ${escape(missed.slice(0, 3).join(', '))}${missed.length > 3 ? ' 외' : ''}.`;
         }
         fixedPulling = false;
+        if (push) { pushSheet(); return; }     // 받은 김에 시트까지 올린다
         render();
         save();
       })
@@ -11570,9 +12288,25 @@ if (budgetPlanView) {
 
   // 저장 알림 한 줄. 이 줄만 따로 갈아 끼운다 — 자동 저장 때마다 화면을 다시 그리면
   // 지금 치고 있던 칸에서 커서가 튄다.
+  const autoLine = () => {
+    if (!auto) return '';
+    const last = auto.last;
+    const when = last && last.at ? clockText(last.at) : '';
+    const done = !last ? ''
+      : last.ok === false ? `지난번 실패 — ${escape(last.note || '')}`
+        : `마지막 ${escape(when)}${last.how ? ` · ${escape(last.how)}` : ''}`
+          + ` · 탭 ${num(last.tabs || 0)}개 · ${num(last.rows || 0)}줄`;
+    if (auto.on) {
+      return ` · 아침 <b>${escape(String(auto.hour || 11))}시</b>에 저절로 올라갑니다`
+        + ` (${done || '아직 안 돌았습니다'})`;
+    }
+    // 표시는 꺼져 있어도 돈 적이 있으면 알려 준다 (손으로 트리거만 걸어 둔 경우)
+    return done ? ` · ${done}` : '';
+  };
+
   const noteLine = () => `<p class="perf-note bg-note${error ? ' bg-note-bad' : ''}">${error ? escape(error)
     : `${saved.at ? `마지막 저장 ${escape(new Date(saved.at).toLocaleString('ko-KR'))}${saved.by ? ` · ${escape(saved.by)}` : ''}`
-      : '아직 저장한 적이 없습니다.'}${note ? ` · ${escape(note)}` : ''}${fresh ? ''
+      : '아직 저장한 적이 없습니다.'}${note ? ` · ${escape(note)}` : ''}${autoLine()}${fresh ? ''
       : ' · <b>이 브라우저에 담아 둔 판</b>을 먼저 보여 드리고 있습니다 — 시트 값이 오면 바뀝니다'}${editing
       ? ' · 고치는 중입니다. 손을 떼면 저절로 담기고, <b>저장하기</b> 를 누르면 보기로 돌아갑니다.' : ''}`}</p>`;
 
@@ -11603,8 +12337,12 @@ if (budgetPlanView) {
     ? `<button type="button" class="tool-add" data-bg="save"><i data-lucide="save"></i>저장하기</button>`
     : `<button type="button" class="tool-add" data-bg="edit"${fresh ? '' : ' disabled'}>
         <i data-lucide="pencil"></i>${fresh ? '수정하기' : '시트에서 받는 중…'}</button>`}
-          ${editing ? `<button type="button" class="tool-copy-all" data-bg="fixedPull"${fixedPulling ? ' disabled' : ''}>
-            <i data-lucide="download"></i>${fixedPulling ? '받는 중…' : '매체에서 실사용비 받기'}</button>` : ''}
+          <button type="button" class="tool-copy-all" data-bg="sheetPull"
+            title="매체에서 실사용비를 받아 채우고, 그대로 구글시트(월별예산 탭)에 올립니다"
+            ${fixedPulling || pushing || !fresh ? ' disabled' : ''}>
+            <i data-lucide="table"></i>${fixedPulling ? '매체에서 받는 중…'
+    : pushing ? '구글시트에 올리는 중…' : '구글시트 받기'}</button>
+          <button type="button" class="tool-copy-all" data-bg="sheetOpen"><i data-lucide="external-link"></i>시트 열기</button>
           <button type="button" class="tool-copy-all" data-bg="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
           ${editing ? `<button type="button" class="tool-copy-all bg-drop-month" data-bg="dropMonth"
             title="이 달에 짜 둔 것을 통째로 지웁니다"><i data-lucide="trash-2"></i>이 달 지우기</button>` : ''}
@@ -11684,6 +12422,32 @@ if (budgetPlanView) {
     return undefined;
   };
 
+  const pushSheet = () => {
+    window.clearTimeout(saveTimer);
+    pushing = true;
+    render();
+    return askSheet({ action: 'budgetPut', month, total: budgetAll(), plan, by: '' })
+      .then((body) => {
+        saved = { at: body.savedAt, by: saved.by };
+        keepBudget(month, { plan, updatedAt: saved.at, updatedBy: saved.by });
+        /* 두 곳에 담긴다 —
+             적재 시트의 월별예산 탭   앱이 읽는 자리 (한 달이 한 줄, 내용은 JSON 한 칸)
+             월별 예산 문서            사람이 읽는 거울 (달마다 탭 하나, 한 줄이 한 항목)
+           거울이 안 그려져도 저장은 된 것이라 그 까닭만 덧붙인다. */
+        if (body.tableUrl) tableUrl = body.tableUrl;
+        note = body.tableTabs
+          ? `구글시트에 올렸습니다 — 월별 탭 ${num(body.tableTabs)}개 · ${num(body.tableRows)}줄`
+          : '적재 시트에 담았습니다';
+        if (body.tableMade && body.tableMade.length) {
+          note += ` (탭 ${body.tableMade.join(' · ')} 는 새로 만들었습니다)`;
+        }
+        if (body.tableNote) note += ` · 사람이 읽는 표는 못 그렸습니다 — ${body.tableNote}`;
+        error = '';
+      })
+      .catch((reason) => { error = `구글시트에 못 올렸습니다 — ${reason.message}`; })
+      .then(() => { pushing = false; render(); });
+  };
+
   // 마지막으로 받은 판을 이 브라우저에 담아 둔다 (남에게는 안 보인다. 그림을 먼저 그리려는 것뿐이다)
   const keptKey = (want) => `minix-budget:${want}`;
   const readKept = (want) => {
@@ -11724,6 +12488,8 @@ if (budgetPlanView) {
         if (mine !== month) return;      // 그새 다른 달로 옮겼다
         months = body.months || [];
         sheetUrl = body.url || '';
+        tableUrl = body.tableUrl || tableUrl;
+        auto = body.auto || null;
         useBudget(body.budget);
         keepBudget(body.month, body.budget);
         // 아직 아무것도 안 짠 달은 읽을 것이 없다. 바로 고치기로 연다.
@@ -11787,7 +12553,13 @@ if (budgetPlanView) {
     }
     if (what === 'reload') { load(); return; }
     if (what === 'dropMonth') { dropMonth(); return; }
-    if (what === 'fixedPull') { if (!fixedPulling) fixedPull(); return; }
+    if (what === 'sheetPull') {
+      // 옛 판으로 올리면 남이 적은 것을 덮는다 — 시트에서 온 값일 때만 보낸다
+      if (!fixedPulling && !pushing && fresh) fixedPull(true);
+      return;
+    }
+    // 사람이 보는 것은 월별 예산 문서다. 그쪽을 먼저 연다.
+    if (what === 'sheetOpen') { window.open(tableUrl || sheetUrl || SHEET_URL, '_blank', 'noopener'); return; }
     if (what === 'fixedAdd') {
       if (!Array.isArray(plan.fixed)) plan.fixed = [];
       plan.fixed.push({ id: uid(), category: '', sku: '', item: '', plan: 0, used: 0 });

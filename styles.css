@@ -1,5 +1,11 @@
  
  .notion-card.is-dragging{opacity:.45}
+/* 놓을 자리를 줄 하나로 알려 준다 — 카드 위에 넣을지 아래에 넣을지가 안 보이면
+   손을 놓아 봐야만 알 수 있다. 카드를 밀어 내지 않게 테두리가 아니라 그림자로 그린다. */
+.notion-card.nc-drop{box-shadow:0 -3px 0 -1px #2f86d9,0 1px 2px #3331}
+.notion-column.nc-drop-end .new-page{box-shadow:0 -3px 0 -1px #2f86d9}
+.notion-card{cursor:grab}
+.notion-card.is-dragging{cursor:grabbing}
  .notion-toolbar{display:flex;align-items:center;justify-content:space-between;margin:-3px 0 14px}.board-view-button{border:0;border-radius:18px;background:#f1f1ed;padding:8px 13px;color:#555;font:700 11px inherit}.board-view-button,.board-tools,.new-page-button,.new-page{display:flex;align-items:center;gap:6px}.board-view-button svg,.board-tools svg{width:14px}.board-tools{gap:15px;color:#8c8c85}.new-page-button{border:0;border-radius:6px;background:#2f86d9;color:white;padding:8px 11px;font:700 11px inherit}.new-page-button svg{width:13px}.notion-board{display:grid;grid-template-columns:repeat(5,minmax(205px,1fr));gap:10px;overflow-x:auto;align-items:start;padding-bottom:8px}.notion-column{min-height:270px;border-radius:10px;padding:10px 7px;background:#f3f8f5}.progress-column{background:#f1f8ff}.delivered-column{background:#fff9e9}.final-column{background:#f6f6f5}.hold-column{background:#fbf5f1}.notion-column-title{display:flex;align-items:center;gap:8px;padding:0 7px 9px;font-size:11px;font-weight:800;color:#477f68}.progress-column .notion-column-title{color:#3283c5}.delivered-column .notion-column-title{color:#c69124}.final-column .notion-column-title{color:#696969}.hold-column .notion-column-title{color:#b08267}.notion-column-title b{font-weight:500;color:#999}.notion-card{background:#fff;border:1px solid #dfe7e2;border-radius:9px;padding:11px;margin-bottom:8px;box-shadow:0 1px 2px #3331}.notion-card h3{margin:0 0 12px;font-size:12px;line-height:1.45}.notion-card p{margin:0 0 10px;font-size:10px;color:#555}.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}.new-page{width:100%;border:1px solid #d9e6df;background:transparent;color:#5d967b;border-radius:8px;padding:9px 10px;font:600 11px inherit;text-align:left}.progress-column .new-page{border-color:#d4e7f7;color:#4b91d1}.delivered-column .new-page{border-color:#efdfb6;color:#cf9a2a}.final-column .new-page,.hold-column .new-page{border-color:#e6e3df;color:#aaa}@media(max-width:900px){.notion-board{grid-template-columns:repeat(5,205px)}.board-tools i{display:none}.notion-toolbar{margin-top:3px}}
  .creative-board{background:#fbfbf8}.board-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}.board-header h2{margin:3px 0 0;font-size:17px}.board-header h2 span{font-weight:500;color:#999;font-size:12px}.eyebrow{font-size:10px;color:#999;text-transform:uppercase;letter-spacing:1px}.primary-action{display:flex;align-items:center;gap:5px;border:0;border-radius:7px;padding:9px 13px;background:#f15a24;color:#fff;font:700 11px inherit;cursor:pointer}.primary-action svg{width:14px}.board-toolbar{display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--line);padding-bottom:13px;margin-bottom:14px}.week-button,.archive-button{border:1px solid var(--line);border-radius:6px;background:#fff;padding:7px 10px;color:#777;font:600 10px inherit;cursor:pointer}.week-button.active{border-color:#252621;background:#252621;color:#fff}.week-button small{font-weight:400;opacity:.7}.archive-button{display:flex;align-items:center;gap:5px;margin-left:auto}.archive-button svg{width:13px}.kanban{display:grid;grid-template-columns:repeat(4,minmax(190px,1fr));gap:10px;overflow-x:auto;padding-bottom:5px}.kanban-column{min-height:310px;background:#f1f1ed;border-radius:8px;padding:11px}.column-title{display:flex;align-items:center;gap:6px;font-weight:800;font-size:11px;margin-bottom:10px}.column-title b{margin-left:auto;background:#e3e3dc;border-radius:10px;padding:2px 7px;font-size:10px;color:#777}.column-dot{width:8px;height:8px;border-radius:50%;background:#ef8a66}.column-dot.planning{background:#e7ac3a}.column-dot.review{background:#7078d8}.column-dot.done{background:#20a569}.request-card{background:#fff;border:1px solid #e7e6e0;border-radius:7px;padding:12px;margin-bottom:8px;box-shadow:0 2px 5px #22231f08}.card-top,.card-meta{display:flex;justify-content:space-between;align-items:center}.tag,.priority,.review-label,.check-label{font-size:9px;border-radius:4px;padding:3px 6px;font-weight:800}.tag.campaign{background:#fbe0d7;color:#b34c2b}.tag.blue{background:#dce8ff;color:#3c6dcc}.tag.green{background:#d8f1e5;color:#20845a}.priority{color:#df5038;background:#fff0eb}.review-label{color:#626bc1}.check-label{color:#20a569;display:flex;gap:3px;align-items:center}.check-label svg{width:12px}.request-card h3{font-size:12px;margin:10px 0 5px}.request-card p{font-size:10px;color:#999;margin:0 0 14px}.card-meta{font-size:9px;color:#999}.card-meta span{display:flex;align-items:center;gap:3px}.card-meta svg{width:12px}.add-card{width:100%;border:1px dashed #c9c9c1;background:none;color:#999;border-radius:6px;padding:8px;font:600 10px inherit;cursor:pointer}.add-card:hover{background:#e7e7e1}
 *{box-sizing:border-box}
@@ -1518,3 +1524,43 @@ html.is-gated,html.is-gated body{overflow:hidden}
 /* 달 추가 — 도구줄 오른쪽 끝에 떼어 둔다 (달 고르개 옆에 붙여 두니 둘이 한 짝처럼 보였다) */
 .bg-newmonth{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
 .bg-newmonth input{border:1px solid var(--line,#e6e5e0);border-radius:6px;padding:6px 8px;font:inherit;font-size:12px;color:#3d3d39;background:#fff}
+
+
+/* 판매채널 추이 — 달 하나를 골라 판매채널로 묶어 보는 표.
+   줄 키는 한 줄로 고정한다 — 칸 안에 작은 글씨를 겹쳐 두면 그 줄만 두 배로 높아진다. */
+.tr-table{min-width:1320px}
+.tr-table th,.tr-table td{white-space:nowrap}
+.tr-table tbody tr.tr-row{cursor:pointer}
+.tr-table tbody tr.tr-row:hover{background:#faf9f6}
+.tr-name{display:flex;align-items:center;gap:5px;font-weight:600;color:#37352f}
+.tr-name svg{width:13px;color:#b0afa8;transition:transform .12s}
+.tr-row.is-open .tr-name svg{transform:rotate(90deg);color:#37352f}
+.tr-row.is-open{background:#f6f5f1}
+.tr-media{color:#6f6f68}
+.tr-none{color:#b6b5ae}
+.tr-file{position:relative;cursor:pointer}
+.tr-more>td{background:#fbfaf7;padding:0}
+.tr-detail{padding:14px 16px 18px}
+.tr-tabs{display:flex;gap:6px;margin-bottom:12px}
+.tr-tabs button{border:1px solid var(--line,#e6e5e0);border-radius:6px;background:#fff;padding:6px 12px;font:600 12px inherit;color:#6f6f68;cursor:pointer}
+.tr-tabs button.is-on{border-color:#2f2f2b;background:#2f2f2b;color:#fff}
+.tr-asked{margin-left:auto;align-self:center;font-size:11px;color:#a5a49f}
+.tr-redo{border:1px solid var(--line,#e6e5e0);border-radius:6px;background:#fff;padding:6px;color:#8a8980;cursor:pointer;line-height:0}
+.tr-redo:hover{border-color:#c9c8c1;color:#37352f}
+.tr-redo svg{width:13px}
+.tr-split{min-width:880px;margin-top:10px}
+.tr-cuts{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px}
+.tr-cut{margin:0;border:1px solid #eeede8;border-radius:9px;background:#fff;overflow:hidden}
+.tr-cut img{display:block;width:100%;aspect-ratio:1/1;object-fit:cover;background:#f4f3ef}
+.tr-cut-none{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;background:#f4f3ef;color:#b6b5ae;font-size:11px}
+.tr-cut figcaption{padding:8px 9px 10px;display:flex;flex-direction:column;gap:2px}
+.tr-cut figcaption b{font-size:11px;font-weight:700;line-height:1.35;color:#37352f;word-break:break-all}
+.tr-cut figcaption small{font-size:10px;color:#a5a49f}
+.tr-cut figcaption em{font-size:10px;font-style:normal;color:#6f6f68}
+.tr-own{white-space:nowrap}
+.tr-pick{display:inline-flex;align-items:center;gap:4px;max-width:132px;border:1px solid var(--line,#e6e5e0);border-radius:6px;padding:4px 8px;background:#fff;font-size:11px;color:#6f6f68;cursor:pointer;overflow:hidden;text-overflow:ellipsis}
+.tr-pick:hover{border-color:#c9c8c1;color:#37352f}
+.tr-pick svg{width:12px;flex:none}
+.tr-off{margin-left:4px;border:0;background:none;padding:2px;color:#b0afa8;cursor:pointer}
+.tr-off:hover{color:#d44c47}
+.tr-off svg{width:12px}
