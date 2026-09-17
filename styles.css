@@ -532,13 +532,6 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .setup-work-lines{margin:0;padding-left:18px;font-size:11px;color:#555;line-height:1.9;max-height:260px;overflow:auto}
 .setup-work-lines li.is-bad{color:#d44c47}
 
-/* 예전 방식(.ps1) — 접어 둔다 */
-.setup-legacy{padding:0}
-.setup-toggle-legacy{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;border:0;background:none;color:#a5a49f;font:600 11px inherit;text-align:left;padding:12px 14px;cursor:pointer}
-.setup-toggle-legacy:hover{color:#555}
-.setup-toggle-legacy svg{width:13px}
-.setup-legacy>*:not(.setup-toggle-legacy){margin-left:14px;margin-right:14px}
-.setup-legacy>*:last-child{margin-bottom:14px}
 
 .setup-budget{display:flex;align-items:center;gap:6px;margin-top:5px}
 .setup-budget select{flex:none;width:80px;margin-top:0}
@@ -554,19 +547,13 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .setup-issues li{margin-top:3px;line-height:1.7}
 
 .setup-done{margin-top:12px;border:1px solid #c7e1c9;border-radius:8px;background:#f4faf5;padding:11px 13px}
-.setup-done.is-stale{border-color:#f0dcc2;background:#fdf6ec}
-.setup-stale{margin:0 0 9px;font-size:11px;font-weight:700;color:#96632a}
 .setup-done-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
 .setup-done-name b{font:700 12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#20211e;overflow-wrap:anywhere}
 .setup-done-name small{display:block;margin-top:3px;color:#8c8c85;font-size:10px}
 .setup-done-actions{display:flex;flex-wrap:wrap;gap:6px}
-.setup-steps{margin:11px 0 0;padding-left:17px;font-size:11px;color:#555;line-height:2}
-.setup-steps code{font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#20211e}
-.setup-cmd{display:inline-block;border:1px solid #e3e2dc;border-radius:5px;background:#fff;padding:3px 7px;overflow-wrap:anywhere}
 .setup-toggle-script{display:inline-flex;align-items:center;gap:4px;margin-top:11px;border:1px solid #e3e2dc;border-radius:6px;background:#fff;color:#555;font:600 11px inherit;padding:6px 10px;cursor:pointer}
 .setup-toggle-script:hover{background:#f4f4f1}
 .setup-toggle-script svg{width:13px}
-.setup-script{max-height:340px;overflow:auto;margin:10px 0 0;padding:12px;border-radius:6px;background:#20211e;color:#d7d8cf;font:400 11px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre}
 
 .setup-hist{list-style:none;margin:0;padding:0}
 .setup-hist li{padding:8px 0;border-bottom:1px solid #f0efeb}

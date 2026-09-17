@@ -4814,8 +4814,9 @@ if (onboarding) {
 // 소재는 사람이 화면에 **파일로 넣고**, 메타 API 는 서버(Apps Script)가 부른다.
 // 토큰은 브라우저에 두지 않는다 — 그림만 보낸다.
 //
-// 예전 방식(.ps1)도 접어서 남겨 두었다. 소재 폴더를 통째로 올리고 싶을 때 쓴다.
-// 그쪽은 **로컬 폴더만** 읽는다 (NAS 는 더 쓰지 않는다).
+// 소재를 넣는 길은 둘이다 — 파일을 하나씩 넣거나, 폴더를 통째로 넣는다.
+// 폴더는 브라우저가 직접 읽는다 (입력칸에 경로를 적는 것이 아니다 — 브라우저는 경로만으로
+// 파일을 열지 못한다). PowerShell 을 내려받던 예전 방식은 걷어 냈다.
 const adSetup = document.querySelector('#ad-setup');
 if (adSetup) {
   const STORAGE_KEY = 'minix-ad-setup-v1';
@@ -4864,7 +4865,7 @@ if (adSetup) {
 
   const DEFAULT_STATE = {
     acct: '', part: PARTS[0], purpose: '', urlType: 'url',
-    promo: '', sheetUrl: '', localPath: '', envDir: '',
+    promo: '', sheetUrl: '',
     campaignName: '', adsetName: '',
     budget: '', budgetType: 'daily',
     objective: '구매', cta: 'SHOP_NOW',
@@ -4888,15 +4889,13 @@ if (adSetup) {
   let selectedIdx = -1;
   let lookup = { state: 'idle', message: '' };
   let tnd = null;         // { headline, body } 또는 { error }
-  let script = null;      // { filename, text, at, ads, stale }
-  let attempted = false;  // [실행 스크립트 만들기] 를 한 번이라도 눌렀는가
-  let scriptOpen = false;
+  let attempted = false;  // [광고 만들기] 를 한 번이라도 눌렀는가
   // 캠페인명 고르개 — 고른 계정에서 켜져 있는 캠페인. acct 는 그 목록이 어느 계정 것인지다.
   let campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
   // 끌어다 놓은 소재 [{ file, name, size, row, story }] · 만드는 중 상황
   let picks = [];
   let work = null;        // { running, done, total, lines: [], failed, adset }
-  let scriptOn = false;   // 예전 방식(.ps1) 칸을 펴 두었는가
+  let pickNote = '';      // 폴더를 통째로 넣었을 때 알려 줄 말
 
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const saveHistory = () => localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
@@ -5133,7 +5132,6 @@ if (adSetup) {
         story: !isVideo(file.name) && isStory(file.name) });
     });
     matchPicks();
-    markStale();
     render();
   };
 
@@ -5346,304 +5344,8 @@ if (adSetup) {
       : `끝났습니다 — ${done}건 모두 만들었습니다. 일시중지(PAUSED) 상태이니 Ads Manager 에서 확인 후 켜 주세요.`);
   };
 
-  // ── 실행 스크립트 생성 ───────────────────────────────────────────
-  const psq = (value) => `'${String(value ?? '').replace(/'/g, "''")}'`;
-  // datetime-local(2026-08-29T09:30) → PowerShell 이 ParseExact 하는 'yyyy-MM-dd HH:mm'
-  const psDate = (value) => (value ? value.replace('T', ' ').slice(0, 16) : '');
-
-  const psHeader = () => {
-    const goal = OPTIMIZATION[state.objective] || OPTIMIZATION['구매'];
-    const lines = [
-      '# minix 워크스페이스 [광고자동 세팅 > 메타 광고 세팅] 에서 생성',
-      `# 생성 시각: ${new Date().toLocaleString('ko-KR')}`,
-      '# 광고는 항상 PAUSED 로 만들어집니다. Ads Manager 에서 확인 후 게시하세요.',
-      '',
-      'Set-StrictMode -Off',
-      "$ErrorActionPreference = 'Continue'",
-      '$OutputEncoding = [System.Text.Encoding]::UTF8',
-      'try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}',
-      '',
-      '# 토큰은 브라우저에 저장하지 않는다. 여기서 .env 를 직접 읽는다.',
-      `$envDir = ${psq(state.envDir)}`,
-      '$envCandidates = @()',
-      'if ($envDir) { $envCandidates += $envDir }',
-      'if ($PSScriptRoot) { $d = $PSScriptRoot; for ($i = 0; $i -lt 5 -and $d; $i++) { $envCandidates += $d; $d = Split-Path $d -Parent } }',
-      "$envFile = ''",
-      'foreach ($c in $envCandidates) {',
-      "    foreach ($n in @('.env','env.txt')) {",
-      '        $p = Join-Path $c $n',
-      '        if (Test-Path -LiteralPath $p) { $envFile = $p; break }',
-      '    }',
-      '    if ($envFile) { break }',
-      '}',
-      'if (-not $envFile) {',
-      "    Write-Host '[.env 없음] 아래 폴더에서 .env 또는 env.txt 를 찾지 못했습니다:'",
-      '    foreach ($c in $envCandidates) { Write-Host "  $c" }',
-      "    Write-Host '워크스페이스 [메타 광고 세팅] 화면의 .env 폴더 칸에 공유 폴더 경로를 넣고 스크립트를 다시 만들어 주세요.'",
-      '    exit 1',
-      '}',
-      'Write-Host "환경설정: $envFile"',
-      '$envMap = @{}',
-      'foreach ($line in (Get-Content -LiteralPath $envFile -Encoding UTF8)) {',
-      '    $line = $line.TrimStart([char]0xFEFF)',
-      "    if (-not $line -or $line.StartsWith('#')) { continue }",
-      "    $x = $line.IndexOf('=')",
-      '    if ($x -lt 1) { continue }',
-      '    $envMap[$line.Substring(0,$x).Trim()] = $line.Substring($x+1)',
-      '}',
-      "$token     = $envMap['META_ACCESS_TOKEN']",
-      "$pageId    = $envMap['META_PAGE_ID']",
-      'if (-not $token) { Write-Host "[토큰 없음] $envFile 에 META_ACCESS_TOKEN 이 없습니다."; exit 1 }',
-      '',
-      `$acct      = ${psq(state.acct)}`,
-      `$sheetUrl  = ${psq(tr(state.sheetUrl))}`,
-      `$evtName   = ${psq(tr(state.promo))}`,
-      `$localSrc  = ${psq(tr(state.localPath))}`,
-      `$landingUrl = ${psq(urlOf(rows[selectedIdx] || {}, state.urlType))}`,
-      `$adsetName    = ${psq(tr(state.adsetName))}`,
-      `$campaignName = ${psq(tr(state.campaignName))}`,
-      `$cta          = ${psq(state.cta || 'LEARN_MORE')}`,
-      `$budget     = ${parseInt(digitsOf(state.budget), 10) || 0}`,
-      `$budgetType = ${psq(state.budgetType || 'daily')}`,
-      `$startDate  = ${psq(psDate(state.startAt))}`,
-      `$endDate    = ${psq(psDate(state.endAt))}`,
-      `$optGoal    = ${psq(goal.opt)}`,
-      `$billEvt    = ${psq(goal.bill)}`,
-      `$ageMin     = ${parseInt(state.ageMin, 10) || 0}`,
-      `$ageMax     = ${parseInt(state.ageMax, 10) || 0}`,
-      '',
-    ];
-
-    // 소재 파일명에 든 메시지코드로 광고명·랜딩 URL 을 되찾기 위한 대응표
-    if (!rows.length) lines.push('$adMapping = @()');
-    else {
-      lines.push('$adMapping = @(');
-      rows.forEach((row, i) => {
-        const fields = [
-          `msgCode=${psq(row.msgCode)}`, `adName=${psq(row.adName)}`, `group=${psq(row.group)}`,
-          `campaign=${psq(row.campaign)}`, `landingUrl=${psq(urlOf(row, state.urlType))}`,
-        ].join(';');
-        lines.push(`    @{${fields}}${i < rows.length - 1 ? ',' : ''}`);
-      });
-      lines.push(')');
-    }
-    lines.push('');
-    return lines;
-  };
-
-  const genderLine = () =>
-    (state.gender === '여성' ? "$tgt.Add('genders', @(2))"
-      : state.gender === '남성' ? "$tgt.Add('genders', @(1))"
-        : '# gender=전체');
-  const PS_BODY = [
-    'Write-Host \'=== Step 1. 구글시트 T&D 추출 ===\'',
-    '$sheetId = [regex]::Match($sheetUrl, \'/d/([^/]+)\').Groups[1].Value',
-    '$jsonUrl = \'https://docs.google.com/spreadsheets/d/\' + $sheetId + \'/gviz/tq?tqx=out:json&headers=0&sheet=\' + [Uri]::EscapeDataString(\'[DA] 메타\')',
-    '$raw     = (Invoke-WebRequest -Uri $jsonUrl -UseBasicParsing).Content',
-    '$headline = \'\'; $bodyText = \'\'',
-    '$evtKey = ($evtName -replace \'\\s\',\'\').ToLower()',
-    'try {',
-    '    $jsonStr = [regex]::Match($raw, \'(?s)\\{.*\\}\').Value',
-    '    $tbl = ($jsonStr | ConvertFrom-Json).table',
-    '    foreach ($row in $tbl.rows) {',
-    '        $cells = $row.c',
-    '        if (-not $cells -or $cells.Count -lt 5) { continue }',
-    '        $bVal = if ($cells[1] -and $cells[1].v) { [string]$cells[1].v } else { \'\' }',
-    '        if (-not $bVal) { continue }',
-    '        $bKey = ($bVal -replace \'\\s\',\'\').ToLower()',
-    '        if ($bKey -eq $evtKey -or ($evtKey -and $bKey.Contains($evtKey))) {',
-    '            $headline = if ($cells[3] -and $cells[3].v) { [string]$cells[3].v } else { \'\' }',
-    '            $bodyText = if ($cells[4] -and $cells[4].v) { [string]$cells[4].v } else { \'\' }',
-    '            break',
-    '        }',
-    '    }',
-    '} catch { Write-Host "[T&D 파싱 오류] $_" }',
-    'Write-Host "[T&D] 제목: \'$headline\'"',
-    'Write-Host "[T&D] 문구: \'$($bodyText.Substring(0,[Math]::Min(80,$bodyText.Length)))\'"',
-    'if (-not $headline) { Write-Host \'[T&D 경고] 제목을 찾지 못했습니다. 시트 이름([DA] 메타)과 프로모션값을 확인하세요.\' }',
-    '',
-    '$fileSrc = $localSrc',
-    'if (-not $fileSrc) { Write-Host \'[소재 경로 없음] 로컬 소재 경로를 넣고 스크립트를 다시 만들어 주세요.\'; exit 1 }',
-    'Write-Host "=== Step 2. 소재 폴더 읽기: $fileSrc ==="',
-    '$srcResolved = $null',
-    // 폴더 이름에 한글이 들어가면 자모가 갈라져 적힌 경우가 있어, 세 가지 모양으로 찾아본다
-    'foreach ($cand in @($fileSrc, $fileSrc.Normalize([Text.NormalizationForm]::FormC), $fileSrc.Normalize([Text.NormalizationForm]::FormD))) { if (Test-Path -LiteralPath $cand) { $srcResolved = $cand; break } }',
-    'if (-not $srcResolved) { Write-Host \'[경로 없음] 탐색기 주소창에 아래 경로가 열리는지 먼저 확인하세요:\'; Write-Host "  $fileSrc"; exit 1 }',
-    'Write-Host \'=== Step 3. 소재 목록 ===\'',
-    '$allFiles = @(Get-ChildItem -LiteralPath $srcResolved -File | Where-Object { $_.Name -match \'\\.(jpg|png)$\' } | Select-Object @{n=\'name\';e={$_.Name}},@{n=\'localFull\';e={$_.FullName}})',
-    'if ($allFiles.Count -eq 0) { Write-Host "[소재 없음] $srcResolved 에 jpg · png 가 없습니다."; exit 1 }',
-    'function Norm($s) { if ($s) { $s.Normalize([Text.NormalizationForm]::FormC) } else { \'\' } }',
-    '$sqFiles = @($allFiles | Where-Object { (Norm $_.name) -notmatch \'세로\' })',
-    '$vtMap = @{}',
-    'foreach ($vf in @($allFiles | Where-Object { (Norm $_.name) -match \'세로\' })) { $vb = ((Norm $vf.name) -replace \'\\.[^.]+$\',\'\') -replace \'\\s*\\(?세로\\)?\\s*\',\'\'; $vtMap[$vb] = $vf.name }',
-    'Write-Host "피드 소재 $($sqFiles.Count)개 / 세로 소재 $($vtMap.Count)개"',
-    'foreach ($sf in $sqFiles) { Write-Host "  $($sf.name)" }',
-    '',
-    'Write-Host \'=== Step 4. 업로드 ===\'',
-    'Add-Type -AssemblyName System.Drawing,System.Net.Http',
-    '$hc = [System.Net.Http.HttpClient]::new()',
-    '$hashes = @{}',
-    '$adNameMap = @{}',
-    '$urlMap = @{}',
-    'foreach ($sf in $allFiles) {',
-    '    $byt = [System.IO.File]::ReadAllBytes($sf.localFull)',
-    '    if (-not $byt -or $byt.Length -lt 100) { Write-Host "    [다운로드 데이터 없음 - 건너뜀] $($sf.name)"; continue }',
-    '    $ms2  = [System.IO.MemoryStream]::new($byt)',
-    '    $bmp  = [System.Drawing.Bitmap]::new($ms2)',
-    '    $enc2 = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq \'image/jpeg\' }',
-    '    $ep2  = [System.Drawing.Imaging.EncoderParameters]::new(1)',
-    '    $ep2.Param[0] = [System.Drawing.Imaging.EncoderParameter]::new([System.Drawing.Imaging.Encoder]::Quality,[long]85)',
-    '    $om   = [System.IO.MemoryStream]::new(); $bmp.Save($om,$enc2,$ep2)',
-    '    $jbyt = $om.ToArray()',
-    '    $sn   = (($sf.name -replace \'[^\\x00-\\x7F]\',\'\') -replace \'[^\\w\\-.]\',\'\') + \'.jpg\'',
-    '    $fm   = [System.Net.Http.MultipartFormDataContent]::new()',
-    '    $ic   = [System.Net.Http.ByteArrayContent]::new($jbyt)',
-    '    $ic.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new(\'image/jpeg\')',
-    '    $fm.Add($ic,\'filename\',$sn)',
-    '    $fm.Add([System.Net.Http.StringContent]::new($token),\'access_token\')',
-    '    $ur = $hc.PostAsync("https://graph.facebook.com/v21.0/$acct/adimages",$fm).GetAwaiter().GetResult()',
-    '    $uraw = [System.Text.Encoding]::UTF8.GetString($ur.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult())',
-    '    $uj = $uraw | ConvertFrom-Json',
-    '    $hash = ($uj.images.PSObject.Properties | Select-Object -First 1 -ExpandProperty Value).hash',
-    '    if (-not $hash) { Write-Host "    [업로드 실패] $($sf.name): $uraw" }',
-    '    $hashes[$sf.name] = $hash',
-    '    $mappedAdName = $sf.name -replace \'\\.[^.]+$\',\'\'',
-    '    $mappedUrl = $landingUrl',
-    '    foreach ($m in $adMapping) {',
-    '        if ($m.msgCode -and $sf.name -like "*$($m.msgCode)*") { $mappedAdName = $m.adName; if ($m.landingUrl) { $mappedUrl = $m.landingUrl }; break }',
-    '    }',
-    '    $adNameMap[$sf.name] = $mappedAdName',
-    '    $urlMap[$sf.name] = $mappedUrl',
-    '    Write-Host "  $($sf.name) -> hash:$hash / 광고명:$mappedAdName"',
-    '}',
-    '',
-    'Write-Host \'=== Step 5-0. 픽셀/캠페인 조회/생성 ===\'',
-    '$campaignId = \'\'',
-    '$campObjective = @@CAMPOBJ@@',
-    '$pixelId = \'\'',
-    'try {',
-    '    $pxR = Invoke-RestMethod "https://graph.facebook.com/v21.0/$acct/adspixels?fields=id&limit=1&access_token=$token"',
-    '    if ($pxR.data -and $pxR.data.Count -gt 0) { $pixelId = $pxR.data[0].id; Write-Host "픽셀: $pixelId" }',
-    '} catch {}',
-    '$igId = \'17841446818074113\'',
-    'Write-Host "Instagram 게재 계정: $igId (@minix_official)"',
-    'if (-not $igId) { Write-Host "경고: Instagram 계정을 못 찾음 — 인스타 게재위치 광고가 실패할 수 있습니다." }',
-    'try {',
-    '    $cpR = Invoke-RestMethod "https://graph.facebook.com/v21.0/$acct/campaigns?fields=id,name&limit=200&access_token=$token"',
-    '    $cpM = $cpR.data | Where-Object { $_.name -eq $campaignName } | Select-Object -First 1',
-    '    if ($cpM) { $campaignId = $cpM.id; Write-Host "캠페인 기존 사용: $campaignId" }',
-    '} catch { Write-Host "캠페인 조회 오류: $_" }',
-    'if (-not $campaignId) {',
-    '    Write-Host "캠페인 없음 → 생성 중..."',
-    '    try {',
-    '        $cpObj = [ordered]@{ name=$campaignName; objective=$campObjective; status=\'PAUSED\'; special_ad_categories=@(); is_adset_budget_sharing_enabled=$false }',
-    '        $cpJson = $cpObj | ConvertTo-Json -Compress -Depth 3',
-    '        $cpBytes = [System.Text.Encoding]::UTF8.GetBytes($cpJson)',
-    '        $cpReq = [System.Net.WebRequest]::Create("https://graph.facebook.com/v21.0/$acct/campaigns?access_token=$token")',
-    '        $cpReq.Method = \'POST\'; $cpReq.ContentType = \'application/json; charset=utf-8\'; $cpReq.ContentLength = $cpBytes.Length',
-    '        $cpReq.GetRequestStream().Write($cpBytes, 0, $cpBytes.Length)',
-    '        try { $cpRaw = [System.IO.StreamReader]::new($cpReq.GetResponse().GetResponseStream()).ReadToEnd() }',
-    '        catch [System.Net.WebException] { $cpRaw = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream()).ReadToEnd() }',
-    '        $newCpJ = $cpRaw | ConvertFrom-Json',
-    '        $campaignId = $newCpJ.id',
-    '        if (-not $campaignId) { Write-Host "캠페인 생성 오류: $cpRaw"; exit 1 }',
-    '        Write-Host "캠페인 생성 완료: $campaignId"',
-    '    } catch { Write-Host "캠페인 생성 오류: $_"; exit 1 }',
-    '}',
-    '',
-    'Write-Host \'=== Step 5. 광고세트 조회/생성 ===\'',
-    '$adsetId = \'\'',
-    'try {',
-    '    $asList = Invoke-RestMethod "https://graph.facebook.com/v21.0/$campaignId/adsets?fields=id,name&limit=500&access_token=$token"',
-    '    $asM = $asList.data | Where-Object { $_.name -eq $adsetName } | Select-Object -First 1',
-    '    if ($asM) { $adsetId = $asM.id; Write-Host "광고세트 기존 사용: $adsetId" }',
-    '} catch { Write-Host "광고세트 조회 오류: $_" }',
-    'if (-not $adsetId) {',
-    '    $inheritPO=\'\'; ',
-    '    try {',
-    '        $exAS = Invoke-RestMethod "https://graph.facebook.com/v21.0/$campaignId/adsets?fields=promoted_object,optimization_goal,billing_event&limit=1&access_token=$token"',
-    '        if ($exAS.data -and $exAS.data.Count -gt 0) {',
-    '            if ($exAS.data[0].promoted_object) { $inheritPO = $exAS.data[0].promoted_object | ConvertTo-Json -Compress -Depth 8 }',
-    '            if ($exAS.data[0].optimization_goal) { $optGoal = $exAS.data[0].optimization_goal }',
-    '            if ($exAS.data[0].billing_event) { $billEvt = $exAS.data[0].billing_event }',
-    '            Write-Host "기존 광고세트 설정 상속: 최적화=$optGoal / promoted_object=$(if($inheritPO){\'있음\'}else{\'없음\'})"',
-    '        }',
-    '    } catch {}',
-    '    $sDT = [DateTime]::ParseExact($startDate,\'yyyy-MM-dd HH:mm\',$null)',
-    '    $sTs = [DateTimeOffset]::new($sDT, [System.TimeZoneInfo]::Local.GetUtcOffset($sDT)).ToUnixTimeSeconds()',
-    '    if ($endDate) { $eDT = [DateTime]::ParseExact($endDate,\'yyyy-MM-dd HH:mm\',$null); $eTs = [DateTimeOffset]::new($eDT, [System.TimeZoneInfo]::Local.GetUtcOffset($eDT)).ToUnixTimeSeconds() }',
-    '    $tgt = [ordered]@{ geo_locations=@{countries=@(\'KR\')}; age_min=$ageMin; age_max=$ageMax; targeting_automation=@{advantage_audience=0} }',
-    '    @@GENDER@@',
-    '    $tgtJson = $tgt | ConvertTo-Json -Compress -Depth 4',
-    '    $asParams = @{ name=$adsetName; campaign_id=$campaignId; start_time=$sTs; optimization_goal=$optGoal; billing_event=$billEvt; bid_strategy=\'LOWEST_COST_WITHOUT_CAP\'; targeting=$tgtJson; status=\'PAUSED\' }',
-    '    if ($budgetType -eq \'lifetime\') { $asParams[\'lifetime_budget\'] = $budget } else { $asParams[\'daily_budget\'] = $budget }',
-    '    if ($endDate) { $asParams[\'end_time\'] = $eTs }',
-    '    if ($inheritPO) { $asParams[\'promoted_object\'] = $inheritPO }',
-    '    elseif ($pixelId -and $optGoal -eq \'OFFSITE_CONVERSIONS\') { $asParams[\'promoted_object\'] = \'{"pixel_id":"\'+$pixelId+\'","custom_event_type":"PURCHASE"}\' }',
-    '    try { $asJ = Invoke-RestMethod -Method Post -Uri "https://graph.facebook.com/v21.0/$acct/adsets?access_token=$token" -Body $asParams }',
-    '    catch [System.Net.WebException] { $asErrBody = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream()).ReadToEnd(); Write-Host "광고세트 오류: $asErrBody"; exit 1 }',
-    '    $adsetId = $asJ.id',
-    '    if (-not $adsetId) { Write-Host "오류: $($asJ|ConvertTo-Json)"; exit 1 }',
-    '    Write-Host "광고세트 생성 완료: $adsetId"',
-    '}',
-    '',
-    '$existingAdNames = @{}',
-    'try {',
-    '    $exAdsResp = Invoke-RestMethod "https://graph.facebook.com/v21.0/$adsetId/ads?fields=name&limit=500&access_token=$token"',
-    '    foreach ($ea in $exAdsResp.data) { $existingAdNames[$ea.name] = $true }',
-    '    if ($existingAdNames.Count -gt 0) { Write-Host "광고세트에 이미 존재하는 광고 $($existingAdNames.Count)건 확인 (중복 생성 방지)" }',
-    '} catch { Write-Host "기존 광고 조회 오류(무시하고 진행): $_" }',
-    '',
-    'Write-Host \'=== Step 6. 크리에이티브 + 광고 생성 ===\'',
-    'foreach ($sf in $sqFiles) {',
-    '    $fn = $sf.name',
-    '    $h  = $hashes[$fn]',
-    '    $cn = $adNameMap[$fn]',
-    '    if ($existingAdNames.ContainsKey($cn)) { Write-Host "  [건너뜀-이미존재] $cn"; continue }',
-    '    $adUrl = if ($urlMap.ContainsKey($fn) -and $urlMap[$fn]) { $urlMap[$fn] } else { $landingUrl }',
-    '    $vbKey = (Norm $fn) -replace \'\\.[^.]+$\',\'\'',
-    '    $vh = if ($vtMap.ContainsKey($vbKey)) { $hashes[$vtMap[$vbKey]] } else { \'\' }',
-    '    $oss = @{page_id=$pageId}',
-    '    if ($igId) { $oss[\'instagram_user_id\'] = $igId }',
-    '    if ($vh) {',
-    '        $afs = @{ ad_formats=@(\'SINGLE_IMAGE\'); images=@(@{hash=$h;adlabels=@(@{name=\'img_feed\'})},@{hash=$vh;adlabels=@(@{name=\'img_story\'})}); bodies=@(@{text=$bodyText}); titles=@(@{text=$headline}); link_urls=@(@{website_url=$adUrl}); call_to_action_types=@($cta); asset_customization_rules=@(@{customization_spec=@{publisher_platforms=@(\'facebook\',\'instagram\');facebook_positions=@(\'feed\');instagram_positions=@(\'stream\')};image_label=@{name=\'img_feed\'}},@{customization_spec=@{publisher_platforms=@(\'facebook\',\'instagram\');facebook_positions=@(\'story\',\'facebook_reels\');instagram_positions=@(\'story\',\'reels\')};image_label=@{name=\'img_story\'}}) }',
-    '        $afsJson = $afs | ConvertTo-Json -Compress -Depth 8',
-    '        $ossJson = $oss | ConvertTo-Json -Compress -Depth 3',
-    '        $crBody = \'name=\'+[Uri]::EscapeDataString($cn)+\'&object_story_spec=\'+[Uri]::EscapeDataString($ossJson)+\'&asset_feed_spec=\'+[Uri]::EscapeDataString($afsJson)+\'&access_token=\'+$token',
-    '        Write-Host "  [세로포함] $cn (피드=기본소재 / 스토리·릴스=세로)"',
-    '    } else {',
-    '        $oss[\'link_data\'] = @{link=$adUrl;message=$bodyText;name=$headline;image_hash=$h;call_to_action=@{type=$cta}}',
-    '        $story = $oss | ConvertTo-Json -Compress -Depth 5',
-    '        $crBody = \'name=\'+[Uri]::EscapeDataString($cn)+\'&object_story_spec=\'+[Uri]::EscapeDataString($story)+\'&access_token=\'+$token',
-    '    }',
-    '    $crC = [System.Net.Http.StringContent]::new($crBody,[System.Text.Encoding]::UTF8,\'application/x-www-form-urlencoded\')',
-    '    $crR = $hc.PostAsync("https://graph.facebook.com/v21.0/$acct/adcreatives",$crC).GetAwaiter().GetResult()',
-    '    $crRaw = [System.Text.Encoding]::UTF8.GetString($crR.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult())',
-    '    $crJ = $crRaw | ConvertFrom-Json',
-    '    $crId = $crJ.id',
-    '    if (-not $crId) { Write-Host "  [크리에이티브 실패] $cn : $crRaw"; continue }',
-    '    Write-Host "  크리에이티브 $cn : $crId"',
-    '    $adBody = \'name=\'+[Uri]::EscapeDataString($cn)+\'&adset_id=\'+$adsetId+\'&creative=\'+[Uri]::EscapeDataString(\'{"creative_id":"\'+$crId+\'"}\')+\'&status=PAUSED&access_token=\'+$token',
-    '    $adC = [System.Net.Http.StringContent]::new($adBody,[System.Text.Encoding]::UTF8,\'application/x-www-form-urlencoded\')',
-    '    $adR = $hc.PostAsync("https://graph.facebook.com/v21.0/$acct/ads",$adC).GetAwaiter().GetResult()',
-    '    $adRaw = [System.Text.Encoding]::UTF8.GetString($adR.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult())',
-    '    $adJ = $adRaw | ConvertFrom-Json',
-    '    if (-not $adJ.id) { Write-Host "  [광고 실패] $cn : $adRaw" } else { Write-Host "  광고 $cn : $($adJ.id)" }',
-    '}',
-    '',
-    'Write-Host \'\'',
-    'Write-Host \'=== 완료! Ads Manager에서 확인하세요 ===\'',
-  ];
-
-  const buildScript = () => {
-    const campObj = CAMPAIGN_OBJECTIVE[state.objective] || 'OUTCOME_SALES';
-    const body = PS_BODY.map((line) => line.replace('@@CAMPOBJ@@', psq(campObj)).replace('@@GENDER@@', genderLine()));
-    return [...psHeader(), ...body].join('\r\n');
-  };
-
   // 실행은 다른 곳에서 일어나므로, 원본이 실행 도중에야 냈던 오류를 여기서 미리 잡는다
-  // mode 가 'script' 면 예전 방식(.ps1) 기준으로 본다 — 그때는 소재 대신 폴더 경로가 있어야 한다.
-  const problems = (mode) => {
+  const problems = () => {
     const list = [];
     const min = parseInt(state.ageMin, 10);
     const max = parseInt(state.ageMax, 10);
@@ -5651,9 +5353,7 @@ if (adSetup) {
     if (!tr(state.promo)) list.push('행사명을 입력하세요.');
     if (!rows.length) list.push('[시트 조회] 를 눌러 소재 대응표를 먼저 만드세요. 없으면 광고명과 랜딩 URL 이 비어 들어갑니다.');
     if (!tr(state.sheetUrl)) list.push('구글시트 URL(T&D) 을 입력하세요. 없으면 제목·문구가 빈 채로 올라갑니다.');
-    if (mode === 'script') {
-      if (!tr(state.localPath)) list.push('로컬 소재 경로를 입력하세요. (폴더째 올릴 때 .ps1 이 읽는 폴더입니다)');
-    } else if (!adPicks().length) {
+    if (!adPicks().length) {
       list.push("소재 파일을 넣으세요. (이름에 '세로' 가 든 파일만 있으면 짝지을 기본 소재가 없습니다)");
     }
     if (!tr(state.campaignName)) list.push('캠페인명을 입력하세요.');
@@ -5666,12 +5366,6 @@ if (adSetup) {
     return list;
   };
 
-  const stampName = () => {
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${String(now.getFullYear()).slice(2)}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
-  };
-
   const addHistory = (name) => {
     if (!name) return;
     const at = new Date().toLocaleString('ko-KR');
@@ -5680,49 +5374,6 @@ if (adSetup) {
     else history.unshift({ name, at, acct: acctLabel() });
     history = history.slice(0, 50);
     saveHistory();
-  };
-
-  const makeScript = () => {
-    attempted = true;
-    if (problems('script').length) { script = null; return render(); }
-    script = { filename: `meta-ad-setup_${stampName()}.ps1`, text: buildScript(), at: new Date().toLocaleString('ko-KR'), ads: rows.length };
-    addHistory(tr(state.campaignName));
-    render();
-  };
-
-  const runCommand = () => `powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\\Downloads\\${script.filename}"`;
-
-  const download = () => {
-    if (!script) return;
-    // PowerShell 5.1 은 BOM 없는 .ps1 을 ANSI 로 읽어 한글이 깨진다
-    const url = URL.createObjectURL(new Blob([`\uFEFF${script.text}`], { type: 'application/octet-stream' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = script.filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
-
-  const copyText = (text, button) => {
-    const done = () => {
-      if (!button) return;
-      button.classList.add('is-copied');
-      window.setTimeout(() => button.classList.remove('is-copied'), 1200);
-    };
-    if (window.navigator.clipboard?.writeText) window.navigator.clipboard.writeText(text).then(done, () => window.prompt('복사하세요', text));
-    else window.prompt('복사하세요', text);
-    done();
-  };
-
-  // 폼이 바뀌면 이미 만든 스크립트는 옛것이 된다 (모르고 내려받지 않도록 표시만 해둔다)
-  const markStale = () => {
-    if (!script || script.stale) return;
-    script.stale = true;
-    adSetup.querySelector('.setup-done')?.classList.add('is-stale');
-    const warn = adSetup.querySelector('.setup-stale');
-    if (warn) warn.hidden = false;
   };
 
   // ── 화면 ─────────────────────────────────────────────────────────
@@ -5807,8 +5458,11 @@ if (adSetup) {
     return `<div class="setup-drop${picks.length ? ' has-file' : ''}">
         <input type="file" id="setup-files" accept="image/png,image/jpeg,video/mp4,video/quicktime" multiple hidden>
         <label for="setup-files" class="tool-add"><i data-lucide="image-plus"></i>소재 파일 넣기</label>
-        <span>탐색기에서 폴더를 열어 <b>이 칸에 끌어다 놓아도</b> 됩니다 · jpg · png · mp4 · mov</span>
+        <input type="file" id="setup-folder" webkitdirectory directory multiple hidden>
+        <label for="setup-folder" class="tool-copy"><i data-lucide="folder-open"></i>폴더 통째로 넣기</label>
+        <span>이 칸에 <b>끌어다 놓아도</b> 됩니다 · jpg · png · mp4 · mov</span>
       </div>
+      ${pickNote ? `<p class="setup-note">${pickNote}</p>` : ''}
       ${picks.length ? `<ul class="setup-picks">${picks.map((pick, i) => `<li${pick.story || isThumb(pick) ? ' class="is-story"' : ''}>
         <b>${escapeHtml(pick.name)}</b>
         <small>${pick.story ? '세로 — 스토리 · 릴스에 쓰입니다'
@@ -5834,29 +5488,6 @@ if (adSetup) {
       </div>
       <div class="setup-work-bar"><i style="width:${done}%"></i></div>
       <ol class="setup-work-lines">${work.lines.map((line) => `<li${/\[실패\]|\[멈춤\]/.test(line) ? ' class="is-bad"' : ''}>${escapeHtml(line)}</li>`).join('')}</ol>
-    </div>`;
-  };
-
-  const scriptBox = () => {
-    const list = attempted ? problems('script') : [];
-    if (list.length) return `<div class="setup-issues"><b>아래를 먼저 채워주세요</b><ul>${list.map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}</ul></div>`;
-    if (!script) return '';
-    return `<div class="setup-done${script.stale ? ' is-stale' : ''}">
-      <p class="setup-stale"${script.stale ? '' : ' hidden'}>입력값이 바뀌었습니다. [실행 스크립트 만들기] 를 다시 눌러주세요.</p>
-      <div class="setup-done-head">
-        <span class="setup-done-name"><b>${escapeHtml(script.filename)}</b><small>${escapeHtml(script.at)} 생성 · 소재 대응 ${script.ads}건</small></span>
-        <span class="setup-done-actions">
-          <button type="button" class="tool-add setup-download"><i data-lucide="download"></i>내려받기</button>
-          <button type="button" class="tool-copy setup-copy-cmd"><i data-lucide="terminal"></i>실행 명령 복사</button>
-          <button type="button" class="tool-copy setup-copy-script"><i data-lucide="copy"></i>스크립트 복사</button>
-        </span>
-      </div>
-      <ol class="setup-steps">
-        <li>내려받은 <code>${escapeHtml(script.filename)}</code> 를 <b>우클릭 → PowerShell에서 실행</b> 합니다.</li>
-        <li>또는 <b>Win+R</b> 실행창에 붙여넣습니다 · <code class="setup-cmd">${escapeHtml(runCommand())}</code></li>
-      </ol>
-      <button type="button" class="setup-toggle-script">${scriptOpen ? '스크립트 접기' : '스크립트 미리보기'}<i data-lucide="${scriptOpen ? 'chevron-up' : 'chevron-down'}"></i></button>
-      ${scriptOpen ? `<pre class="setup-script">${escapeHtml(script.text)}</pre>` : ''}
     </div>`;
   };
 
@@ -5903,9 +5534,6 @@ if (adSetup) {
       <section class="tool-card">
         <h3><span class="setup-req">소재</span>${picks.length ? `<small>${picks.length}개</small>` : ''}</h3>
         ${pickBox()}
-        <div class="tool-grid setup-grid">
-          ${textField('localPath', '로컬 소재 경로', { hint: '폴더째 올릴 때만 씁니다 — 아래 [예전 방식] 의 .ps1 이 이 폴더를 읽습니다. 화면에서 만들 때는 위에 파일을 넣으세요', placeholder: 'C:\\Users\\…\\소재폴더', wide: true })}
-        </div>
       </section>
 
       <section class="tool-card">
@@ -5954,19 +5582,6 @@ if (adSetup) {
         ${workBox()}
       </section>
 
-      <section class="tool-card setup-legacy">
-        <button type="button" class="setup-toggle-legacy">예전 방식 · PowerShell 스크립트 내려받기<i data-lucide="chevron-${scriptOn ? 'up' : 'down'}"></i></button>
-        ${scriptOn ? `<p class="setup-note">소재 <b>폴더째</b> 한 번에 올리고 싶을 때 씁니다 — 위 <b>로컬 소재 경로</b> 의 폴더를 통째로 읽습니다.
-          파일을 하나씩 넣지 않아도 되는 대신, 내려받은 .ps1 을 PowerShell 에서 직접 돌려야 합니다.</p>
-        <div class="tool-grid setup-grid">
-          ${textField('envDir', '.env 폴더', { hint: '토큰이 든 공유 폴더. 비우면 .ps1 이 있는 폴더부터 위로 찾습니다', placeholder: 'C:\\Users\\…\\공유_NAS수정판', wide: true })}
-        </div>
-        <div class="setup-run">
-          <button type="button" class="tool-copy setup-make"><i data-lucide="file-cog"></i>실행 스크립트 만들기</button>
-        </div>
-        ${scriptBox()}` : ''}
-      </section>
-
       <section class="tool-card">
         <div class="tool-list-head">
           <h3>만든 캠페인 <small>${history.length}건</small></h3>
@@ -5979,16 +5594,29 @@ if (adSetup) {
 
       <div class="tool-footer">
         <button type="button" class="tool-reset setup-reset"><i data-lucide="rotate-ccw"></i>입력값 비우기</button>
-        <small>파트 · 시트 URL · 소재 경로 · .env 폴더는 남겨둡니다. 고른 소재와 나머지 입력값을 되돌립니다.</small>
+        <small>파트 · 시트 URL · 행사명은 남겨둡니다. 넣어 둔 소재와 나머지 입력값을 되돌립니다.</small>
       </div>`;
     lucide.createIcons();
   };
 
-  // 고른 소재. change 는 파일 칸에서만 오고, 나머지 칸은 아래 리스너가 맡는다.
+  /* 넣은 소재. change 는 파일 · 폴더 칸에서만 오고, 나머지 칸은 아래 리스너가 맡는다.
+     폴더 칸(webkitdirectory)은 그 폴더의 **모든 파일**을 준다 — 소재가 아닌 것은
+     addFiles 가 걸러내므로, 몇 개를 받아 몇 개를 썼는지만 적어 준다. */
   adSetup.addEventListener('change', (event) => {
-    if (event.target.id !== 'setup-files') return;
-    addFiles(event.target.files);
-    event.target.value = '';   // 같은 파일을 다시 골라도 change 가 오게 비운다
+    const id = event.target.id;
+    if (id !== 'setup-files' && id !== 'setup-folder') return;
+    const picked = Array.from(event.target.files || []);
+    const before = picks.length;
+    addFiles(picked);
+    if (id === 'setup-folder') {
+      const folder = String((picked[0] || {}).webkitRelativePath || '').split('/')[0];
+      const added = picks.length - before;
+      pickNote = added
+        ? `<b>${escapeHtml(folder)}</b> 폴더에서 소재 ${added}개를 넣었습니다 (파일 ${picked.length}개 중).`
+        : `<b>${escapeHtml(folder)}</b> 폴더에는 넣을 소재가 없습니다 — jpg · png · mp4 · mov 만 받습니다 (파일 ${picked.length}개를 봤습니다).`;
+      render();
+    }
+    event.target.value = '';   // 같은 것을 다시 골라도 change 가 오게 비운다
   });
 
   // 탐색기에서 끌어다 놓기. 기본 동작(파일을 브라우저 탭으로 여는 것)을 막아야 한다.
@@ -6027,7 +5655,6 @@ if (adSetup) {
       if (box) box.innerHTML = comboInner();
     }
     save();
-    markStale();
   });
 
   adSetup.addEventListener('change', (event) => {
@@ -6035,7 +5662,6 @@ if (adSetup) {
     if (!field || (field.tagName !== 'SELECT' && field.type !== 'datetime-local')) return;
     state[field.dataset.field] = field.value;
     save();
-    if (script) script.stale = true;
     render();
   });
 
@@ -6051,7 +5677,6 @@ if (adSetup) {
       state.campaignName = campaign.dataset.campaign;
       campaigns.open = false;
       save();
-      if (script) script.stale = true;
       return render();
     }
     // 고르개 바깥을 눌렀으면 닫는다. 아래 처리는 누른 요소로 이어 가므로 여기서 다시 그려도 된다.
@@ -6084,24 +5709,17 @@ if (adSetup) {
       if (urlType) state.urlType = urlType.dataset.urltype;
       if (row) return selectRow(Number(row.dataset.row));
       save();
-      if (script) script.stale = true;
       return render();
     }
 
     if (event.target.closest('.setup-lookup')) return lookupSheet();
     if (event.target.closest('.setup-go')) return make();
-    if (event.target.closest('.setup-toggle-legacy')) { scriptOn = !scriptOn; return render(); }
     const drop = event.target.closest('[data-pick]');
     if (drop) {
       picks.splice(Number(drop.dataset.pick), 1);
-      markStale();
+      if (!picks.length) pickNote = '';
       return render();
     }
-    if (event.target.closest('.setup-make')) return makeScript();
-    if (event.target.closest('.setup-download')) return download();
-    if (event.target.closest('.setup-copy-cmd')) return copyText(runCommand(), event.target.closest('.setup-copy-cmd'));
-    if (event.target.closest('.setup-copy-script')) return copyText(script?.text || '', event.target.closest('.setup-copy-script'));
-    if (event.target.closest('.setup-toggle-script')) { scriptOpen = !scriptOpen; return render(); }
 
     if (event.target.closest('.setup-hist-clear')) {
       if (!window.confirm(`기록 ${history.length}건을 지울까요?`)) return;
@@ -6111,18 +5729,18 @@ if (adSetup) {
     }
 
     if (event.target.closest('.setup-reset')) {
-      if (!window.confirm('입력값을 비울까요? (파트 · 시트 URL · 소재 경로 · .env 폴더는 남습니다)')) return;
-      const keep = { part: state.part, sheetUrl: state.sheetUrl, localPath: state.localPath, promo: state.promo, envDir: state.envDir };
+      if (!window.confirm('입력값을 비울까요? (파트 · 시트 URL · 행사명은 남습니다)')) return;
+      const keep = { part: state.part, sheetUrl: state.sheetUrl, promo: state.promo };
       state = { ...DEFAULT_STATE, ...keep, startAt: todayAtMidnight() };
       rows = [];
       selectedIdx = -1;
       lookup = { state: 'idle', message: '' };
       tnd = null;
-      script = null;
       attempted = false;
       campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
       picks = [];
       work = null;
+      pickNote = '';
       save();
       return render();
     }
