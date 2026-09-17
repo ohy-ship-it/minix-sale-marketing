@@ -8314,6 +8314,9 @@ if (mediaPerformance) {
   // 이름 규칙이 매체마다 같아서([cj-260901]_none_cj) 이름만으로 같은 행사를 모을 수 있다.
   let crossText = '';     // 입력 중인 검색어
   let crossFor = '';      // 실제로 찾은 검색어 (결과가 어느 말로 나온 것인지)
+  /* 그 결과를 **어느 기간으로** 읽은 것인지. 위에서 날짜를 바꿔도 표는 그대로라서,
+     지금 고른 기간과 다르면 [새로고침] 에 표시를 해 둔다 (옛 숫자를 새 기간으로 오해하지 않게). */
+  let crossRange = { since: '', until: '' };
   let cross = {};         // 매체 → { status, error, rows, account, accountName }
   let crossOpen = [];     // 펼친 매체
 
@@ -8511,7 +8514,11 @@ if (mediaPerformance) {
         ${ROLLING.indexOf(rangeState().preset) >= 0 ? `<label class="perf-check"
           title="'최근 N일' 은 기본으로 어제까지 봅니다. 당일 수치는 아직 집계 중이라 늘어납니다.">
           <input type="checkbox" data-perf="today"${rangeState().today ? ' checked' : ''}>오늘 포함</label>` : ''}
-        ${isAll() ? '' : `<button type="button" class="tool-add" data-perf="reload"${status === 'loading' ? ' disabled' : ''}>
+        ${isAll()
+          ? `<button type="button" class="tool-add${crossStale() ? ' is-stale' : ''}" data-perf="cross-reload"${crossBusy() || !crossFor ? ' disabled' : ''}
+              title="${crossFor ? `'${escapeHtml(crossFor)}' 를 지금 고른 기간으로 다시 읽습니다 (담아 둔 값을 버립니다)` : '먼저 [찾기] 로 한 번 찾아 주세요'}">
+              <i data-lucide="refresh-cw"></i>${crossBusy() ? '불러오는 중…' : '새로고침'}</button>`
+          : `<button type="button" class="tool-add" data-perf="reload"${status === 'loading' ? ' disabled' : ''}>
           <i data-lucide="refresh-cw"></i>${status === 'loading' ? '불러오는 중…' : '새로고침'}</button>`}
       </div>
       <p class="perf-note">
@@ -8519,6 +8526,7 @@ if (mediaPerformance) {
         ${report ? ` · ${escapeHtml(report.account.name)}${report.account.timezone ? ` · ${escapeHtml(report.account.timezone)}` : ''}` : ''}
         ${report?.fetchedAt ? ` · 갱신 ${new Date(report.fetchedAt).toLocaleString('ko-KR')}${report.cached ? ' (담아 둔 값)' : ''}` : ''}
         ${PERF_NET_SOURCES.indexOf(state.source) >= 0 ? `<em class="perf-net">${PERF_NET_TEXT}</em>` : ''}
+        ${crossStale() ? `<em class="perf-stale">아래 표는 <b>${escapeHtml(crossRange.since)} ~ ${escapeHtml(crossRange.until)}</b> 로 읽은 값입니다 — [새로고침] 을 누르면 위 기간으로 다시 읽습니다.</em>` : ''}
       </p>
       ${listNote ? `<p class="perf-warn">계정 목록을 받지 못해 <b>기본 계정 ${source().fallback.length}개</b>로 채웠습니다. 성과 숫자는 그대로입니다.<small>${escapeHtml(listNote)}</small></p>` : ''}
       ${coverageNote()}
@@ -8993,7 +9001,9 @@ if (mediaPerformance) {
     });
   };
 
-  const crossAsk = (key, since, until, wanted, only) => {
+  /* fresh 를 주면 스크립트가 담아 둔 값을 버리고 매체에 다시 묻는다.
+     [새로고침] 이 이 길로 온다 — 안 그러면 5분 동안 같은 숫자만 돌아온다. */
+  const crossAsk = (key, since, until, wanted, only, fresh) => {
     if (only && !only.length) return Promise.resolve({ rows: [], note: '', hits: [], accountName: '', tried: 0 });
     const words = crossWords(wanted);        // 줄마다 다시 가르지 않게 한 번만 갈라 둔다
     return askAccounts(key).then((list) => {
@@ -9002,6 +9012,7 @@ if (mediaPerformance) {
       const trouble = [];
       return Promise.all(use.map((one) => ask({
         action: `${key}Report`, account: one.accountId, since: since, until: until,
+        refresh: fresh || undefined,
       })
         .then((body) => {
           const named = {};
@@ -9042,16 +9053,26 @@ if (mediaPerformance) {
     });
   };
 
+  /* 표에 보이는 숫자가 지금 고른 기간의 것인가. 다르면 [새로고침] 에 표시를 켠다. */
+  const crossStale = () => {
+    if (!crossFor || crossBusy()) return false;
+    const now = currentRange();
+    return crossRange.since !== now.since || crossRange.until !== now.until;
+  };
+
   const crossProdText = () => CROSS_PRODUCTS
     .filter((one) => crossProd.indexOf(one.id) >= 0).map((one) => one.name).join(' · ');
 
-  const crossSearch = () => {
-    const wanted = crossText.trim();
+  /* fresh 를 주면 [새로고침] 이다 — 적어 둔 말 그대로, **지금 고른 기간**으로 다시 읽는다.
+     검색칸을 비워 두었어도 앞서 찾은 말로 다시 읽는다 (기간만 바꾸고 누르는 자리라서). */
+  const crossSearch = (fresh) => {
+    const wanted = crossText.trim() || (fresh ? String(crossFor || '').trim() : '');
     if (!wanted) return;
     const period = currentRange();
+    crossRange = { since: period.since, until: period.until };
     // 단계 값은 단계 날짜에만 매여 있다. 조회 기간을 바꿔도 그대로 두고,
-    // 찾는 말이 바뀔 때만 버린다.
-    if (wanted !== phaseFor) { phaseData = {}; phaseFor = ''; }
+    // 찾는 말이 바뀔 때만 버린다. 새로고침은 단계까지 다시 읽는다.
+    if (wanted !== phaseFor || fresh) { phaseData = {}; phaseFor = ''; }
     crossFor = wanted;
     /* 이 행사의 단계 날짜는 시트에 있다. 사본으로 먼저 맞춰 두고, 찾을 때마다 시트를
        다시 읽어 남이 고친 값을 따라간다 (그동안 내가 적은 것은 덮지 않는다). */
@@ -9064,7 +9085,7 @@ if (mediaPerformance) {
     render();
 
     crossHits = {};
-    Promise.all(Object.keys(SOURCES).map((key) => crossAsk(key, period.since, period.until, wanted)
+    Promise.all(Object.keys(SOURCES).map((key) => crossAsk(key, period.since, period.until, wanted, null, fresh)
       .then((got) => {
         crossHits[key] = got.hits;
         cross[key] = {
@@ -10086,6 +10107,7 @@ if (mediaPerformance) {
       return;
     }
     if (event.target.closest('[data-perf="cross-go"]')) { crossSearch(); return; }
+    if (event.target.closest('[data-perf="cross-reload"]')) { crossSearch(true); return; }
     if (event.target.closest('[data-cross="wait-close"]')) { crossWaitOff = true; render(); return; }
     if (event.target.closest('[data-perf="wait-close"]')) { loadWaitOff = true; render(); return; }
     const mixBtn = event.target.closest('[data-cross="mix"]');

@@ -1662,4 +1662,8 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .tr-sum .tr-week-file{font-weight:400;color:#a5a49f}
 /* 붙인 파일 담아 두기 */
 .tr-save.is-stale{border-color:#f0dcc2;background:#fdf6ec;color:#96632a}
+
+/* 전매체 — 표가 지금 고른 기간의 것이 아닐 때. 옛 숫자를 새 기간으로 오해하지 않게 표시한다 */
+.tool-add.is-stale{border-color:#f0dcc2;background:#fdf6ec;color:#96632a}
+.perf-stale{display:block;margin-top:4px;font-style:normal;color:#96632a}
 .tr-saved{font-size:10.5px;color:#a5a49f;align-self:center}
