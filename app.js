@@ -5338,7 +5338,7 @@ if (adSetup) {
 
     work.running = false;
     const done = work.total - work.failed;
-    if (done) addHistory(tr(state.campaignName), base.campaign);
+    if (done) addHistory(tr(state.campaignName));
     say(work.failed
       ? `끝났습니다 — ${done}건 성공 · ${work.failed}건 실패. 모두 일시중지(PAUSED) 상태입니다.`
       : `끝났습니다 — ${done}건 모두 만들었습니다. 일시중지(PAUSED) 상태이니 Ads Manager 에서 확인 후 켜 주세요.`);
@@ -5366,43 +5366,25 @@ if (adSetup) {
     return list;
   };
 
-  /* 만든 캠페인을 적어 둔다. **계정과 캠페인 번호까지** 담는다 —
-     그래야 눌렀을 때 그 계정의 그 캠페인이 골라진 채로 광고관리자가 열린다. */
-  const addHistory = (name, campaignId) => {
+  const addHistory = (name) => {
     if (!name) return;
     const at = new Date().toLocaleString('ko-KR');
     const found = history.find((entry) => entry.name === name);
-    if (found) {
-      found.at = at;
-      found.acct = acctLabel();
-      found.acctId = state.acct;
-      if (campaignId) found.campaign = String(campaignId);
-    } else {
-      history.unshift({ name, at, acct: acctLabel(), acctId: state.acct,
-        campaign: campaignId ? String(campaignId) : '' });
-    }
+    if (found) found.at = at;
+    else history.unshift({ name, at, acct: acctLabel() });
     history = history.slice(0, 50);
     saveHistory();
   };
 
-  /* 메타 광고관리자 주소. 사람이 늘 보던 그 화면 그대로 열리도록 **열 구성까지 붙여 둔다.**
-     계정은 그 캠페인을 만든 계정으로 바꿔 넣고, 캠페인 번호를 알면 그것만 골라 연다
-     (모르는 옛 기록은 캠페인 목록만 열린다). */
-  const ADS_TAIL = 'business_id=717291962829829&global_scope_id=717291962829829'
+  // 메타 광고관리자 (열 구성까지 붙은 주소 그대로)
+  const ADS_MANAGER = 'https://adsmanager.facebook.com/adsmanager/manage/campaigns'
+    + '?act=370223898721955&business_id=717291962829829&global_scope_id=717291962829829'
     + '&columns=name%2Cdelivery%2Crecommendations_guidance%2Cattribution_setting%2Cresults'
     + '%2Ccost_per_result%2Cbudget%2Cspend%2Cimpressions%2Creach%2Cfrequency'
     + '%2Cunique_actions%3Alink_click%2Cactions%3Aoffsite_conversion.fb_pixel_purchase'
     + '%2Cschedule%2Cend_time%2Cbid%2Clast_significant_edit%2Cquality_score_organic'
     + '%2Cquality_score_ectr%2Cquality_score_ecvr%2Ccampaign_name'
     + '&attribution_windows=default';
-  const ADS_DEFAULT_ACCT = '370223898721955';   // 미닉스 (계정을 모르는 옛 기록이 갈 곳)
-
-  const adsManagerUrl = (entry) => {
-    const acct = String((entry && entry.acctId) || '').replace('act_', '') || ADS_DEFAULT_ACCT;
-    const pick = entry && entry.campaign
-      ? `&selected_campaign_ids=${encodeURIComponent(entry.campaign)}` : '';
-    return `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${acct}&${ADS_TAIL}${pick}`;
-  };
 
   // ── 화면 ─────────────────────────────────────────────────────────
   const pills = (attr, items, current) => `<div class="setup-pills">${items
@@ -5616,8 +5598,8 @@ if (adSetup) {
           <div class="tool-list-actions"><button type="button" class="tool-clear setup-hist-clear"${history.length ? '' : ' disabled'}>기록 비우기</button></div>
         </div>
         ${history.length
-          ? `<ul class="setup-hist">${history.map((entry) => `<li><a href="${escapeHtml(adsManagerUrl(entry))}"
-            target="_blank" rel="noopener" title="메타 광고관리자에서 열기${entry.campaign ? ' (이 캠페인만 골라서)' : ''}">
+          ? `<ul class="setup-hist">${history.map((entry) => `<li><a href="${escapeHtml(ADS_MANAGER)}"
+            target="_blank" rel="noopener" title="메타 광고관리자에서 열기">
             <span><b>${escapeHtml(entry.name)}</b><small>${escapeHtml(entry.acct || '')}${entry.acct ? ' · ' : ''}${escapeHtml(entry.at)}</small></span>
             <i data-lucide="external-link"></i></a></li>`).join('')}</ul>`
           : '<p class="tool-empty">아직 만든 캠페인이 없습니다.</p>'}
