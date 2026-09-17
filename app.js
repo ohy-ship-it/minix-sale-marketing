@@ -11538,6 +11538,63 @@ if (eventResult) {
   let fileNote = '';
   let open = '';                   // 펼친 프로모션
 
+  /* 붙인 파일을 **브라우저에 담아 둔다.** 새로고침하면 사라지던 것을 [저장] 한 번으로 남긴다.
+     시트에 두지 않는 까닭: 전매체 파일은 한 달치가 수백 KB라 시트 칸(5만 자)에 안 들어가고,
+     한 사람이 자기 화면에서 붙였다 뺐다 하는 값이라 팀이 같이 볼 값도 아니다.
+     (판매채널 이름은 팀이 함께 보는 값이라 지금도 시트에 담는다 — 그것과 다르다)
+     담는 것은 **파일뿐**이다. 달 · 펼친 줄처럼 금방 다시 고르는 것은 담지 않는다. */
+  const SAVE_KEY = 'minix-trend-files-v1';
+  let savedAt = '';                // 마지막으로 담은 시각 (없으면 담은 적 없다)
+  let savedMark = '';              // 그때 담은 파일의 표 — 지금과 다르면 '저장 안 됨' 으로 알린다
+
+  // 파일이 바뀌었는지만 알면 되므로 이름과 개수로 가볍게 표를 만든다
+  const fileMark = () => JSON.stringify([
+    files.map((one) => one.name),
+    Object.keys(byChannel).sort().map((key) => [key, (byChannel[key] || []).map((one) => one.name)]),
+  ]);
+
+  const restoreFiles = () => {
+    let kept = null;
+    try { kept = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (error) { kept = null; }
+    if (!kept || typeof kept !== 'object') return;
+    files = Array.isArray(kept.files) ? kept.files : [];
+    Object.keys(kept.byChannel || {}).forEach((key) => { byChannel[key] = kept.byChannel[key]; });
+    savedAt = String(kept.at || '');
+    savedMark = fileMark();
+  };
+
+  const saveFiles = () => {
+    const mark = fileMark();
+    const empty = !files.length && !Object.keys(byChannel).length;
+    try {
+      if (empty) localStorage.removeItem(SAVE_KEY);
+      else localStorage.setItem(SAVE_KEY, JSON.stringify({ at: new Date().toISOString(), files, byChannel }));
+    } catch (error) {
+      // 브라우저 저장칸이 꽉 찼을 때가 대부분이다. 무엇을 하면 되는지 함께 적는다.
+      fileNote = `<b>담지 못했습니다</b> — ${escape(error.message)} `
+        + '(파일이 너무 많으면 안 쓰는 달의 파일을 빼고 다시 저장해 주세요)';
+      render();
+      return;
+    }
+    savedAt = empty ? '' : new Date().toISOString();
+    savedMark = mark;
+    fileNote = empty ? '담아 둔 파일을 비웠습니다.'
+      : `파일 ${num(files.length + Object.keys(byChannel)
+        .reduce((sum, key) => sum + (byChannel[key] || []).length, 0))}개를 담았습니다 — 새로고침해도 그대로 있습니다.`;
+    render();
+  };
+
+  // 담을 것이 있는데 아직 안 담았을 때만 단추에 표를 낸다
+  const anyFile = () => files.length + Object.keys(byChannel)
+    .reduce((sum, key) => sum + (byChannel[key] || []).length, 0);
+  const dirty = () => anyFile() > 0 && savedMark !== fileMark();
+
+  const savedText = () => {
+    if (!savedAt) return '';
+    const when = new Date(savedAt);
+    return isNaN(when.getTime()) ? '' : when.toLocaleString('ko-KR');
+  };
+
   // 돈은 통째로 적는다 (줄여 쓰지 않는다). 0 은 '—' 로 둔다 — 0원과 '아직 없음'은 다르다.
   const money = (value) => (Number(value) ? won(value) : '—');
 
@@ -11665,24 +11722,31 @@ if (eventResult) {
   const pctText = (value) => (value === null ? '—' : perfPercent(value));
   const moneyText = (value) => (value === null ? '—' : won(Math.round(value)));
 
-  const HEAD = ['판매채널', '프로모션명', '라이브기간', '광고기간', '집행매체', '광고비', '전환수', '전환값',
-    'CPS', 'CVR', 'ROAS', 'CPM', 'CPC', 'CTR', '파일'];
+  /* 지표 차례는 **한 군데서 정한다** — 이 화면의 표가 셋(프로모션 줄 · 주차별 · 상세)이라
+     따로 적어 두면 곧 서로 어긋난다. 이름과 계산을 짝지어 두고 모두 이 목록을 쓴다.
+     차례: 광고비 → 전환수 → 전환값 → ROAS → CPS → CVR → CPM → CPC → CTR */
+  const METRICS = [
+    { name: '광고비', cell: (one) => money(one.spend) },
+    { name: '전환수', cell: (one) => (one.conv ? num(one.conv) : '—') },
+    { name: '전환값', cell: (one) => money(one.rev) },
+    { name: 'ROAS', cell: (one) => (one.spend ? perfRoas(ratio(one.rev, one.spend) || 0) : '—') },
+    { name: 'CPS', cell: (one) => moneyText(ratio(one.spend, one.conv)) },
+    { name: 'CVR', cell: (one) => pctText(ratio(one.conv, one.clk)) },
+    { name: 'CPM', cell: (one) => moneyText(ratio(one.spend * 1000, one.imp)) },
+    { name: 'CPC', cell: (one) => moneyText(ratio(one.spend, one.clk)) },
+    { name: 'CTR', cell: (one) => pctText(ratio(one.clk, one.imp)) },
+  ];
+  const metricHeads = () => METRICS.map((one) => `<th class="perf-num">${escape(one.name)}</th>`).join('');
+  const metricRow = (sum) => METRICS.map((one) => `<td class="perf-num">${one.cell(sum)}</td>`).join('');
+
+  const HEAD = ['판매채널', '프로모션명', '라이브기간', '광고기간', '집행매체']
+    .concat(METRICS.map((one) => one.name)).concat(['파일']);
   const HEAD_NUM_FROM = 5;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
   const metricCells = (got) => {
     if (!got) return `<td class="tr-none" colspan="${HEAD.length - HEAD_NUM_FROM}">파일을 붙이면 채워집니다</td>`;
-    return [
-      `<td class="tr-media">${got.media.length ? escape(got.media.join(' · ')) : '—'}</td>`,
-      `<td class="perf-num">${money(got.spend)}</td>`,
-      `<td class="perf-num">${got.conv ? num(got.conv) : '—'}</td>`,
-      `<td class="perf-num">${money(got.rev)}</td>`,
-      `<td class="perf-num">${moneyText(ratio(got.spend, got.conv))}</td>`,
-      `<td class="perf-num">${pctText(ratio(got.conv, got.clk))}</td>`,
-      `<td class="perf-num">${got.spend ? perfRoas(ratio(got.rev, got.spend) || 0) : '—'}</td>`,
-      `<td class="perf-num">${moneyText(ratio(got.spend * 1000, got.imp))}</td>`,
-      `<td class="perf-num">${moneyText(ratio(got.spend, got.clk))}</td>`,
-      `<td class="perf-num">${pctText(ratio(got.clk, got.imp))}</td>`,
-    ].join('');
+    return `<td class="tr-media">${got.media.length ? escape(got.media.join(' · ')) : '—'}</td>`
+      + metricRow(got);
   };
 
   /* ── 판매채널 하나를 펼쳐 본다 ──────────────────────────────────
@@ -11823,7 +11887,7 @@ if (eventResult) {
       <div class="tool-table-wrap"><table class="tool-table tr-split">
         <thead><tr><th>이름</th><th class="perf-num">광고비</th><th class="perf-num">노출</th>
           <th class="perf-num">클릭</th><th class="perf-num">전환수</th><th class="perf-num">전환값</th>
-          <th class="perf-num">CPS</th><th class="perf-num">CTR</th><th class="perf-num">ROAS</th></tr></thead>
+          <th class="perf-num">ROAS</th><th class="perf-num">CPS</th><th class="perf-num">CTR</th></tr></thead>
         <tbody>${merged.map((one) => `<tr>
           <td>${escape(one.name)}</td>
           <td class="perf-num">${money(one.spend)}</td>
@@ -11831,9 +11895,9 @@ if (eventResult) {
           <td class="perf-num">${num(one.linkClicks || one.clicks)}</td>
           <td class="perf-num">${one.purchase ? num(one.purchase) : '—'}</td>
           <td class="perf-num">${money(one.revenue)}</td>
+          <td class="perf-num">${one.spend ? perfRoas(ratio(one.revenue, one.spend) || 0) : '—'}</td>
           <td class="perf-num">${moneyText(ratio(one.spend, one.purchase))}</td>
           <td class="perf-num">${pctText(ratio(one.linkClicks || one.clicks, one.impressions))}</td>
-          <td class="perf-num">${one.spend ? perfRoas(ratio(one.revenue, one.spend) || 0) : '—'}</td>
         </tr>`).join('')}</tbody>
       </table></div>`;
   };
@@ -11860,26 +11924,31 @@ if (eventResult) {
         + '내려받은 파일을 붙이면 여기서 주차별로 갈라 보여 드립니다.</p>';
     }
     const lines = packs.map((one) => ({ ...one, sum: sumOf(one.rows) }));
-    const chart = vizBars(lines.map((one) => ({ name: weekName(one.range), value: one.sum.spend })),
-      (value) => won(value), '광고비');
-    return `${chart}
-      <div class="tool-table-wrap"><table class="tool-table tr-split">
-        <thead><tr><th>주차</th><th>기간</th><th>파일</th><th class="perf-num">광고비</th>
-          <th class="perf-num">전환수</th><th class="perf-num">전환값</th>
-          <th class="perf-num">CPS</th><th class="perf-num">CVR</th><th class="perf-num">ROAS</th></tr></thead>
-        <tbody>${lines.map((one) => `<tr>
+    /* 합계는 **줄을 다 더해 다시 계산한다** — 주차별 ROAS · CPS 를 평균 내면 틀린다
+       (광고비가 큰 주가 더 무겁다). 그래서 원래 줄을 통째로 모아 한 번에 센다. */
+    const whole = sumOf(packs.reduce((all, one) => all.concat(one.rows), []));
+    const wide = { since: '', until: '' };
+    packs.forEach((one) => {
+      if (one.range.since && (!wide.since || one.range.since < wide.since)) wide.since = one.range.since;
+      if (one.range.until && (!wide.until || one.range.until > wide.until)) wide.until = one.range.until;
+    });
+    return `<div class="tool-table-wrap"><table class="tool-table tr-split">
+        <thead><tr><th>주차</th><th>기간</th><th>파일</th>${metricHeads()}</tr></thead>
+        <tbody>
+          <tr class="tr-sum">
+            <td><b>합계</b></td>
+            <td>${escape(span(wide.since, wide.until)) || '<span class="tool-blank">—</span>'}</td>
+            <td class="tr-week-file">${num(packs.length)}개 파일</td>
+            ${metricRow(whole)}
+          </tr>
+          ${lines.map((one) => `<tr>
           <td><b>${escape(weekName(one.range))}</b></td>
           <td>${escape(span(one.range.since, one.range.until)) || '<span class="tool-blank">—</span>'}</td>
           <td class="tr-week-file">${escape(one.name)}</td>
-          <td class="perf-num">${money(one.sum.spend)}</td>
-          <td class="perf-num">${one.sum.conv ? num(one.sum.conv) : '—'}</td>
-          <td class="perf-num">${money(one.sum.rev)}</td>
-          <td class="perf-num">${moneyText(ratio(one.sum.spend, one.sum.conv))}</td>
-          <td class="perf-num">${pctText(ratio(one.sum.conv, one.sum.clk))}</td>
-          <td class="perf-num">${one.sum.spend ? perfRoas(ratio(one.sum.rev, one.sum.spend) || 0) : '—'}</td>
+          ${metricRow(one.sum)}
         </tr>`).join('')}</tbody>
       </table></div>
-      ${packs.length === 1 ? '<p class="perf-note">파일이 하나라 한 줄입니다 — 주차마다 따로 내려받아 붙이면 줄이 늘어납니다.</p>' : ''}`;
+      ${packs.length === 1 ? '<p class="perf-note">파일이 하나라 합계와 같습니다 — 주차마다 따로 내려받아 붙이면 줄이 늘어납니다.</p>' : ''}`;
   };
 
   const detailCard = (channel) => {
@@ -11983,6 +12052,12 @@ if (eventResult) {
             <input type="file" accept=".json,application/json" multiple data-tr="file" hidden>
           </label>
           ${files.length ? '<button type="button" class="tool-copy-all" data-tr="drop"><i data-lucide="x"></i>파일 다 빼기</button>' : ''}
+          <button type="button" class="tool-copy-all tr-save${dirty() ? ' is-stale' : ''}"
+            data-tr="save" title="붙인 파일을 이 브라우저에 담아 둡니다 (새로고침해도 남습니다 · 팀에 공유되지는 않습니다)">
+            <i data-lucide="save"></i>저장</button>
+          <span class="tr-saved">${dirty()
+            ? (savedAt ? '바뀐 것이 있습니다 — 저장하세요' : '저장하면 새로고침해도 남습니다')
+            : (savedAt ? `담아 둠 · ${escape(savedText())}` : '')}</span>
           <button type="button" class="tool-copy-all" data-tr="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
         </div>
         ${files.length ? `<div class="tr-files">${files.map((one, at) => {
@@ -12093,6 +12168,7 @@ if (eventResult) {
     if (!hit) return;
     const what = hit.dataset.tr;
     if (what === 'reload') { load(); return; }
+    if (what === 'save') { saveFiles(); return; }
     if (what === 'drop') { files = []; fileNote = ''; open = ''; render(); return; }
     if (what === 'dropone') {
       files.splice(Number(hit.dataset.at), 1);
@@ -12129,6 +12205,7 @@ if (eventResult) {
     }
   });
 
+  restoreFiles();
   openViewOnce(eventResult, load);
 }
 

@@ -1648,3 +1648,9 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .tr-chip button:hover{color:#d44c47}
 .tr-chip svg{width:12px}
 .tr-week-file{color:#a5a49f;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+/* 주차별 맨 위 합계 줄 — 그래프를 걷어 내고 그 자리에 숫자로 둔다 */
+.tr-sum td{background:#f7f7f4;font-weight:700;border-bottom:2px solid #e6e5e0}
+.tr-sum .tr-week-file{font-weight:400;color:#a5a49f}
+/* 붙인 파일 담아 두기 */
+.tr-save.is-stale{border-color:#f0dcc2;background:#fdf6ec;color:#96632a}
+.tr-saved{font-size:10.5px;color:#a5a49f;align-self:center}
