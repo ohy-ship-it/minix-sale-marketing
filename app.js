@@ -4811,11 +4811,11 @@ if (onboarding) {
 }
 
 // ── 광고자동 세팅 · 메타 광고 세팅 ──────────────────────────────────
-// 원본은 사내 배포용 HTA (공유_NAS수정판/meta-ad-setup.hta) 다.
-// 브라우저는 NAS 를 마운트하거나 PowerShell 을 돌릴 수 없으므로 역할을 나눈다.
-//   · 이 화면      = 폼 · 시트 조회 · 검증 · 실행 스크립트 생성
-//   · 내려받은 .ps1 = NAS 접근 · 소재 업로드 · 메타 API 호출 (원본과 같은 코드)
-// 토큰과 NAS 비밀번호는 브라우저에 저장하지 않는다. 스크립트가 .env 를 직접 읽는다.
+// 소재는 사람이 화면에 **파일로 넣고**, 메타 API 는 서버(Apps Script)가 부른다.
+// 토큰은 브라우저에 두지 않는다 — 그림만 보낸다.
+//
+// 예전 방식(.ps1)도 접어서 남겨 두었다. 소재 폴더를 통째로 올리고 싶을 때 쓴다.
+// 그쪽은 **로컬 폴더만** 읽는다 (NAS 는 더 쓰지 않는다).
 const adSetup = document.querySelector('#ad-setup');
 if (adSetup) {
   const STORAGE_KEY = 'minix-ad-setup-v1';
@@ -4864,7 +4864,7 @@ if (adSetup) {
 
   const DEFAULT_STATE = {
     acct: '', part: PARTS[0], purpose: '', urlType: 'url',
-    promo: '', sheetUrl: '', nasPath: '', localPath: '', envDir: '',
+    promo: '', sheetUrl: '', localPath: '', envDir: '',
     campaignName: '', adsetName: '',
     budget: '', budgetType: 'daily',
     objective: '구매', cta: 'SHOP_NOW',
@@ -5088,8 +5088,7 @@ if (adSetup) {
     if (redraw) render();
   };
 
-  /* 끌어다 놓은 소재. NAS 폴더를 탐색기에서 열어 그대로 끌어오면 된다 —
-     브라우저는 NAS 를 마운트하지 못하지만, 사람이 연 폴더의 파일은 읽을 수 있다.
+  /* 넣어 둔 소재. 탐색기에서 폴더를 열어 그대로 끌어오면 된다.
 
      이름에 '세로' 가 든 파일은 따로 둔다. 같은 이름의 기본 소재와 짝지어
      **피드는 기본 · 스토리와 릴스는 세로**로 올라간다 (.ps1 이 하던 규칙 그대로). */
@@ -5364,7 +5363,7 @@ if (adSetup) {
       '$OutputEncoding = [System.Text.Encoding]::UTF8',
       'try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}',
       '',
-      '# 토큰과 NAS 비밀번호는 브라우저에 저장하지 않는다. 여기서 .env 를 직접 읽는다.',
+      '# 토큰은 브라우저에 저장하지 않는다. 여기서 .env 를 직접 읽는다.',
       `$envDir = ${psq(state.envDir)}`,
       '$envCandidates = @()',
       'if ($envDir) { $envCandidates += $envDir }',
@@ -5394,15 +5393,11 @@ if (adSetup) {
       '}',
       "$token     = $envMap['META_ACCESS_TOKEN']",
       "$pageId    = $envMap['META_PAGE_ID']",
-      "$nasH      = $envMap['NAS_HOST']",
-      "$nasU      = $envMap['NAS_ID']",
-      "$nasP      = $envMap['NAS_PW']",
       'if (-not $token) { Write-Host "[토큰 없음] $envFile 에 META_ACCESS_TOKEN 이 없습니다."; exit 1 }',
       '',
       `$acct      = ${psq(state.acct)}`,
       `$sheetUrl  = ${psq(tr(state.sheetUrl))}`,
       `$evtName   = ${psq(tr(state.promo))}`,
-      `$nasSrc    = ${psq(tr(state.nasPath))}`,
       `$localSrc  = ${psq(tr(state.localPath))}`,
       `$landingUrl = ${psq(urlOf(rows[selectedIdx] || {}, state.urlType))}`,
       `$adsetName    = ${psq(tr(state.adsetName))}`,
@@ -5467,76 +5462,16 @@ if (adSetup) {
     'Write-Host "[T&D] 문구: \'$($bodyText.Substring(0,[Math]::Min(80,$bodyText.Length)))\'"',
     'if (-not $headline) { Write-Host \'[T&D 경고] 제목을 찾지 못했습니다. 시트 이름([DA] 메타)과 프로모션값을 확인하세요.\' }',
     '',
-    '$fileSrc = \'\'',
-    'if ($localSrc) { $fileSrc = $localSrc }',
-    'elseif ($nasSrc) {',
-    '    $p = $nasSrc -replace \'/\',\'\\\'',
-    '    if ($p.StartsWith(\'\\\\\')) { $fileSrc = $p }',
-    '    else { $ip = [regex]::Match($nasH,\'\\d+\\.\\d+\\.\\d+\\.\\d+\').Value; $fileSrc = \'\\\\\' + $ip + \'\\\' + $p.TrimStart(\'\\\') }',
-    '}',
-    'if ($fileSrc) {',
-    '    Write-Host "=== Step 2. 로컬/UNC 소재 사용 (NAS API 건너뜀): $fileSrc ==="',
-    '    if ($fileSrc.StartsWith(\'\\\\\')) {',
-    '        $srv = $fileSrc.Substring(2).Split(\'\\\')[0]',
-    '        $parts = $fileSrc.Substring(2).Split(\'\\\')',
-    '        $shareRoot = if ($parts.Count -ge 2) { \'\\\\\' + $parts[0] + \'\\\' + $parts[1] } else { \'\\\\\' + $srv }',
-    '        # 연결 상태를 추측하지 말고, 실제로 열리는지 먼저 본다.',
-    '        # Get-SmbConnection 은 유휴·오프라인이면 비어 있고, Get-SmbMapping 에 남은 매핑은',
-    '        # 쓸 수 있을 때도 못 쓸 때도 있다. 열리면 인증이 아예 필요 없고, 안 열릴 때만 인증한다.',
-    '        if (Test-Path -LiteralPath $shareRoot) {',
-    '            $usedMap = @(Get-SmbMapping -ErrorAction SilentlyContinue | Where-Object { $_.RemotePath -like "\\\\$srv\\*" -and $_.LocalPath })',
-    '            $via = if ($usedMap.Count -gt 0) { " ($($usedMap[0].LocalPath) 매핑)" } else { "" }',
-    '            Write-Host "NAS 이미 접근 가능$via - 인증 생략: $shareRoot"',
-    '        } else {',
-    '            $existingConn = @(Get-SmbConnection -ErrorAction SilentlyContinue | Where-Object { $_.ServerName -ieq $srv })',
-    '            $sameUser = @($existingConn | Where-Object { $_.UserName -ieq $nasU })',
-    '            if ($existingConn.Count -gt 0 -and $sameUser.Count -eq 0) {',
-    '                Write-Host "[NAS 인증 중단] $srv 에 다른 계정($($existingConn[0].UserName))으로 이미 연결되어 있습니다."',
-    '                Write-Host "  탐색기에서 해당 NAS 창을 닫고 연결된 네트워크 드라이브를 해제한 뒤 다시 실행하세요."',
-    '                Write-Host "  (자동화가 다른 계정의 NAS 연결을 임의로 끊지 않습니다.)"',
-    '                exit 1',
-    '            }',
-    '            Write-Host "UNC 인증 시도: $shareRoot (계정 $nasU)"',
-    '            # net use 대신 New-PSDrive: 비밀번호가 프로세스 명령행에 남지 않고,',
-    '            # 이 프로세스에서만 살아 있어 사용자의 기존 네트워크 드라이브를 건드리지 않는다.',
-    '            $nasCred = [pscredential]::new($nasU, (ConvertTo-SecureString $nasP -AsPlainText -Force))',
-    '            try {',
-    '                New-PSDrive -Name NASSETUP -PSProvider FileSystem -Root $shareRoot -Credential $nasCred -Scope Script -ErrorAction Stop | Out-Null',
-    '            } catch {',
-    '                $detail = $_.Exception.Message',
-    '                # 1219 는 숫자로 안 오고 문장으로 오는 경우가 많다 (영문/한글 모두 대비)',
-    '                if ($detail -match \'1219|Multiple connections|다중 연결|둘 이상의 사용자\') {',
-    '                    Write-Host "[NAS 인증 실패 - 오류 1219] $srv 에 이미 다른 계정의 연결·매핑이 남아 있습니다."',
-    '                    Write-Host "  탐색기의 네트워크 드라이브를 해제하고, 저장된 자격증명도 지운 뒤 다시 실행하세요."',
-    '                    Write-Host "  확인: net use   /   삭제: net use <드라이브> /delete , cmdkey /delete:$srv"',
-    '                    Write-Host "  원본 메시지: $detail"',
-    '                } else { Write-Host "[NAS 인증 실패] $detail" }',
-    '                exit 1',
-    '            }',
-    '        }',
-    '    }',
-    '    $srcResolved = $null',
-    '    foreach ($cand in @($fileSrc, $fileSrc.Normalize([Text.NormalizationForm]::FormC), $fileSrc.Normalize([Text.NormalizationForm]::FormD))) { if (Test-Path -LiteralPath $cand) { $srcResolved = $cand; break } }',
-    '    if (-not $srcResolved) { Write-Host \'[경로 없음] 탐색기 주소창에 아래 경로가 열리는지 먼저 확인하세요(공유이름/폴더명/네트워크 인증):\'; Write-Host "  $fileSrc"; exit 1 }',
-    '    $allFiles = @(Get-ChildItem -LiteralPath $srcResolved -File | Where-Object { $_.Name -match \'\\.(jpg|png)$\' } | Select-Object @{n=\'name\';e={$_.Name}},@{n=\'localFull\';e={$_.FullName}},@{n=\'path\';e={\'\'}})',
-    '} else {',
-    '    Write-Host \'=== Step 2. NAS 로그인 ===\'',
-    '    Write-Host "NAS 주소: $nasH / 계정: $nasU"',
-    '    try { $authRaw = Invoke-RestMethod "$nasH/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=$([Uri]::EscapeDataString($nasU))&passwd=$([Uri]::EscapeDataString($nasP))&session=FileStation&format=sid" }',
-    '    catch { Write-Host "NAS 접속 오류(주소/네트워크 확인): $_"; exit 1 }',
-    '    $sid = $authRaw.data.sid',
-    '    if (-not $sid) { Write-Host "NAS 로그인 실패(계정/비밀번호 확인): $($authRaw | ConvertTo-Json -Compress -Depth 5)"; exit 1 }',
-    '    Write-Host "SID: $($sid.Substring(0,[Math]::Min(8,$sid.Length)))..."',
-    '    Write-Host \'=== Step 3. 소재 목록 ===\'',
-    '    Write-Host "조회 경로: $nasSrc"',
-    '    $listResp = Invoke-RestMethod "$nasH/webapi/entry.cgi?api=SYNO.FileStation.List&version=2&method=list&folder_path=$([Uri]::EscapeDataString($nasSrc))&_sid=$sid"',
-    '    if (-not $listResp.success) { Write-Host "소재 목록 조회 실패 — 경로가 정확한지 확인하세요(공유폴더명 포함, 대소문자/띄어쓰기 일치): $($listResp | ConvertTo-Json -Compress -Depth 5)"; exit 1 }',
-    '    try { $apiInfo = Invoke-RestMethod "$nasH/webapi/query.cgi?api=SYNO.API.Info&version=1&method=query&query=SYNO.FileStation.Download"; $dlPath = $apiInfo.data.\'SYNO.FileStation.Download\'.path; $dlVer = $apiInfo.data.\'SYNO.FileStation.Download\'.maxVersion } catch {}',
-    '    if (-not $dlPath) { $dlPath = \'entry.cgi\'; $dlVer = 2 }',
-    '    Write-Host "다운로드 API: /webapi/$dlPath (v$dlVer)"',
-    '    $allFiles = @($listResp.data.files | Where-Object { $_.name -match \'\\.(jpg|png)$\' } | Select-Object @{n=\'name\';e={$_.name}},@{n=\'localFull\';e={\'\'}},@{n=\'path\';e={$_.path}})',
-    '    if ($allFiles.Count -eq 0) { Write-Host "경고: 해당 경로에 jpg/png 소재가 없습니다. 폴더 내 전체 항목:"; foreach ($it in $listResp.data.files) { Write-Host "    $($it.name)" } }',
-    '}',
+    '$fileSrc = $localSrc',
+    'if (-not $fileSrc) { Write-Host \'[소재 경로 없음] 로컬 소재 경로를 넣고 스크립트를 다시 만들어 주세요.\'; exit 1 }',
+    'Write-Host "=== Step 2. 소재 폴더 읽기: $fileSrc ==="',
+    '$srcResolved = $null',
+    // 폴더 이름에 한글이 들어가면 자모가 갈라져 적힌 경우가 있어, 세 가지 모양으로 찾아본다
+    'foreach ($cand in @($fileSrc, $fileSrc.Normalize([Text.NormalizationForm]::FormC), $fileSrc.Normalize([Text.NormalizationForm]::FormD))) { if (Test-Path -LiteralPath $cand) { $srcResolved = $cand; break } }',
+    'if (-not $srcResolved) { Write-Host \'[경로 없음] 탐색기 주소창에 아래 경로가 열리는지 먼저 확인하세요:\'; Write-Host "  $fileSrc"; exit 1 }',
+    'Write-Host \'=== Step 3. 소재 목록 ===\'',
+    '$allFiles = @(Get-ChildItem -LiteralPath $srcResolved -File | Where-Object { $_.Name -match \'\\.(jpg|png)$\' } | Select-Object @{n=\'name\';e={$_.Name}},@{n=\'localFull\';e={$_.FullName}})',
+    'if ($allFiles.Count -eq 0) { Write-Host "[소재 없음] $srcResolved 에 jpg · png 가 없습니다."; exit 1 }',
     'function Norm($s) { if ($s) { $s.Normalize([Text.NormalizationForm]::FormC) } else { \'\' } }',
     '$sqFiles = @($allFiles | Where-Object { (Norm $_.name) -notmatch \'세로\' })',
     '$vtMap = @{}',
@@ -5551,13 +5486,7 @@ if (adSetup) {
     '$adNameMap = @{}',
     '$urlMap = @{}',
     'foreach ($sf in $allFiles) {',
-    '    if ($sf.localFull) {',
-    '        $byt = [System.IO.File]::ReadAllBytes($sf.localFull)',
-    '    } else {',
-    '        $ep   = [Uri]::EscapeDataString(\'["\' + $sf.path + \'"]\')',
-    '        $dlUrl = "$nasH/webapi/$dlPath?api=SYNO.FileStation.Download&version=$dlVer&method=download&path=$ep&mode=download&_sid=$sid"',
-    '        try { $byt = (Invoke-WebRequest -Uri $dlUrl -UseBasicParsing).Content } catch { Write-Host "    [NAS 다운로드 실패] $($sf.name): $($_.Exception.Message)"; continue }',
-    '    }',
+    '    $byt = [System.IO.File]::ReadAllBytes($sf.localFull)',
     '    if (-not $byt -or $byt.Length -lt 100) { Write-Host "    [다운로드 데이터 없음 - 건너뜀] $($sf.name)"; continue }',
     '    $ms2  = [System.IO.MemoryStream]::new($byt)',
     '    $bmp  = [System.Drawing.Bitmap]::new($ms2)',
@@ -5723,9 +5652,9 @@ if (adSetup) {
     if (!rows.length) list.push('[시트 조회] 를 눌러 소재 대응표를 먼저 만드세요. 없으면 광고명과 랜딩 URL 이 비어 들어갑니다.');
     if (!tr(state.sheetUrl)) list.push('구글시트 URL(T&D) 을 입력하세요. 없으면 제목·문구가 빈 채로 올라갑니다.');
     if (mode === 'script') {
-      if (!tr(state.nasPath) && !tr(state.localPath)) list.push('NAS 소재 경로 또는 로컬 소재 경로 중 하나는 입력해야 합니다.');
+      if (!tr(state.localPath)) list.push('로컬 소재 경로를 입력하세요. (폴더째 올릴 때 .ps1 이 읽는 폴더입니다)');
     } else if (!adPicks().length) {
-      list.push("소재를 고르세요. (이름에 '세로' 가 든 파일만 있으면 짝지을 기본 소재가 없습니다)");
+      list.push("소재 파일을 넣으세요. (이름에 '세로' 가 든 파일만 있으면 짝지을 기본 소재가 없습니다)");
     }
     if (!tr(state.campaignName)) list.push('캠페인명을 입력하세요.');
     if (!tr(state.adsetName)) list.push('광고그룹명을 입력하세요.');
@@ -5877,8 +5806,8 @@ if (adSetup) {
     const feeds = adPicks();
     return `<div class="setup-drop${picks.length ? ' has-file' : ''}">
         <input type="file" id="setup-files" accept="image/png,image/jpeg,video/mp4,video/quicktime" multiple hidden>
-        <label for="setup-files" class="tool-add"><i data-lucide="image-plus"></i>소재 고르기</label>
-        <span>NAS 폴더를 탐색기에서 열어 <b>이 칸에 끌어다 놓아도</b> 됩니다 · jpg · png · mp4 · mov</span>
+        <label for="setup-files" class="tool-add"><i data-lucide="image-plus"></i>소재 파일 넣기</label>
+        <span>탐색기에서 폴더를 열어 <b>이 칸에 끌어다 놓아도</b> 됩니다 · jpg · png · mp4 · mov</span>
       </div>
       ${picks.length ? `<ul class="setup-picks">${picks.map((pick, i) => `<li${pick.story || isThumb(pick) ? ' class="is-story"' : ''}>
         <b>${escapeHtml(pick.name)}</b>
@@ -5925,7 +5854,6 @@ if (adSetup) {
       <ol class="setup-steps">
         <li>내려받은 <code>${escapeHtml(script.filename)}</code> 를 <b>우클릭 → PowerShell에서 실행</b> 합니다.</li>
         <li>또는 <b>Win+R</b> 실행창에 붙여넣습니다 · <code class="setup-cmd">${escapeHtml(runCommand())}</code></li>
-        <li>NAS 소재를 쓴다면 사내망 또는 VPN 에 연결된 상태여야 합니다.</li>
       </ol>
       <button type="button" class="setup-toggle-script">${scriptOpen ? '스크립트 접기' : '스크립트 미리보기'}<i data-lucide="${scriptOpen ? 'chevron-up' : 'chevron-down'}"></i></button>
       ${scriptOpen ? `<pre class="setup-script">${escapeHtml(script.text)}</pre>` : ''}
@@ -5975,6 +5903,9 @@ if (adSetup) {
       <section class="tool-card">
         <h3><span class="setup-req">소재</span>${picks.length ? `<small>${picks.length}개</small>` : ''}</h3>
         ${pickBox()}
+        <div class="tool-grid setup-grid">
+          ${textField('localPath', '로컬 소재 경로', { hint: '폴더째 올릴 때만 씁니다 — 아래 [예전 방식] 의 .ps1 이 이 폴더를 읽습니다. 화면에서 만들 때는 위에 파일을 넣으세요', placeholder: 'C:\\Users\\…\\소재폴더', wide: true })}
+        </div>
       </section>
 
       <section class="tool-card">
@@ -6025,12 +5956,10 @@ if (adSetup) {
 
       <section class="tool-card setup-legacy">
         <button type="button" class="setup-toggle-legacy">예전 방식 · PowerShell 스크립트 내려받기<i data-lucide="chevron-${scriptOn ? 'up' : 'down'}"></i></button>
-        ${scriptOn ? `<p class="setup-note">NAS 폴더째로 한 번에 올리고 싶을 때 씁니다. 소재를 고르지 않아도 되는 대신,
-          내려받은 .ps1 을 PowerShell 에서 직접 돌려야 합니다.</p>
+        ${scriptOn ? `<p class="setup-note">소재 <b>폴더째</b> 한 번에 올리고 싶을 때 씁니다 — 위 <b>로컬 소재 경로</b> 의 폴더를 통째로 읽습니다.
+          파일을 하나씩 넣지 않아도 되는 대신, 내려받은 .ps1 을 PowerShell 에서 직접 돌려야 합니다.</p>
         <div class="tool-grid setup-grid">
-          ${textField('nasPath', 'NAS 소재 경로', { hint: '/앳홈_공유폴더/… 또는 \\\\192.168.1.100\\… · 슬래시 방향 무관', placeholder: '/앳홈_공유폴더/3. 마케팅팀/미닉스/…', wide: true })}
-          ${textField('localPath', '로컬 소재 경로', { hint: '입력하면 NAS 대신 이 폴더를 씁니다', placeholder: 'C:\\Users\\…\\소재폴더', wide: true })}
-          ${textField('envDir', '.env 폴더', { hint: '토큰·NAS 정보가 든 공유 폴더. 비우면 .ps1 이 있는 폴더부터 위로 찾습니다', placeholder: 'C:\\Users\\…\\공유_NAS수정판', wide: true })}
+          ${textField('envDir', '.env 폴더', { hint: '토큰이 든 공유 폴더. 비우면 .ps1 이 있는 폴더부터 위로 찾습니다', placeholder: 'C:\\Users\\…\\공유_NAS수정판', wide: true })}
         </div>
         <div class="setup-run">
           <button type="button" class="tool-copy setup-make"><i data-lucide="file-cog"></i>실행 스크립트 만들기</button>
@@ -6183,7 +6112,7 @@ if (adSetup) {
 
     if (event.target.closest('.setup-reset')) {
       if (!window.confirm('입력값을 비울까요? (파트 · 시트 URL · 소재 경로 · .env 폴더는 남습니다)')) return;
-      const keep = { part: state.part, sheetUrl: state.sheetUrl, nasPath: state.nasPath, localPath: state.localPath, promo: state.promo, envDir: state.envDir };
+      const keep = { part: state.part, sheetUrl: state.sheetUrl, localPath: state.localPath, promo: state.promo, envDir: state.envDir };
       state = { ...DEFAULT_STATE, ...keep, startAt: todayAtMidnight() };
       rows = [];
       selectedIdx = -1;
