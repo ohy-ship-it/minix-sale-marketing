@@ -2373,10 +2373,20 @@ if (filenameTool) {
     render();
   };
 
-  /* 메타는 소재문구 탭을 만들지 않는다. 메타 소재의 문구는 메타 광고 세팅에서 바로 넣으므로
-     소재문구-메타 탭에 빈 줄만 쌓일 뿐이어서다. **파트 탭(세일즈마케팅 등) 에는 그대로 올라간다** —
-     메타 광고 세팅의 [시트 조회] 가 그 줄을 읽어 간다. */
-  const isMeta = (entry) => String(entry.media || '').trim().indexOf('메타') === 0;
+  /* 소재문구 탭은 **GFA 와 카카오만** 만든다. 나머지 매체는 문구를 이 탭에서 쓰지 않아
+     (메타는 광고 세팅에서 바로 넣고, 인플루언서 · 구글은 문구를 따로 받는다) 빈 줄만 쌓인다.
+     **파트 탭(세일즈마케팅 등) 에는 매체와 상관없이 다 올라간다** — 메타 광고 세팅의
+     [시트 조회] 가 그 줄을 읽어 간다. 여기서 거르는 것은 소재문구 탭뿐이다.
+
+     계열은 매체 이름의 첫 토막이다 (GFA-피드 → GFA · 카카오-비즈보드 → 카카오).
+     Code.gs 의 tndFamily_ 와 같은 규칙이라, 지면이 늘어도 이 목록은 그대로 둔다. */
+  const TND_FAMILIES = ['GFA', '카카오'];
+  const familyOf = (entry) => {
+    const media = String(entry.media || '').trim();
+    const at = media.indexOf('-');
+    return (at > 0 ? media.slice(0, at) : media).trim();
+  };
+  const toTnd = (entry) => TND_FAMILIES.some((one) => one.toLowerCase() === familyOf(entry).toLowerCase());
 
   // 콘텐츠 T&D 시트에도 파일명을 넣는다. 문구는 비워 둔다 — 그건 T&D 화면에서 채운다.
   // 행사명이 곧 그 시트의 블록 이름이라 행사명별로 나눠 보낸다.
@@ -2385,7 +2395,7 @@ if (filenameTool) {
     list.forEach((entry) => {
       const campaign = String(entry.event || '').trim();
       if (!campaign || !entry.media || !entry.filename) return;
-      if (isMeta(entry)) return;
+      if (!toTnd(entry)) return;
       if (!groups.has(campaign)) groups.set(campaign, []);
       groups.get(campaign).push({ media: entry.media, filename: entry.filename });
     });
@@ -2426,7 +2436,10 @@ if (filenameTool) {
             const parts = [];
             if (added.length) parts.push(`소재문구 탭에 넣었습니다 · ${added.join(' · ')}`);
             if (kept) parts.push(`이미 있던 ${kept}줄은 그대로 뒀습니다`);
-            if (list.some(isMeta)) parts.push('메타는 소재문구 탭에 넣지 않았습니다');
+            // 안 넣은 매체가 있으면 그대로 적어 준다 (빠뜨린 것이 아니라 규칙이라는 걸 알 수 있게)
+            const skipped = [...new Set(list.filter((entry) => entry.media && !toTnd(entry))
+              .map((entry) => familyOf(entry)))];
+            if (skipped.length) parts.push(`${skipped.join(' · ')} 는 소재문구 탭에 넣지 않았습니다`);
             tndNote = parts.join('  |  ') || '소재문구 탭에 넣을 것이 없었습니다';
             render();
           })
