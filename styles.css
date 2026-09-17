@@ -482,6 +482,8 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .setup-promo{margin-top:12px}
 .setup-promo-row{display:flex;gap:8px}
 .setup-promo-row input{flex:1;min-width:0;border:1px solid #e3e2dc;border-radius:6px;padding:8px;font:400 12px inherit;background:#fff;color:inherit;box-sizing:border-box}
+/* 제품 고르개. 세팅명 칸이 늘어나도 자리를 지킨다 */
+.setup-promo-row .setup-product{flex:0 0 150px;border:1px solid #e3e2dc;border-radius:6px;padding:8px;font:400 12px inherit;background:#fff;color:inherit;box-sizing:border-box}
 .setup-lookup{flex:none;white-space:nowrap}
 
 .ad-setup .tool-table-wrap{max-height:326px;overflow:auto}

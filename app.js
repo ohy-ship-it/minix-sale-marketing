@@ -1742,6 +1742,36 @@ const perfNameHit = (name, wanted, bracketOnly) => {
    찾는 말은 '더' 를 뗀 토막(플렌더 · 시프트)이라 '더' 가 있든 없든 걸린다.
    mini · MAX · PLUS 도 다 '플렌더' 를 품고 있어 한 번에 걸린다.
    제품을 더 넣으려면 여기 한 줄만 보태면 된다. */
+/* 제품 대응표 — 한글 이름과 시트에 적히는 영어 코드.
+   적재 시트의 상품명 칸에는 광고소재 파일명 도구가 **영어 코드**(flender-max)를 넣는데,
+   사람이 손으로 적어 둔 옛 줄에는 한글이 그대로 있다. 그래서 둘 다로 견준다.
+   광고소재 파일명 · 메타 광고 세팅 · 카카오 광고 세팅이 이 한 표를 같이 쓴다. */
+const PRODUCT_PAIRS = [
+  ['더플렌더MAX', 'flender-max'], ['더플렌더mini', 'flender-mini'], ['더플렌더', 'flender'],
+  ['더플렌더PLUS', 'flender-plus'], ['더슬림', 'theslim'], ['더시프트', 'theshift'],
+  ['더에어드라이', 'theairdry'], ['식기세척기', 'dishwasher'], ['건조기', 'dryer'],
+  ['건조기필터', 'dryerfilter'], ['건조기시트', 'dryersheets'], ['하드필터', 'hardfilter'],
+  ['하드락필터', 'hardfilter-rock'], ['푸드컨테이너', 'foodcontainer'], ['식기세제', 'dishdetergent'],
+  ['악세사리', 'accessories'],
+];
+
+// 이 줄의 상품명 칸이 고른 제품인가. 안 골랐으면 다 통과시킨다.
+const productMatch = (cell, label) => {
+  const want = String(label ?? '').trim().toLowerCase();
+  if (!want) return true;
+  const text = String(cell ?? '').trim().toLowerCase();
+  if (!text) return false;
+  const found = PRODUCT_PAIRS.find(([name]) => name.toLowerCase() === want);
+  const code = String((found || [])[1] || '').toLowerCase();
+  return text === want || (!!code && text === code);
+};
+
+/* 제품 고르개 (메타 · 카카오 광고 세팅이 같이 쓴다).
+   escapeHtml 은 화면 덩어리마다 따로 선언돼 있어 여기서는 못 쓴다. 위 표는 우리가 적어 둔
+   고정 목록이라 < > & 같은 글자가 없다 — 사람이 적는 값이 아니어서 그대로 내보내도 된다. */
+const productOptions = (picked) => `<option value="">제품 전체</option>${PRODUCT_PAIRS
+  .map(([name]) => `<option${name === picked ? ' selected' : ''}>${name}</option>`).join('')}`;
+
 const CROSS_PRODUCTS = [
   { id: 'flender', name: '더 플렌더', words: ['플렌더', 'flender'] },
   { id: 'shift', name: '더 시프트', words: ['시프트', 'shift'] },
@@ -2132,14 +2162,7 @@ if (filenameTool) {
   const CHANNELS = SALES.map(([label]) => label);
 
   // 상품명 → 제품코드(영문). 설정 탭 H:I 와 같은 표다.
-  const PRODUCT_CODES = [
-    ['더플렌더MAX', 'flender-max'], ['더플렌더mini', 'flender-mini'], ['더플렌더', 'flender'],
-    ['더플렌더PLUS', 'flender-plus'], ['더슬림', 'theslim'], ['더시프트', 'theshift'],
-    ['더에어드라이', 'theairdry'], ['식기세척기', 'dishwasher'], ['건조기', 'dryer'],
-    ['건조기필터', 'dryerfilter'], ['건조기시트', 'dryersheets'], ['하드필터', 'hardfilter'],
-    ['하드락필터', 'hardfilter-rock'], ['푸드컨테이너', 'foodcontainer'], ['식기세제', 'dishdetergent'],
-    ['악세사리', 'accessories'],
-  ];
+  const PRODUCT_CODES = PRODUCT_PAIRS;
   const PRODUCTS = PRODUCT_CODES.map(([label]) => label);
 
   // 시트 칸에 넣을 영어값. 짝이 없으면 적은 그대로 둔다.
@@ -4847,7 +4870,8 @@ if (adSetup) {
   // 파트 탭. 맨 위에서 고른 파트의 탭만 읽는다.
   const PARTS = ['세일즈마케팅', '더플렌더_파트', '생활가전_파트'];
   // 열은 **이름**으로 찾는다. 적재 시트는 열이 늘었다 줄었다 하므로 자리로 읽으면 어긋난다.
-  const COL = { event: '행사명', file: '파일명', media: '매체', purpose: '목적',
+  const COL = { setup: '세팅명', event: '행사명', product: '상품명',
+    file: '파일명', media: '매체', purpose: '목적',
     landing: '랜딩링크', linkGA: 'LINK(GA)', nt: 'NT(일반)', ntStory: 'NT(쇼핑스토리)',
     shoplive: 'FM(쇼핑라이브)', campaign: '캠페인명', group: '광고그룹명', ad: '광고명' };
   const TND_SHEET_NAME = '[DA] 메타';
@@ -4918,7 +4942,7 @@ if (adSetup) {
 
   const DEFAULT_STATE = {
     acct: '', part: PARTS[0], purpose: '', urlType: 'url',
-    promo: '', sheetUrl: '',
+    setup: '', product: '', sheetUrl: '',
     campaignName: '', adsetName: '',
     budget: '', budgetType: 'daily',
     objective: '구매', cta: 'SHOP_NOW',
@@ -5055,15 +5079,20 @@ if (adSetup) {
   // 머리글 줄에서 열 자리를 찾아 한 줄을 읽기 좋은 모양으로 바꾼다
   const rowOf = (head, cells) => {
     const cell = (name) => { const i = head.indexOf(name); return i >= 0 ? tr(cells[i]) : ''; };
-    return { msgCode: cell(COL.file), event: cell(COL.event), media: cell(COL.media),
+    return { msgCode: cell(COL.file), setup: cell(COL.setup), event: cell(COL.event),
+      product: cell(COL.product), media: cell(COL.media),
       purpose: cell(COL.purpose), campaign: cell(COL.campaign), group: cell(COL.group),
       adName: cell(COL.ad), url: cell(COL.landing), linkGA: cell(COL.linkGA),
       nt: cell(COL.nt), ntStory: cell(COL.ntStory), shoplive: cell(COL.shoplive) };
   };
 
   const lookupSheet = async () => {
-    const event = tr(state.promo);
-    if (!event) { lookup = { state: 'error', message: '행사명을 입력해주세요.' }; return render(); }
+    /* 찾는 열쇠는 **세팅명**이다 (예전에는 행사명이었다). 한 행사에 여러 세팅이 붙으면
+       행사명만으로는 갈라지지 않아서, 세팅 단위로 적어 둔 이름으로 찾는다.
+       제품까지 고르면 그 제품 줄만 남긴다 — 같은 세팅에 제품이 여럿일 때 쓴다. */
+    const setup = tr(state.setup);
+    if (!setup) { lookup = { state: 'error', message: '세팅명을 입력해주세요.' }; return render(); }
+    const want = setup.toLowerCase();
 
     lookup = { state: 'loading', message: '' };
     rows = [];
@@ -5095,18 +5124,23 @@ if (adSetup) {
     }
 
     const head = (table[0] || []).map((one) => tr(one));
-    if (head.indexOf(COL.event) < 0) {
-      lookup = { state: 'error', message: `[${part}] 탭에서 머리글(행사명 · 파일명 …) 을 찾지 못했습니다 — 시트 공유 설정과 탭 이름을 확인해 주세요.` };
+    if (head.indexOf(COL.setup) < 0) {
+      lookup = { state: 'error',
+        message: head.indexOf(COL.event) >= 0
+          ? `[${part}] 탭에 '${COL.setup}' 칸이 없습니다 — 시트 메뉴 [UTM → 전체 행 다시 계산] 을 한 번 눌러 칸을 만들어 주세요.`
+          : `[${part}] 탭에서 머리글(세팅명 · 행사명 · 파일명 …) 을 찾지 못했습니다 — 시트 공유 설정과 탭 이름을 확인해 주세요.` };
       return render();
     }
 
-    // 1행은 머리글. 행사명이 같은 메타(페이스북) 줄만 남긴다. 목적을 골랐으면 그 목적만.
+    // 1행은 머리글. 세팅명이 같은 메타(페이스북) 줄만 남긴다. 목적 · 제품을 골랐으면 그것도 건다.
     const code = purposeCode(state.purpose);
     const found = [];
     let otherMedia = 0;
+    let otherProduct = 0;
     for (let i = 1; i < table.length; i += 1) {
       const one = rowOf(head, table[i]);
-      if (one.event !== event) continue;
+      if (one.setup.toLowerCase() !== want) continue;
+      if (!productMatch(one.product, state.product)) { otherProduct += 1; continue; }
       const media = one.media.toLowerCase();
       if (media.indexOf('메타') < 0 && media.indexOf('페이스북') < 0 && media.indexOf('facebook') < 0) { otherMedia += 1; continue; }
       if (state.purpose) {
@@ -5118,12 +5152,15 @@ if (adSetup) {
     }
 
     rows = found;
+    const mark = setup + (state.product ? ` · ${state.product}` : '');
     lookup = found.length
       ? { state: 'done', message: '' }
       : { state: 'done',
         message: otherMedia
-          ? `[${part}] 탭의 '${event}' 에 메타 줄이 없습니다 (다른 매체로 ${otherMedia}줄 있습니다 — 파트를 확인해 보세요).`
-          : `[${part}] 탭에서 '${event}' 로 된 메타 줄을 찾지 못했습니다 — 파트 · 행사명 · 목적 필터를 확인하세요.` };
+          ? `[${part}] 탭의 '${mark}' 에 메타 줄이 없습니다 (다른 매체로 ${otherMedia}줄 있습니다 — 파트를 확인해 보세요).`
+          : otherProduct
+            ? `[${part}] 탭의 '${setup}' 에 '${state.product}' 줄이 없습니다 (다른 제품으로 ${otherProduct}줄 있습니다).`
+            : `[${part}] 탭에서 '${mark}' 로 된 메타 줄을 찾지 못했습니다 — 파트 · 세팅명 · 제품 · 목적 필터를 확인하세요.` };
     if (found.length) selectRow(0, false);
     matchPicks();
     render();
@@ -5237,6 +5274,9 @@ if (adSetup) {
   };
 
   // 실행 전에 T&D 시트의 제목/문구를 미리 확인한다 (비어 있으면 광고 문구가 빈 채로 올라간다)
+  // T&D 시트에서 찾을 이름 — 조회해 온 줄의 행사명, 없으면 적어 둔 세팅명
+  const tndKey = () => tr((rows[selectedIdx] || rows[0] || {}).event) || tr(state.setup);
+
   const loadTnd = async () => {
     const sheetId = (tr(state.sheetUrl).match(/\/d\/([^/]+)/) || [])[1];
     if (!sheetId) { tnd = null; return render(); }
@@ -5247,7 +5287,9 @@ if (adSetup) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const raw = await response.text();
       const json = JSON.parse((raw.match(/\{[\s\S]*\}/) || [''])[0]);
-      const key = tr(state.promo).replace(/\s/g, '').toLowerCase();
+      /* T&D 시트의 덩어리 이름은 **행사명**이다 (세팅명이 아니다).
+         조회로 찾아 온 줄에 행사명이 적혀 있으니 그것으로 찾는다. */
+      const key = tndKey().replace(/\s/g, '').toLowerCase();
       let hit = null;
       for (const row of json.table.rows || []) {
         const cells = row.c || [];
@@ -5403,7 +5445,7 @@ if (adSetup) {
     const min = parseInt(state.ageMin, 10);
     const max = parseInt(state.ageMax, 10);
     if (!state.acct) list.push('광고 계정을 선택하세요.');
-    if (!tr(state.promo)) list.push('행사명을 입력하세요.');
+    if (!tr(state.setup)) list.push('세팅명을 입력하세요.');
     if (!rows.length) list.push('[시트 조회] 를 눌러 소재 대응표를 먼저 만드세요. 없으면 광고명과 랜딩 URL 이 비어 들어갑니다.');
     if (!tr(state.sheetUrl)) list.push('구글시트 URL(T&D) 을 입력하세요. 없으면 제목·문구가 빈 채로 올라갑니다.');
     if (!adPicks().length) {
@@ -5540,7 +5582,7 @@ if (adSetup) {
     if (!tnd) return '';
     if (tnd.loading) return '<div class="setup-tnd">T&amp;D 확인 중…</div>';
     if (tnd.error) return `<div class="setup-tnd is-warn">T&amp;D 미리보기 실패 (${escapeHtml(tnd.error)}) — 스크립트는 실행할 때 직접 다시 읽으므로 그대로 진행해도 됩니다.</div>`;
-    if (tnd.empty) return `<div class="setup-tnd is-warn">시트 <b>${escapeHtml(TND_SHEET_NAME)}</b> 에서 <b>${escapeHtml(tr(state.promo))}</b> 를 찾지 못했습니다. 이대로 실행하면 제목·문구가 빈 채로 올라갑니다.</div>`;
+    if (tnd.empty) return `<div class="setup-tnd is-warn">시트 <b>${escapeHtml(TND_SHEET_NAME)}</b> 에서 <b>${escapeHtml(tndKey())}</b> 를 찾지 못했습니다. 이대로 실행하면 제목·문구가 빈 채로 올라갑니다.</div>`;
     return `<div class="setup-tnd">
       <div><b>제목</b><span>${escapeHtml(tnd.headline) || '<i>비어 있음</i>'}</span></div>
       <div><b>문구</b><span>${escapeHtml(tnd.body.slice(0, 160)) || '<i>비어 있음</i>'}${tnd.body.length > 160 ? '…' : ''}</span></div>
@@ -5615,9 +5657,10 @@ if (adSetup) {
           <div class="setup-field"><span>URL 유형<small class="setup-hint">랜딩 URL 로 쓸 열</small></span>${pills('urltype', URL_TYPES.map(([value, label]) => [label, value]), state.urlType)}</div>
         </div>
         <div class="setup-field setup-promo">
-          <span class="setup-req">행사명<small class="setup-hint">적재 시트의 행사명 · T&amp;D 시트도 이 이름으로 찾습니다</small></span>
+          <span class="setup-req">세팅명<small class="setup-hint">적재 시트의 세팅명 칸 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
           <div class="setup-promo-row">
-            <input type="text" data-field="promo" value="${escapeHtml(state.promo)}" placeholder="예: always, cjonstyle …">
+            <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="예: 음쓰해방위크-1차">
+            <select data-field="product" class="setup-product">${productOptions(state.product)}</select>
             <button type="button" class="tool-add setup-lookup"${lookup.state === 'loading' ? ' disabled' : ''}><i data-lucide="search"></i>시트 조회</button>
           </div>
         </div>
@@ -5856,7 +5899,7 @@ if (adSetup) {
 
     if (event.target.closest('.setup-reset')) {
       if (!window.confirm('입력값을 비울까요? (파트 · 시트 URL · 행사명은 남습니다)')) return;
-      const keep = { part: state.part, sheetUrl: state.sheetUrl, promo: state.promo };
+      const keep = { part: state.part, sheetUrl: state.sheetUrl, setup: state.setup, product: state.product };
       state = { ...DEFAULT_STATE, ...keep, startAt: todayAtMidnight() };
       rows = [];
       selectedIdx = -1;
@@ -5904,7 +5947,7 @@ if (kakaoSetup) {
   // 파트 탭 세 개를 다 훑는다 — 행사가 어느 파트에 적혔는지 몰라도 된다.
   const SHEET_TABS = ['세일즈마케팅', '더플렌더_파트', '생활가전_파트'];
   // 열은 **이름**으로 찾는다. 적재 시트는 열이 늘었다 줄었다 하므로 자리로 읽으면 어긋난다.
-  const COL = { event: '행사명', file: '파일명', media: '매체', product: '상품명',
+  const COL = { setup: '세팅명', event: '행사명', file: '파일명', media: '매체', product: '상품명',
     landing: '랜딩링크', purpose: '목적', linkGA: 'LINK(GA)', ntPlain: 'NT(일반)',
     ntStory: 'NT(쇼핑스토리)', fmLive: 'FM(쇼핑라이브)', campaign: '캠페인명',
     group: '광고그룹명', ad: '광고명' };
@@ -5941,7 +5984,7 @@ if (kakaoSetup) {
   };
 
   const DEFAULT_STATE = {
-    account: '', kind: 'bizboard', event: '', urlType: 'landing',
+    account: '', kind: 'bizboard', setup: '', product: '', urlType: 'landing',
     campaignName: '', groupName: '',
     beginDate: '', endDate: '', budget: '', bid: '',
     placements: [], bidStrategy: '', pricingType: '',
@@ -6028,23 +6071,49 @@ if (kakaoSetup) {
     return out;
   };
 
+  /* 탭은 **번호(gid)로** 읽는다. gviz 는 sheet=이름 을 조용히 무시하고 늘 첫 탭을 준다 —
+     그래서 세 탭을 읽어도 셋 다 세일즈마케팅이었고, 찾은 줄이 세 번씩 겹쳐 보였다.
+     번호는 시트만 아는 값이라 스크립트에 물어 온다 (메타 광고 세팅과 같은 길이다). */
+  let tabGid = {};
+
+  const loadTabGid = () => askSheet({ action: 'partTabs' })
+    .then((body) => {
+      const out = {};
+      (body.tabs || []).forEach((one) => { if (one && one.name) out[one.name] = String(one.gid); });
+      tabGid = out;
+      return out;
+    });
+
   const readTab = (name) => {
-    const link = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&headers=0&sheet=${encodeURIComponent(name)}`;
+    const gid = tabGid[name];
+    // 번호를 모르면 읽지 않는다. 이름으로 부르면 엉뚱한 탭이 와서 조용히 틀린다.
+    if (!gid) return Promise.resolve([]);
+    const link = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&headers=0&gid=${gid}`;
     return fetch(link)
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.text();
       })
       .then((text) => parseCsv(text))
-      .catch(() => []);          // 탭 하나가 없어도 나머지로 찾는다
+      .catch(() => []);          // 탭 하나가 안 읽혀도 나머지로 찾는다
   };
 
   const lookupSheet = async () => {
-    const event = tr(state.event);
-    if (!event) { lookup = { state: 'error', message: '행사명을 입력해주세요.' }; return render(); }
+    /* 찾는 열쇠는 **세팅명**이다 (예전에는 행사명이었다). 한 행사에 여러 세팅이 붙으면
+       행사명만으로는 갈라지지 않아서, 세팅 단위로 적어 둔 이름으로 찾는다.
+       제품까지 고르면 그 제품 줄만 남긴다. */
+    const setup = tr(state.setup);
+    if (!setup) { lookup = { state: 'error', message: '세팅명을 입력해주세요.' }; return render(); }
+    const key = setup.toLowerCase();
     lookup = { state: 'loading', message: '' };
     rows = [];
     render();
+
+    if (!Object.keys(tabGid).length) await loadTabGid().catch(() => ({}));
+    if (!Object.keys(tabGid).length) {
+      lookup = { state: 'error', message: '시트 탭 번호를 못 받았습니다 — 잠시 뒤 다시 눌러 주세요.' };
+      return render();
+    }
 
     const tables = await Promise.all(SHEET_TABS.map(readTab));
     if (!tables.some((table) => table.length)) {
@@ -6055,13 +6124,16 @@ if (kakaoSetup) {
     const want = KIND_MEDIA[state.kind];
     const found = [];
     let otherKind = 0;
+    let otherProduct = 0;
+    let noColumn = 0;
     tables.forEach((table) => {
       if (!table.length) return;
       const head = table[0].map((one) => tr(one));
-      if (head.indexOf(COL.event) < 0) return;
+      if (head.indexOf(COL.setup) < 0) { noColumn += 1; return; }
       for (let i = 1; i < table.length; i += 1) {
         const one = rowOf(head, table[i]);
-        if (one.event !== event) continue;
+        if (one.setup.toLowerCase() !== key) continue;
+        if (!productMatch(one.product, state.product)) { otherProduct += 1; continue; }
         if (one.media.indexOf('카카오') < 0) continue;
         if (one.media.indexOf(want) < 0) { otherKind += 1; continue; }
         found.push(one);
@@ -6075,10 +6147,15 @@ if (kakaoSetup) {
       if (found[0].group) state.groupName = found[0].group;
       save();
     } else {
+      const mark = setup + (state.product ? ` · ${state.product}` : '');
       lookup = { state: 'done',
-        message: otherKind
-          ? `'${event}' 에 카카오-${want} 줄이 없습니다 (다른 종류로 ${otherKind}줄 있습니다 — 위에서 종류를 바꿔 보세요).`
-          : `'${event}' 로 된 카카오 줄을 시트에서 못 찾았습니다.` };
+        message: noColumn === SHEET_TABS.length
+          ? `파트 탭에 '${COL.setup}' 칸이 없습니다 — 시트 메뉴 [UTM → 전체 행 다시 계산] 을 한 번 눌러 칸을 만들어 주세요.`
+          : otherKind
+            ? `'${mark}' 에 카카오-${want} 줄이 없습니다 (다른 종류로 ${otherKind}줄 있습니다 — 위에서 종류를 바꿔 보세요).`
+            : otherProduct
+              ? `'${setup}' 에 '${state.product}' 줄이 없습니다 (다른 제품으로 ${otherProduct}줄 있습니다).`
+              : `'${mark}' 로 된 카카오 줄을 시트에서 못 찾았습니다.` };
     }
     matchPicks();
     render();
@@ -6428,11 +6505,12 @@ if (kakaoSetup) {
       </section>
 
       <section class="tool-card">
-        <h3>행사</h3>
+        <h3>세팅</h3>
         <div class="setup-field setup-promo">
-          <span class="setup-req">행사명</span>
+          <span class="setup-req">세팅명<small class="setup-hint">적재 시트의 세팅명 칸 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
           <div class="setup-promo-row">
-            <input type="text" data-field="event" value="${escapeHtml(state.event)}" placeholder="예: 260911-kakao">
+            <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="예: 음쓰해방위크-1차">
+            <select data-field="product" class="setup-product">${productOptions(state.product)}</select>
             <button type="button" class="tool-add setup-lookup"${lookup.state === 'loading' ? ' disabled' : ''}><i data-lucide="search"></i>시트 조회</button>
           </div>
         </div>
