@@ -542,6 +542,13 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .setup-run{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px}
 .setup-run small{color:#a5a49f;font-size:11px}
 
+/* 날짜 칸 + 시각 칸. 시각은 짧으니 날짜에 자리를 더 준다. */
+.setup-when{display:flex;gap:6px}
+.setup-when input[data-part="day"]{flex:1 1 auto;min-width:0}
+.setup-when input[data-part="time"]{flex:0 0 74px;text-align:center;font-variant-numeric:tabular-nums}
+
+/* 채워야 할 목록은 늘 자리를 두고 안쪽만 바꿔 끼운다 (비어 있으면 안 보인다) */
+.setup-issues:empty{display:none}
 .setup-issues{margin-top:12px;border:1px solid #f0c6c2;border-radius:8px;background:#fdeae7;padding:11px 13px;font-size:11px;color:#a33e3a}
 .setup-issues ul{margin:6px 0 0;padding-left:16px}
 .setup-issues li{margin-top:3px;line-height:1.7}

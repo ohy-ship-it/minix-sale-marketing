@@ -4877,6 +4877,39 @@ if (adSetup) {
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const tr = (value) => String(value ?? '').trim();
 
+  /* 시작 · 종료 일시. 담아 두는 값은 'YYYY-MM-DDTHH:mm' 한 덩어리다 (메타가 그 꼴로 받는다).
+     화면에서는 날짜 칸과 시각 칸을 갈라 놓는다. datetime-local 을 쓰던 것을 걷어 낸 까닭이 둘이다:
+       · 브라우저 말을 따라 '오후 2:30' 으로 그려진다. 24시간으로 바꿀 방법이 없다.
+       · 숫자판으로 칸을 다 채우는 순간 change 가 터지고, 그때 화면을 다시 그려서
+         적던 칸이 통째로 사라졌다 (튕김). 이제 시각은 그냥 글자 칸이라 다 적기 전에는
+         아무 일도 일어나지 않고, 모양은 칸에서 빠져나갈 때 한 번만 맞춘다. */
+  const pad2 = (value) => String(value).padStart(2, '0');
+
+  const whenParts = (value) => {
+    const text = String(value || '');
+    const at = text.indexOf('T');
+    return at < 0 ? [text.slice(0, 10), ''] : [text.slice(0, at), text.slice(at + 1, at + 6)];
+  };
+
+  // 사람이 적는 대로 받는다: '1430' · '14:30' · '930' · '9' → 09:00. 24시를 넘으면 맞춰 자른다.
+  const timeFix = (raw) => {
+    const text = tr(raw);
+    if (!text) return '';
+    let hour = 0;
+    let min = 0;
+    if (text.indexOf(':') >= 0) {
+      const parts = text.split(':');
+      hour = Number(digitsOf(parts[0]) || 0);
+      min = Number(digitsOf(parts[1]) || 0);
+    } else {
+      const digits = digitsOf(text).slice(0, 4);
+      if (!digits) return '';
+      if (digits.length <= 2) hour = Number(digits);
+      else { hour = Number(digits.slice(0, digits.length - 2)); min = Number(digits.slice(-2)); }
+    }
+    return `${pad2(Math.min(Math.max(hour, 0), 23))}:${pad2(Math.min(Math.max(min, 0), 59))}`;
+  };
+
   const todayAtMidnight = () => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -5386,6 +5419,24 @@ if (adSetup) {
     return list;
   };
 
+  // 날짜 칸 + 시각 칸. 시각은 늘 24시간이고 숫자판으로 바로 칠 수 있다.
+  const whenBox = (key) => {
+    const [day, time] = whenParts(state[key]);
+    return `<span class="setup-when">
+      <input type="date" data-field="${key}" data-part="day" value="${escapeHtml(day)}">
+      <input type="text" data-field="${key}" data-part="time" value="${escapeHtml(time)}"
+        inputmode="numeric" maxlength="5" placeholder="14:30" title="24시간으로 적습니다 (예: 14:30)">
+    </span>`;
+  };
+
+  // 채워야 할 목록. 늘 자리를 두고 안쪽만 바꿔 끼운다 — 일시를 적는 중에 화면을
+  // 통째로 다시 그리면 적던 칸이 날아간다.
+  const issuesInner = () => {
+    const list = attempted ? problems() : [];
+    if (!list.length) return '';
+    return `<b>아래를 먼저 채워주세요</b><ul>${list.map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}</ul>`;
+  };
+
   const addHistory = (name) => {
     if (!name) return;
     const at = new Date().toLocaleString('ko-KR');
@@ -5590,8 +5641,8 @@ if (adSetup) {
           </label>
         </div>
         <div class="tool-grid setup-grid">
-          <label><span class="setup-req">시작일시</span><input type="datetime-local" data-field="startAt" value="${escapeHtml(state.startAt)}"></label>
-          <label>종료일시<small class="setup-hint">비우면 계속 게재 · 총예산이면 필수</small><input type="datetime-local" data-field="endAt" value="${escapeHtml(state.endAt)}"></label>
+          <label><span class="setup-req">시작일시</span>${whenBox('startAt')}</label>
+          <label>종료일시<small class="setup-hint">비우면 계속 게재 · 총예산이면 필수</small>${whenBox('endAt')}</label>
         </div>
         <div class="tool-grid setup-grid">
           <label>타겟 성별<select data-field="gender">${GENDERS.map((value) => `<option${value === state.gender ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
@@ -5606,9 +5657,7 @@ if (adSetup) {
           <button type="button" class="tool-add setup-go"${work && work.running ? ' disabled' : ''}><i data-lucide="rocket"></i>${work && work.running ? '만드는 중…' : '광고 만들기'}</button>
           <small>캠페인 · 광고세트 · 광고를 여기서 바로 만듭니다. 모두 <b>일시중지(PAUSED)</b> 로 만들어지니, Ads Manager 에서 보고 사람이 켭니다.</small>
         </div>
-        ${attempted && problems().length
-          ? `<div class="setup-issues"><b>아래를 먼저 채워주세요</b><ul>${problems().map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}</ul></div>`
-          : ''}
+        <div class="setup-issues">${issuesInner()}</div>
         ${workBox()}
       </section>
 
@@ -5668,10 +5717,28 @@ if (adSetup) {
     addFiles(event.dataTransfer && event.dataTransfer.files);
   });
 
+  /* 날짜 칸 · 시각 칸을 모아 state 에 담는다. 담아 두는 값은 늘 한 덩어리라
+     (YYYY-MM-DDTHH:mm) 보내는 쪽은 예전과 똑같다. 날짜를 비우면 통째로 비운다. */
+  const whenType = (field) => {
+    const box = field.closest('.setup-when');
+    if (!box) return;
+    const dayAt = box.querySelector('[data-part="day"]');
+    const timeAt = box.querySelector('[data-part="time"]');
+    const day = tr(dayAt && dayAt.value);
+    const time = timeFix(timeAt && timeAt.value);
+    state[field.dataset.field] = day ? `${day}T${time || '00:00'}` : '';
+    save();
+    // 채워야 할 목록만 고쳐 끼운다 (적던 칸은 그대로 둔다)
+    const issues = adSetup.querySelector('.setup-issues');
+    if (issues) issues.innerHTML = issuesInner();
+  };
+
   // 텍스트 칸은 다시 그리지 않는다 (입력 중 커서가 튀지 않도록)
   adSetup.addEventListener('input', (event) => {
     const field = event.target.closest('[data-field]');
-    if (!field || field.tagName === 'SELECT' || field.type === 'datetime-local') return;
+    if (!field) return;
+    if (field.dataset.part) return whenType(field);
+    if (field.tagName === 'SELECT') return;
     if (field.dataset.field === 'budget') {
       const raw = digitsOf(field.value);
       field.value = raw ? commaNum(parseInt(raw, 10)) : '';
@@ -5692,10 +5759,19 @@ if (adSetup) {
 
   adSetup.addEventListener('change', (event) => {
     const field = event.target.closest('[data-field]');
-    if (!field || (field.tagName !== 'SELECT' && field.type !== 'datetime-local')) return;
+    if (!field) return;
+    if (field.dataset.part) return whenType(field);   // 날짜 고르개로 골랐을 때
+    if (field.tagName !== 'SELECT') return;
     state[field.dataset.field] = field.value;
     save();
     render();
+  });
+
+  // 시각 칸의 모양은 **빠져나갈 때 한 번만** 맞춘다. 적는 중에 고치면 커서가 튄다.
+  adSetup.addEventListener('focusout', (event) => {
+    const field = event.target.closest('[data-part="time"]');
+    if (!field) return;
+    field.value = timeFix(field.value);
   });
 
   adSetup.addEventListener('click', (event) => {
