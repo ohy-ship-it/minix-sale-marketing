@@ -2373,6 +2373,11 @@ if (filenameTool) {
     render();
   };
 
+  /* 메타는 소재문구 탭을 만들지 않는다. 메타 소재의 문구는 메타 광고 세팅에서 바로 넣으므로
+     소재문구-메타 탭에 빈 줄만 쌓일 뿐이어서다. **파트 탭(세일즈마케팅 등) 에는 그대로 올라간다** —
+     메타 광고 세팅의 [시트 조회] 가 그 줄을 읽어 간다. */
+  const isMeta = (entry) => String(entry.media || '').trim().indexOf('메타') === 0;
+
   // 콘텐츠 T&D 시트에도 파일명을 넣는다. 문구는 비워 둔다 — 그건 T&D 화면에서 채운다.
   // 행사명이 곧 그 시트의 블록 이름이라 행사명별로 나눠 보낸다.
   const sendToTnd = (list) => {
@@ -2380,6 +2385,7 @@ if (filenameTool) {
     list.forEach((entry) => {
       const campaign = String(entry.event || '').trim();
       if (!campaign || !entry.media || !entry.filename) return;
+      if (isMeta(entry)) return;
       if (!groups.has(campaign)) groups.set(campaign, []);
       groups.get(campaign).push({ media: entry.media, filename: entry.filename });
     });
@@ -2420,6 +2426,7 @@ if (filenameTool) {
             const parts = [];
             if (added.length) parts.push(`소재문구 탭에 넣었습니다 · ${added.join(' · ')}`);
             if (kept) parts.push(`이미 있던 ${kept}줄은 그대로 뒀습니다`);
+            if (list.some(isMeta)) parts.push('메타는 소재문구 탭에 넣지 않았습니다');
             tndNote = parts.join('  |  ') || '소재문구 탭에 넣을 것이 없었습니다';
             render();
           })
@@ -6623,13 +6630,8 @@ if (utmBuilder) {
   /* 아직 적재하지 않은 줄은 시트에 함께 담는다. 그 PC 를 안 켜면 아무도 모르고,
      브라우저를 비우면 잃는다. **적재된 줄은 올리지 않는다** — 이미 파트 탭에 있다.
      그 줄은 이 브라우저에만 영수증처럼 남는다. localStorage 는 사본이다. */
-  /* 메타는 시트에 올리지 않는다. 메타 광고 세팅이 소재를 직접 올리므로 적재 시트에
-     메타 줄을 쌓을 이유가 없어서다. 파일명은 그대로 만들어 쓰고, 목록에는 '적재 안 함' 으로 적는다.
-     **대기 줄(UTM대기 탭)에도 담지 않는다** — 안 올릴 줄이 거기 끝없이 쌓이면 안 된다. */
-  const isMeta = (entry) => String(entry.media || '').trim().indexOf('메타') === 0;
-
   // 아직 안 올렸고 앞으로 올릴 줄 (시트에 담아 두는 대기 줄)
-  const waiting = () => entries.filter((entry) => !entry.sent && !isMeta(entry));
+  const waiting = () => entries.filter((entry) => !entry.sent);
 
   const KNOWN_KEY = 'minix-utm-wait-known';
   const knownRead = () => {
@@ -6979,7 +6981,7 @@ if (utmBuilder) {
 
   const picked = () => namesOf(state.filenames);
   const ready = () => Boolean(picked().length && build(state).source);
-  const pending = () => entries.filter((entry) => !entry.sent && !isMeta(entry));
+  const pending = () => waiting();
 
   const render = () => {
     const names = picked();
@@ -7052,8 +7054,7 @@ if (utmBuilder) {
               <td>${escapeHtml(entry.purpose) || '<span class="tool-blank">-</span>'}</td>
               <td class="tool-campaign">${escapeHtml(link)}</td>
               <td><div class="tool-row-actions">
-                ${isMeta(entry) ? '<span class="tool-sent is-skip" title="메타는 적재 시트에 올리지 않습니다 — 메타 광고 세팅에서 소재를 직접 올립니다">적재 안 함</span>'
-                  : entry.sent ? '<span class="tool-sent"><i data-lucide="check"></i>적재됨</span>' : ''}
+                ${entry.sent ? '<span class="tool-sent"><i data-lucide="check"></i>적재됨</span>' : ''}
                 <button type="button" class="tool-copy" data-copy="${escapeHtml(link)}"><i data-lucide="copy"></i>복사</button>
                 <button type="button" class="tool-remove" aria-label="삭제"><i data-lucide="x"></i></button>
               </div></td>
@@ -7066,8 +7067,7 @@ if (utmBuilder) {
         <button type="button" class="tool-reset"><i data-lucide="eraser"></i>전체 지우기</button>
         <button type="button" class="tool-submit"${(ready() || pending().length) ? '' : ' disabled'}><i data-lucide="upload"></i>최종완료${pending().length ? ` (${pending().length})` : ''}</button>
         <button type="button" class="tool-open-sheet" title="구글시트 새 탭으로 열기"><i data-lucide="external-link"></i>적재확인</button>
-        <small>입력한 파일명을 목록에 담고, 아직 안 올린 것을 파일명 시트에 적재합니다. UTM 은 시트가 같은 규칙으로 다시 만듭니다.
-          <b>메타는 적재하지 않습니다</b> — 메타 광고 세팅에서 소재를 직접 올립니다.</small>
+        <small>입력한 파일명을 목록에 담고, 아직 안 올린 것을 파일명 시트에 적재합니다. UTM 은 시트가 같은 규칙으로 다시 만듭니다.</small>
       </div>
       ${customModal()}`;
     lucide.createIcons();
