@@ -544,10 +544,16 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 .setup-run{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px}
 .setup-run small{color:#a5a49f;font-size:11px}
 
-/* 날짜 칸 + 시각 칸. 시각은 짧으니 날짜에 자리를 더 준다. */
-.setup-when{display:flex;gap:6px}
-.setup-when input[data-when="day"]{flex:1 1 auto;min-width:0}
-.setup-when input[data-when="time"]{flex:0 0 86px;text-align:center;font-variant-numeric:tabular-nums}
+/* 날짜 칸 + 시각 칸. 둘을 **같은 너비**로 반씩 나눠 갖는다 (flex 밑값을 0 으로 두면
+   안쪽 글자 길이와 상관없이 정확히 반반이 된다). 시각 쪽은 고르개 화살표까지 품는다. */
+.setup-when{display:flex;gap:6px;align-items:flex-start}
+.setup-when > *{flex:1 1 0;min-width:0}
+.setup-when input[data-when="day"]{width:100%;box-sizing:border-box}
+.setup-when input[data-when="time"]{text-align:center;font-variant-numeric:tabular-nums}
+/* 시각 고르개는 캠페인명 고르개와 같은 모양이다 (setup-combo-*) */
+.setup-time{position:relative;display:block}
+.setup-time .setup-combo-items{max-height:220px}
+.setup-time .setup-combo-items button{justify-content:center}
 
 /* 채워야 할 목록은 늘 자리를 두고 안쪽만 바꿔 끼운다 (비어 있으면 안 보인다) */
 .setup-issues:empty{display:none}

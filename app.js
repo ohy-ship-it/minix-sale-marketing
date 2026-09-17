@@ -4969,6 +4969,8 @@ if (adSetup) {
   let attempted = false;  // [광고 만들기] 를 한 번이라도 눌렀는가
   // 캠페인명 고르개 — 고른 계정에서 켜져 있는 캠페인. acct 는 그 목록이 어느 계정 것인지다.
   let campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
+  // 시각 고르개가 열려 있는 칸 ('startAt' · 'endAt' · 빈 글자)
+  let whenOpen = '';
   // 끌어다 놓은 소재 [{ file, name, size, row, story }] · 만드는 중 상황
   let picks = [];
   let work = null;        // { running, done, total, lines: [], failed, adset }
@@ -5469,21 +5471,32 @@ if (adSetup) {
      칸 이름은 data-part 가 아니라 **data-when** 이다. data-part 는 파트 버튼
      (세일즈마케팅 · 더플렌더_파트 …)이 이미 쓰고 있어서, 같은 이름을 붙였더니
      칸을 누르는 순간 파트를 바꾼 것으로 보고 화면을 다시 그렸다. */
-  const TIME_LIST = 'setup-time-list';
-
   const timeChoices = () => {
     const out = [];
     for (let at = 0; at < 24 * 60; at += 30) out.push(`${pad2(Math.floor(at / 60))}:${pad2(at % 60)}`);
     return out;
   };
 
+  /* 시각 고르개. datalist 를 썼더니 화살표가 브라우저마다 안 보여 고르는 길이 있는 줄도
+     몰랐다. 그래서 **캠페인명 고르개와 같은 방식**으로 바꾼다 — 화살표를 누르면 목록이
+     펼쳐지고, 그냥 칸에 숫자를 쳐도 된다. */
   const whenBox = (key) => {
     const [day, time] = whenParts(state[key]);
+    const open = whenOpen === key;
     return `<span class="setup-when">
       <input type="date" data-field="${key}" data-when="day" value="${escapeHtml(day)}">
-      <input type="text" data-field="${key}" data-when="time" value="${escapeHtml(time)}"
-        list="${TIME_LIST}" inputmode="numeric" maxlength="5" placeholder="14:30"
-        title="24시간으로 적거나 목록에서 고릅니다 (예: 14:30)">
+      <span class="setup-time setup-combo">
+        <span class="setup-combo-row">
+          <input type="text" data-field="${key}" data-when="time" value="${escapeHtml(time)}"
+            inputmode="numeric" maxlength="5" placeholder="14:30"
+            title="24시간으로 적거나 화살표를 눌러 고릅니다 (예: 14:30)">
+          <button type="button" class="setup-combo-toggle${open ? ' is-open' : ''}"
+            data-timepick="${key}" title="시각 고르기"><i data-lucide="chevron-${open ? 'up' : 'down'}"></i></button>
+        </span>
+        ${open ? `<div class="setup-combo-list"><ul class="setup-combo-items">${timeChoices()
+          .map((one) => `<li><button type="button" data-time="${one}" data-timefor="${key}"${one === time ? ' class="is-on"' : ''}><b>${one}</b></button></li>`)
+          .join('')}</ul></div>` : ''}
+      </span>
     </span>`;
   };
 
@@ -5659,8 +5672,8 @@ if (adSetup) {
         <div class="setup-field setup-promo">
           <span class="setup-req">세팅명<small class="setup-hint">적재 시트의 세팅명 칸 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
           <div class="setup-promo-row">
-            <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="예: 음쓰해방위크-1차">
             <select data-field="product" class="setup-product">${productOptions(state.product)}</select>
+            <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="예: 음쓰해방위크-1차">
             <button type="button" class="tool-add setup-lookup"${lookup.state === 'loading' ? ' disabled' : ''}><i data-lucide="search"></i>시트 조회</button>
           </div>
         </div>
@@ -5699,7 +5712,6 @@ if (adSetup) {
             <select data-field="cta">${CTAS.map(([value, label]) => `<option value="${value}"${value === state.cta ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select>
           </label>
         </div>
-        <datalist id="${TIME_LIST}">${timeChoices().map((one) => `<option value="${one}"></option>`).join('')}</datalist>
         <div class="tool-grid setup-grid">
           <label><span class="setup-req">시작일시</span>${whenBox('startAt')}</label>
           <label>종료일시<small class="setup-hint">비우면 계속 게재 · 총예산이면 필수</small>${whenBox('endAt')}</label>
@@ -5835,6 +5847,28 @@ if (adSetup) {
   });
 
   adSetup.addEventListener('click', (event) => {
+    // 시각 고르개 — 화살표로 열고 닫고, 목록에서 고르면 그 시각으로 채운다
+    const timePick = event.target.closest('[data-timepick]');
+    if (timePick) {
+      whenOpen = whenOpen === timePick.dataset.timepick ? '' : timePick.dataset.timepick;
+      return render();
+    }
+    const timeHit = event.target.closest('[data-time]');
+    if (timeHit) {
+      const key = timeHit.dataset.timefor;
+      // 날짜를 아직 안 골랐으면 시작일(없으면 오늘)을 가져다 쓴다 — 시각만 남는 값은 없다
+      const day = whenParts(state[key])[0] || whenParts(state.startAt)[0] || todayAtMidnight().slice(0, 10);
+      state[key] = `${day}T${timeHit.dataset.time}`;
+      whenOpen = '';
+      save();
+      return render();
+    }
+    // 고르개 바깥을 눌렀으면 닫는다
+    if (whenOpen && !event.target.closest('.setup-when')) {
+      whenOpen = '';
+      render();
+    }
+
     // 캠페인명 고르개 먼저 본다 (다른 것을 누르면 닫혀야 한다)
     if (event.target.closest('.setup-combo-toggle')) {
       if (campaigns.open) { campaigns.open = false; return render(); }
@@ -6509,8 +6543,8 @@ if (kakaoSetup) {
         <div class="setup-field setup-promo">
           <span class="setup-req">세팅명<small class="setup-hint">적재 시트의 세팅명 칸 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
           <div class="setup-promo-row">
-            <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="예: 음쓰해방위크-1차">
             <select data-field="product" class="setup-product">${productOptions(state.product)}</select>
+            <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="예: 음쓰해방위크-1차">
             <button type="button" class="tool-add setup-lookup"${lookup.state === 'loading' ? ' disabled' : ''}><i data-lucide="search"></i>시트 조회</button>
           </div>
         </div>
