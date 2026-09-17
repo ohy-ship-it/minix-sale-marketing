@@ -5419,13 +5419,29 @@ if (adSetup) {
     return list;
   };
 
-  // 날짜 칸 + 시각 칸. 시각은 늘 24시간이고 숫자판으로 바로 칠 수 있다.
+  /* 날짜 칸 + 시각 칸. 둘 다 **마우스로 고르기와 키보드로 적기가 다 된다** —
+     날짜는 달력 고르개가 붙어 있고, 시각은 30분 단위 목록(datalist)이 붙어 있다.
+     시각을 type="time" 으로 두지 않는 까닭은 그것도 브라우저 말을 따라 오전/오후로
+     그려지기 때문이다. 글자 칸 + 목록이면 늘 24시간이면서 고르기도 된다.
+
+     칸 이름은 data-part 가 아니라 **data-when** 이다. data-part 는 파트 버튼
+     (세일즈마케팅 · 더플렌더_파트 …)이 이미 쓰고 있어서, 같은 이름을 붙였더니
+     칸을 누르는 순간 파트를 바꾼 것으로 보고 화면을 다시 그렸다. */
+  const TIME_LIST = 'setup-time-list';
+
+  const timeChoices = () => {
+    const out = [];
+    for (let at = 0; at < 24 * 60; at += 30) out.push(`${pad2(Math.floor(at / 60))}:${pad2(at % 60)}`);
+    return out;
+  };
+
   const whenBox = (key) => {
     const [day, time] = whenParts(state[key]);
     return `<span class="setup-when">
-      <input type="date" data-field="${key}" data-part="day" value="${escapeHtml(day)}">
-      <input type="text" data-field="${key}" data-part="time" value="${escapeHtml(time)}"
-        inputmode="numeric" maxlength="5" placeholder="14:30" title="24시간으로 적습니다 (예: 14:30)">
+      <input type="date" data-field="${key}" data-when="day" value="${escapeHtml(day)}">
+      <input type="text" data-field="${key}" data-when="time" value="${escapeHtml(time)}"
+        list="${TIME_LIST}" inputmode="numeric" maxlength="5" placeholder="14:30"
+        title="24시간으로 적거나 목록에서 고릅니다 (예: 14:30)">
     </span>`;
   };
 
@@ -5640,6 +5656,7 @@ if (adSetup) {
             <select data-field="cta">${CTAS.map(([value, label]) => `<option value="${value}"${value === state.cta ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select>
           </label>
         </div>
+        <datalist id="${TIME_LIST}">${timeChoices().map((one) => `<option value="${one}"></option>`).join('')}</datalist>
         <div class="tool-grid setup-grid">
           <label><span class="setup-req">시작일시</span>${whenBox('startAt')}</label>
           <label>종료일시<small class="setup-hint">비우면 계속 게재 · 총예산이면 필수</small>${whenBox('endAt')}</label>
@@ -5722,8 +5739,8 @@ if (adSetup) {
   const whenType = (field) => {
     const box = field.closest('.setup-when');
     if (!box) return;
-    const dayAt = box.querySelector('[data-part="day"]');
-    const timeAt = box.querySelector('[data-part="time"]');
+    const dayAt = box.querySelector('[data-when="day"]');
+    const timeAt = box.querySelector('[data-when="time"]');
     const day = tr(dayAt && dayAt.value);
     const time = timeFix(timeAt && timeAt.value);
     state[field.dataset.field] = day ? `${day}T${time || '00:00'}` : '';
@@ -5737,7 +5754,7 @@ if (adSetup) {
   adSetup.addEventListener('input', (event) => {
     const field = event.target.closest('[data-field]');
     if (!field) return;
-    if (field.dataset.part) return whenType(field);
+    if (field.dataset.when) return whenType(field);
     if (field.tagName === 'SELECT') return;
     if (field.dataset.field === 'budget') {
       const raw = digitsOf(field.value);
@@ -5760,7 +5777,7 @@ if (adSetup) {
   adSetup.addEventListener('change', (event) => {
     const field = event.target.closest('[data-field]');
     if (!field) return;
-    if (field.dataset.part) return whenType(field);   // 날짜 고르개로 골랐을 때
+    if (field.dataset.when) return whenType(field);   // 달력 · 시각 목록에서 골랐을 때
     if (field.tagName !== 'SELECT') return;
     state[field.dataset.field] = field.value;
     save();
@@ -5769,7 +5786,7 @@ if (adSetup) {
 
   // 시각 칸의 모양은 **빠져나갈 때 한 번만** 맞춘다. 적는 중에 고치면 커서가 튄다.
   adSetup.addEventListener('focusout', (event) => {
-    const field = event.target.closest('[data-part="time"]');
+    const field = event.target.closest('[data-when="time"]');
     if (!field) return;
     field.value = timeFix(field.value);
   });

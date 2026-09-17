@@ -544,8 +544,8 @@ select.week-input{width:auto;padding:4px 22px 4px 7px;background:#fff}
 
 /* 날짜 칸 + 시각 칸. 시각은 짧으니 날짜에 자리를 더 준다. */
 .setup-when{display:flex;gap:6px}
-.setup-when input[data-part="day"]{flex:1 1 auto;min-width:0}
-.setup-when input[data-part="time"]{flex:0 0 74px;text-align:center;font-variant-numeric:tabular-nums}
+.setup-when input[data-when="day"]{flex:1 1 auto;min-width:0}
+.setup-when input[data-when="time"]{flex:0 0 86px;text-align:center;font-variant-numeric:tabular-nums}
 
 /* 채워야 할 목록은 늘 자리를 두고 안쪽만 바꿔 끼운다 (비어 있으면 안 보인다) */
 .setup-issues:empty{display:none}
