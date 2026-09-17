@@ -4965,6 +4965,25 @@ if (adSetup) {
   const gvizUrl = (sheetId, sheetName, out) =>
     `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:${out}&headers=0&sheet=${encodeURIComponent(sheetName)}`;
 
+  /* 파트 탭은 **번호(gid)로** 읽는다.
+     gviz 는 sheet=이름 을 조용히 무시하고 늘 첫 탭을 준다 — 없는 이름을 넣어도 첫 탭이 온다.
+     그래서 파트를 바꿔도 세일즈마케팅만 읽히고 아무 말이 없었다. 번호로는 제대로 골라진다.
+     번호는 시트만 아는 값이라 서버에 한 번 물어 담아 둔다 (6시간). */
+  let partGid = {};
+  const loadPartGid = () => askSheet({ action: 'partTabs' })
+    .then((body) => {
+      const found = {};
+      (body.tabs || []).forEach((one) => { if (one && one.name && one.gid) found[one.name] = one.gid; });
+      partGid = found;
+      return found;
+    });
+
+  const partUrl = (part) => {
+    const gid = partGid[part];
+    const base = `https://docs.google.com/spreadsheets/d/${LOAD_SHEET_ID}/gviz/tq?tqx=out:csv&headers=0`;
+    return gid ? `${base}&gid=${encodeURIComponent(gid)}` : `${base}&sheet=${encodeURIComponent(part)}`;
+  };
+
   /* 랜딩 URL 을 만든다.
      시트의 NT · FM 칸은 '?nt_source=…' 처럼 **꼬리만** 들어 있다. 그래서 랜딩링크에 이어 붙인다.
      LINK(GA) 처럼 http 로 시작하는 칸은 그 자체가 주소라 그대로 쓴다. */
@@ -5004,11 +5023,22 @@ if (adSetup) {
     const part = PARTS.indexOf(state.part) >= 0 ? state.part : PARTS[0];
     let table;
     try {
-      const response = await fetch(gvizUrl(LOAD_SHEET_ID, part, 'csv'));
+      // 탭 번호를 아직 모르면 한 번 물어 온다 (못 받아도 이름으로 시도한다)
+      if (!partGid[part]) await loadPartGid().catch(() => ({}));
+      const response = await fetch(partUrl(part));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       table = parseCsv(await response.text());
     } catch (error) {
       lookup = { state: 'error', message: `[${part}] 탭 조회 실패: ${error.message}` };
+      return render();
+    }
+
+    /* 번호를 못 받아 이름으로 읽었다면 **엉뚱한 탭을 읽었을 수 있다.**
+       조용히 다른 파트의 줄을 보여 주느니, 그럴 수 있다고 알리고 멈춘다. */
+    if (!partGid[part] && part !== PARTS[0]) {
+      lookup = { state: 'error',
+        message: `[${part}] 탭 번호를 못 받았습니다 — 이름만으로는 구글이 첫 탭(${PARTS[0]})을 주기 때문에 `
+          + '엉뚱한 파트를 보여 드릴 수 있어 멈췄습니다. 잠시 뒤 다시 눌러 주세요.' };
       return render();
     }
 
@@ -12090,11 +12120,12 @@ if (eventResult) {
     return found;
   });
 
-  const load = () => {
+  const load = (fresh) => {
     status = 'loading';
     error = '';
     render();
-    askSheet({ action: 'budgetTrend' })
+    // 서버가 추이를 담아 두므로 보통은 곧바로 온다. [다시 읽기] 만 담아 둔 것을 버린다.
+    askSheet({ action: 'budgetTrend', refresh: !!fresh })
       .then((found) => {
         body = found;
         manual = {};
@@ -12167,7 +12198,7 @@ if (eventResult) {
     const hit = event.target.closest('[data-tr]');
     if (!hit) return;
     const what = hit.dataset.tr;
-    if (what === 'reload') { load(); return; }
+    if (what === 'reload') { load(true); return; }
     if (what === 'save') { saveFiles(); return; }
     if (what === 'drop') { files = []; fileNote = ''; open = ''; render(); return; }
     if (what === 'dropone') {

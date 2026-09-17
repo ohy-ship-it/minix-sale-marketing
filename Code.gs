@@ -1510,6 +1510,34 @@ function filenameRecent_(payload) {
   return { ok: true, rows: out.reverse().slice(0, RECENT_LIMIT) };
 }
 
+/* ── 파트 탭의 번호(gid) ───────────────────────────────────────────
+   화면이 적재 시트를 읽을 때는 구글의 gviz 라는 빠른 길을 쓴다 (시트를 CSV 로 그냥 준다).
+   그런데 그 길은 **탭을 이름으로 못 고른다** — sheet=더플렌더_파트 라고 적어도 조용히
+   첫 탭을 준다 (없는 이름을 넣어 봐도 똑같이 첫 탭이 왔다). 그래서 엉뚱한 파트를 읽고도
+   아무 말이 없었다. gid=번호 로는 제대로 골라진다.
+
+   번호는 시트만 아는 값이라 여기서 알려 준다. 탭이 새로 생기지 않는 한 바뀌지 않아
+   6시간 담아 둔다. */
+var PART_TAB_CACHE_SECONDS = 21600;
+
+function partTabs_() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get('partTabs');
+  if (hit) {
+    try { return { ok: true, tabs: JSON.parse(hit), cached: true }; } catch (ignore) { /* 깨졌으면 다시 읽는다 */ }
+  }
+
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var out = [];
+  PART_SHEETS.forEach(function (name) {
+    var sheet = book.getSheetByName(name);
+    if (sheet) out.push({ name: name, gid: String(sheet.getSheetId()) });
+  });
+
+  try { cache.put('partTabs', JSON.stringify(out), PART_TAB_CACHE_SECONDS); } catch (ignore) { /* 거들기다 */ }
+  return { ok: true, tabs: out };
+}
+
 // ── 콘텐츠 T&D 적재 (워크스페이스 '광고소재 T&D' 화면) ─────────────────
 // 대상: "[통합] 콘텐츠 T&D" 시트의 매체별 탭. 탭마다 형식이 달라 [DA] 계열만 다룬다.
 // 한 행사 = 한 블록이고, 블록은 위에서부터 최신순으로 쌓인다. 그래서 맨 위에 끼워 넣는다.
@@ -1639,7 +1667,7 @@ function handleAction_(payload) {
     if (payload.action === 'clarityPages') return clarityPages_(payload);
     if (payload.action === 'clarityPage') return clarityPage_(payload);
     if (payload.action === 'budgetGet') return budgetGet_(payload);
-    if (payload.action === 'budgetTrend') return budgetTrend_();
+    if (payload.action === 'budgetTrend') return budgetTrend_(payload);
     if (payload.action === 'trendChannelPut') return trendChannelPut_(payload);
     if (payload.action === 'budgetPut') return budgetPut_(payload);
     if (payload.action === 'budgetDrop') return budgetDrop_(payload);
@@ -1670,6 +1698,7 @@ function handleAction_(payload) {
     if (payload.action === 'tndFilenames') return tndFilenames_(payload);
     if (payload.action === 'filenameRecent') return filenameRecent_(payload);
     if (payload.action === 'filenameSeq') return filenameSeq_();
+    if (payload.action === 'partTabs') return partTabs_();
     return { ok: false, error: '모르는 요청입니다: ' + payload.action };
   } catch (error) {
     return { ok: false, error: String(error && error.message ? error.message : error) };
@@ -6641,8 +6670,8 @@ function budgetTable_(grid, headRow) {
 var MONTH_BUDGET_SHEET_NAME = '월별예산';
 var MONTH_BUDGET_HEADERS = ['월', '총예산', '내용(JSON)', '사용액(JSON)', '수정자', '수정시각'];
 
-function monthBudgetSheet_() {
-  var book = SpreadsheetApp.openById(SHEET_ID);
+function monthBudgetSheet_(book) {
+  book = book || SpreadsheetApp.openById(SHEET_ID);
   var sheet = book.getSheetByName(MONTH_BUDGET_SHEET_NAME);
   if (!sheet) {
     sheet = book.insertSheet(MONTH_BUDGET_SHEET_NAME, book.getNumSheets());
@@ -6848,8 +6877,8 @@ function monthBudgetRow_(line) {
 var TREND_CHANNEL_SHEET_NAME = '추이판매채널';
 var TREND_CHANNEL_HEADERS = ['달', '프로모션명', '판매채널', '수정자', '수정시각'];
 
-function trendChannelSheet_() {
-  var book = SpreadsheetApp.openById(SHEET_ID);
+function trendChannelSheet_(book) {
+  book = book || SpreadsheetApp.openById(SHEET_ID);
   var sheet = book.getSheetByName(TREND_CHANNEL_SHEET_NAME);
   if (!sheet) {
     sheet = book.insertSheet(TREND_CHANNEL_SHEET_NAME, book.getNumSheets());
@@ -6865,8 +6894,8 @@ function trendChannelSheet_() {
   return sheet;
 }
 
-function trendChannelRows_() {
-  var sheet = trendChannelSheet_();
+function trendChannelRows_(book) {
+  var sheet = trendChannelSheet_(book);
   var last = sheet.getLastRow();
   if (last < 2) return [];
   var out = [];
@@ -6907,11 +6936,13 @@ function trendChannelPut_(payload) {
     }
     if (!channel) {
       if (at) sheet.deleteRow(at);
+      budgetStamp_(true);
       return { ok: true, month: month, promo: promo, removed: !!at };
     }
     if (!at) at = sheet.getLastRow() + 1;
     sheet.getRange(at, 1, 1, TREND_CHANNEL_HEADERS.length)
       .setValues([[month, promo, channel, who, new Date()]]);
+    budgetStamp_(true);            // 담아 둔 추이를 버린다 (다음에 열면 새로 읽는다)
     return { ok: true, month: month, promo: promo, channel: channel,
       savedAt: new Date().toISOString() };
   } finally {
@@ -6931,15 +6962,50 @@ function trendChannelPut_(payload) {
 
    매출채널 표(설정 탭 K:L)도 함께 준다 — 화면이 전매체 파일의 광고그룹 이름
    ('[행사]_타겟팅_**매출채널**') 을 판매채널에 붙일 때 쓴다. */
-function budgetTrend_() {
-  var sheet = monthBudgetSheet_();
+/* 담아 두는 시간. 예산을 고치면 아래 budgetStamp_ 가 번호를 올려 곧바로 새로 읽으므로,
+   길게 담아 두어도 옛 숫자를 보는 일이 없다. */
+var TREND_CACHE_SECONDS = 1800;   // 30분
+
+/* 담아 둔 것을 버리는 **판 번호**. 열쇠에 이 번호를 넣어 두고, 예산 · 판매채널을 고칠 때
+   번호를 올린다 — 번호가 바뀌면 옛 열쇠는 아무도 찾지 않으므로 그 자리에서 새로 읽는다.
+   (네이버 적재가 쓰는 naverStamp_ 와 같은 방법이다) */
+function budgetStamp_(bump) {
+  var store = PropertiesService.getScriptProperties();
+  var now = Number(store.getProperty('BUDGET_STAMP') || 0);
+  if (bump) {
+    now += 1;
+    store.setProperty('BUDGET_STAMP', String(now));
+  }
+  return now;
+}
+
+function budgetTrend_(payload) {
+  var cache = CacheService.getScriptCache();
+  var key = 'budgetTrend|' + budgetStamp_(false);
+  if (!(payload && payload.refresh)) {
+    var hit = cacheGet_(cache, key);
+    if (hit) {
+      try {
+        var kept = JSON.parse(hit);
+        kept.cached = true;
+        return kept;
+      } catch (error) { /* 깨졌으면 다시 읽는다 */ }
+    }
+  }
+
+  // 시트는 **한 번만 연다.** 달력 · 추이 판매채널 · 설정이 모두 같은 책이라,
+  // 따로 열면 그만큼 고스란히 기다리는 시간이 된다.
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = monthBudgetSheet_(book);
   var last = sheet.getLastRow();
   var months = [];
   var cells = {};        // '달|채널' → 모은 값
   var channels = {};
 
   if (last > 1) {
-    sheet.getRange(2, 1, last - 1, MONTH_BUDGET_HEADERS.length).getValues().forEach(function (line) {
+    /* 앞 세 칸(월 · 총예산 · 내용)만 읽는다. 뒤의 **사용액(JSON)** 은 여기서 안 쓰는데
+       달마다 수십~수백 KB라, 같이 읽으면 읽는 양이 곱절이 된다. */
+    sheet.getRange(2, 1, last - 1, 3).getValues().forEach(function (line) {
       var month = monthBudgetKey_(line[0]);
       if (!month) return;
       if (months.indexOf(month) < 0) months.push(month);
@@ -6982,17 +7048,16 @@ function budgetTrend_() {
 
   // 사람이 손으로 적어 둔 판매채널. 못 읽어도 추이는 그대로 보여 준다.
   var manual = [];
-  try { manual = trendChannelRows_(); } catch (error) { manual = []; }
+  try { manual = trendChannelRows_(book); } catch (error) { manual = []; }
 
   // 행사채널 → 매출채널 (광고그룹 이름 마지막 토막). 못 읽어도 추이는 그대로 보여 준다.
   var sales = [];
   try {
-    var book = SpreadsheetApp.openById(SHEET_ID);
     var config = book.getSheetByName(CONFIG_SHEET_NAME);
     if (config) sales = configRead_(config, 11, 2);
   } catch (error) { sales = []; }
 
-  return {
+  var result = {
     ok: true,
     months: months,
     channels: Object.keys(channels).sort(),
@@ -7007,6 +7072,9 @@ function budgetTrend_() {
     url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
     fetchedAt: new Date().toISOString()
   };
+
+  cachePut_(cache, key, JSON.stringify(result), TREND_CACHE_SECONDS);
+  return result;
 }
 
 // 고른 달 하나를 준다. 어떤 달이 있는지도 함께 준다 (화면의 달 고르개가 쓴다).
@@ -7090,6 +7158,7 @@ function budgetPut_(payload) {
       tableNote = String((error && error.message) || error);
     }
 
+    budgetStamp_(true);            // 예산이 바뀌었으니 담아 둔 추이를 버린다
     return { ok: true, month: month, savedAt: new Date().toISOString(),
       tableRows: table.rows, tableTabs: table.tabs, tableMade: table.made,
       tableUrl: table.url, tableNote: tableNote };
@@ -7537,6 +7606,7 @@ function budgetDrop_(payload) {
     for (var i = have.length - 1; i >= 0; i--) {      // 아래에서부터 (줄 번호가 밀리지 않게)
       if (monthBudgetKey_(have[i][0]) === month) { sheet.deleteRow(i + 2); gone++; }
     }
+    if (gone) budgetStamp_(true);
     return { ok: true, month: month, removed: gone };
   } finally {
     lock.releaseLock();
