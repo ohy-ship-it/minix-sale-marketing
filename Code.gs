@@ -2005,16 +2005,34 @@ function metaStory_(account) {
     } catch (ignore) { /* 깨졌으면 다시 찾는다 */ }
   }
 
-  var found = { pageId: '', igId: insta || META_IG_FALLBACK, from: '계정의 기존 소재' };
+  var found = { pageId: '', igId: insta || META_IG_FALLBACK, from: '' };
+
+  /* ① 토큰 자신에게 물어본다.
+     지금 쓰는 토큰은 **페이지 토큰**이다 — 그러면 토큰이 곧 그 페이지의 것이라
+     따로 적어 둘 필요가 없다. debug_token 이 type: PAGE · profile_id 로 알려 준다.
+     사용자 토큰이면 type 이 USER 라 여기서 걸러지고 아래로 내려간다. */
   try {
-    var rows = graphAll_('/' + account + '/adcreatives',
-      { fields: 'object_story_spec{page_id,instagram_user_id}', limit: 25 }, 1);
-    for (var i = 0; i < rows.length && !found.pageId; i += 1) {
-      var spec = (rows[i] || {}).object_story_spec || {};
-      if (spec.page_id) found.pageId = String(spec.page_id);
-      if (!insta && spec.instagram_user_id) found.igId = String(spec.instagram_user_id);
+    var token = metaToken_();
+    var body = graph_('/debug_token', { input_token: token });
+    var info = body.data || {};
+    if (String(info.type || '') === 'PAGE' && info.profile_id) {
+      found.pageId = String(info.profile_id);
+      found.from = '토큰(페이지 토큰)';
     }
-  } catch (error) { /* 못 읽으면 아래에서 알려 준다 */ }
+  } catch (error) { /* 못 물어보면 아래 길로 간다 */ }
+
+  // ② 계정이 이미 만들어 둔 크리에이티브에서 꺼낸다 (사용자 토큰일 때의 길)
+  if (!found.pageId) {
+    try {
+      var rows = graphAll_('/' + account + '/adcreatives',
+        { fields: 'object_story_spec{page_id,instagram_user_id}', limit: 25 }, 1);
+      for (var i = 0; i < rows.length && !found.pageId; i += 1) {
+        var spec = (rows[i] || {}).object_story_spec || {};
+        if (spec.page_id) { found.pageId = String(spec.page_id); found.from = '계정의 기존 소재'; }
+        if (!insta && spec.instagram_user_id) found.igId = String(spec.instagram_user_id);
+      }
+    } catch (error) { /* 못 읽으면 아래에서 알려 준다 */ }
+  }
 
   if (!found.pageId) {
     throw new Error('광고를 게시할 페이지(page_id)를 찾지 못했습니다. '
