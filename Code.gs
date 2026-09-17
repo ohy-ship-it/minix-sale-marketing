@@ -6729,11 +6729,14 @@ function monthBudgetParse_(text, fallback) {
    (두 곳에서 같은 값을 고칠 수 있게 두면 어느 쪽이 맞는지 아무도 모르게 된다.
     시트에서 고친 것을 앱으로 되돌리려면 어느 쪽이 이기는지부터 정해야 한다.)             */
 var MONTH_TABLE_BOOK_ID = '1rWiV6YKrfB3MNvM7Kv7Alm3hmCquknpBOBeT-rxi2U8';
-var MONTH_TABLE_HEADERS = ['월', '구분', '카테고리', '상세 SKU', '판매채널 · 항목',
+/* 탭 이름이 그 달이지만 **년 · 월 칸을 따로 둔다** — 탭을 여럿 모아 놓고 거르거나
+   피벗을 돌릴 때 탭 이름은 값이 아니라서 쓸 수가 없다. 숫자로 넣는다 (2026 · 9). */
+var MONTH_TABLE_HEADERS = ['년', '월', '구분', '카테고리', '상세 SKU', '판매채널 · 항목',
   '유형', '라이브일정', '광고시작', '광고종료', '목표수량', '목표 CPS',
   '브랜드검색비', '사용예정', '실사용비', '잔여비', '진행광고매체', '수정시각'];
 // 돈 · 개수 칸 (위 차례에서 1부터 센다). 이 칸만 천 단위로 끊어 준다.
-var MONTH_TABLE_NUMS = [10, 11, 12, 13, 14, 15];
+// 년 · 월은 여기 없다 — 끊어 주면 2026 이 '2,026' 으로 보인다.
+var MONTH_TABLE_NUMS = [11, 12, 13, 14, 15, 16];
 
 function monthTableBookId_() {
   var found = cleanToken_(PropertiesService.getScriptProperties().getProperty('BUDGET_TABLE_SHEET_ID'));
@@ -6763,6 +6766,9 @@ function monthTabKey_(name) {
 // 판 하나를 사람이 읽는 줄로 편다. 고정비를 먼저, 프로모션을 뒤에 둔다 (화면 차례와 같다).
 function budgetTableRows_(month, plan, stamp) {
   var out = [];
+  // '2026-09' → 2026 · 9. 숫자로 넣어야 거르기 · 피벗에서 그대로 쓴다.
+  var year = Number(String(month).slice(0, 4)) || '';
+  var mon = Number(String(month).slice(5, 7)) || '';
   var catOf = {};
   ((plan && plan.skus) || []).forEach(function (one) {
     catOf[String(one.name || '')] = String(one.category || '');
@@ -6771,7 +6777,7 @@ function budgetTableRows_(month, plan, stamp) {
   ((plan && plan.fixed) || []).forEach(function (one) {
     var want = Number(one.plan) || 0;
     var used = Number(one.used) || 0;
-    out.push([month, '고정비', String(one.category || ''),
+    out.push([year, mon, '고정비', String(one.category || ''),
       String(one.sku || '') || '공통', String(one.item || ''),
       '', '', '', '', '', '', '',
       want, used, want - used, '', stamp]);
@@ -6785,7 +6791,7 @@ function budgetTableRows_(month, plan, stamp) {
        브랜드검색비는 더하지 않는다 — 고정비의 '브랜드검색' 에 이미 들어 있다.        */
     var want = (Number(one.cost) || 0) > 0 ? Number(one.cost) : goal * cps;
     var used = Number(one.used) || 0;
-    out.push([month, String(one.group || '') || '(구분 없음)',
+    out.push([year, mon, String(one.group || '') || '(구분 없음)',
       catOf[String(one.sku || '')] || '', String(one.sku || ''),
       String(one.channel || ''), String(one.kind || ''), String(one.live || ''),
       String(one.since || ''), String(one.until || ''),
@@ -6796,11 +6802,11 @@ function budgetTableRows_(month, plan, stamp) {
   return out;
 }
 
-/* 탭 하나를 그린다. 탭 이름이 곧 그 달이라 '월' 칸은 넣지 않는다.
+/* 탭 하나를 그린다. 머리글 그대로 (년 · 월까지) 넣는다.
    **우리가 쓰는 칸만** 지운다 — 오른쪽에 사람이 적어 둔 메모가 있으면 살려 둔다. */
 function budgetTableDraw_(sheet, rows) {
-  var head = MONTH_TABLE_HEADERS.slice(1);
-  var grid = rows.map(function (line) { return line.slice(1); });
+  var head = MONTH_TABLE_HEADERS;
+  var grid = rows;
   var width = head.length;
 
   if (sheet.getMaxColumns() < width) {
@@ -6814,7 +6820,7 @@ function budgetTableDraw_(sheet, rows) {
   if (grid.length) sheet.getRange(2, 1, grid.length, width).setValues(grid);
   sheet.setFrozenRows(1);
   MONTH_TABLE_NUMS.forEach(function (at) {
-    sheet.getRange(2, at - 1, Math.max(grid.length, 1), 1).setNumberFormat('#,##0');
+    sheet.getRange(2, at, Math.max(grid.length, 1), 1).setNumberFormat('#,##0');
   });
   return grid.length;
 }
