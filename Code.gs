@@ -257,15 +257,25 @@ function onOpen() {
 }
 
 // 파트 탭을 모두 돌며 이미 쌓여 있던 행까지 채운다.
+// 소재문구-* 탭도 함께 훑는다 — 거기엔 UTM 수식이 없어 머리글만 맞춰 준다.
+// (그 탭은 적재할 때 tndFlatSheet_ 가 고치는데, 요즘은 GFA · 카카오만 적재해서
+//  나머지 탭은 아무도 건드리지 않는다. 그래서 여기서 한 번에 맞춘다)
 function fillAllUtm() {
   var book = SpreadsheetApp.openById(SHEET_ID);
   ensureConfigSheet_(book);
+  var fixed = 0;
   book.getSheets().forEach(function (sheet) {
+    if (String(sheet.getName()).indexOf(TND_FLAT_PREFIX) === 0) {
+      tndFlatFix_(sheet);
+      fixed += 1;
+      return;
+    }
     if (!isPartSheet_(sheet)) return;
     var map = ensureColumns_(sheet, FALLBACK_COLUMNS);
     if (sheet.getLastRow() < 2) return;
     writeUtm_(sheet, map, 2, sheet.getLastRow() - 1);
   });
+  return fixed;
 }
 
 function openConfigSheet() {
@@ -7830,7 +7840,7 @@ function kolLive_(payload) {
 //
 // 그래서 **적재 시트 안에 판판한 탭**을 매체 계열마다 하나씩 둔다. 한 줄이 소재 하나다.
 //   소재문구-메타 · 소재문구-GFA · 소재문구-카카오 · 소재문구-구글 · 소재문구-인플루언서 …
-//   행사명 | 매체 | 파일명 | 광고문구 | 글자수 | 적재시각
+//   세팅명 | 행사명 | 매체 | 파일명 | 광고문구 | 글자수 | 적재시각
 //
 // 계열은 매체 이름의 **첫 토막**이다 (GFA-피드 → GFA · 카카오-비즈보드 → 카카오).
 // 표를 손대지 않고도 새 매체가 늘면 그 계열 탭이 저절로 생긴다. 지면(피드 · 쇼핑소식 …)은
@@ -7840,7 +7850,14 @@ function kolLive_(payload) {
 // 없으면 아래에 붙인다. 그래서 최종완료를 몇 번 눌러도 줄이 겹치지 않는다.
 // 글자수는 수식으로 둔다 — 문구를 시트에서 고쳐도 알아서 다시 센다. (피드 65자 · 쇼핑 57자)
 var TND_FLAT_PREFIX = '소재문구-';
-var TND_FLAT_HEADERS = ['행사명', '매체', '파일명', '광고문구', '글자수', '적재시각'];
+// 파트 탭과 같은 차례로 세팅명이 맨 앞이다. 아래 쓰기가 칸 번호로 읽고 쓰므로
+// 자리를 외워 박지 않고 이 목록에서 찾아 쓴다 (tndCol_).
+var TND_FLAT_HEADERS = ['세팅명', '행사명', '매체', '파일명', '광고문구', '글자수', '적재시각'];
+
+// 머리글 이름 → 칸 번호 (1부터). 차례를 바꿔도 아래가 따라온다.
+function tndCol_(label) {
+  return TND_FLAT_HEADERS.indexOf(label) + 1;
+}
 var TND_FLAT_ETC = '기타';
 
 // 매체 → 계열 이름. 첫 '-' 앞을 쓴다. 시트 탭 이름에 쓸 수 없는 글자는 뺀다.
@@ -7852,26 +7869,47 @@ function tndFamily_(media) {
   return head || TND_FLAT_ETC;
 }
 
+/* 이미 있는 탭의 머리글을 맞춘다.
+   세팅명은 **맨 앞에 끼워 넣는다** — 오른쪽에 붙이면 파트 탭과 차례가 달라지고,
+   무엇보다 아래 쓰기가 칸 번호로 읽고 쓰기 때문에 자리가 정해져 있어야 한다.
+   칸을 끼우면 쌓여 있던 값은 열째로 같이 밀리고, 글자수 수식도 시트가 알아서 따라간다.
+   이미 있으면 아무 것도 하지 않는다 (두 번 눌러도 칸이 겹치지 않는다). */
+function tndFlatFix_(sheet) {
+  var width = Math.max(sheet.getLastColumn(), 1);
+  var head = sheet.getRange(1, 1, 1, width).getValues()[0].map(function (one) {
+    return String(one).trim();
+  });
+
+  if (head.indexOf('세팅명') < 0) {
+    sheet.insertColumnBefore(1);
+    sheet.getRange(1, 1).setValue('세팅명').setFontWeight('bold');
+    sheet.setColumnWidth(1, 200);
+    head.unshift('세팅명');
+  }
+
+  // 뒤에 늘어난 칸(글자수 · 적재시각처럼 나중에 생긴 것)은 이어 붙인다
+  TND_FLAT_HEADERS.forEach(function (label) {
+    if (head.indexOf(label) >= 0) return;
+    sheet.getRange(1, head.length + 1).setValue(label).setFontWeight('bold');
+    head.push(label);
+  });
+  return sheet;
+}
+
 function tndFlatSheet_(book, family) {
   var name = TND_FLAT_PREFIX + family;
   var sheet = book.getSheetByName(name);
-  if (!sheet) {
-    sheet = book.insertSheet(name, book.getNumSheets());
-    sheet.getRange(1, 1, 1, TND_FLAT_HEADERS.length).setValues([TND_FLAT_HEADERS]).setFontWeight('bold');
-    sheet.setFrozenRows(1);
-    sheet.setColumnWidth(1, 260);   // 행사명
-    sheet.setColumnWidth(2, 130);   // 매체
-    sheet.setColumnWidth(3, 130);   // 파일명
-    sheet.setColumnWidth(4, 520);   // 광고문구
-    sheet.getRange('D:D').setWrap(true);
-    return sheet;
-  }
-  // 열이 늘어난 뒤 처음 열렸으면 머리글만 채운다
-  var width = sheet.getLastColumn();
-  if (width < TND_FLAT_HEADERS.length) {
-    sheet.getRange(1, width + 1, 1, TND_FLAT_HEADERS.length - width)
-      .setValues([TND_FLAT_HEADERS.slice(width)]).setFontWeight('bold');
-  }
+  if (sheet) return tndFlatFix_(sheet);
+
+  sheet = book.insertSheet(name, book.getNumSheets());
+  sheet.getRange(1, 1, 1, TND_FLAT_HEADERS.length).setValues([TND_FLAT_HEADERS]).setFontWeight('bold');
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidth(tndCol_('세팅명'), 200);
+  sheet.setColumnWidth(tndCol_('행사명'), 260);
+  sheet.setColumnWidth(tndCol_('매체'), 130);
+  sheet.setColumnWidth(tndCol_('파일명'), 130);
+  sheet.setColumnWidth(tndCol_('광고문구'), 520);
+  sheet.getRange(1, tndCol_('광고문구'), sheet.getMaxRows(), 1).setWrap(true);
   return sheet;
 }
 
@@ -7884,8 +7922,10 @@ function tndFlatWrite_(sheet, campaign, rows) {
   var lastRow = sheet.getLastRow();
   var at = {};
   var copies = {};
+  // 행사명 · 매체 · 파일명 · 광고문구 네 칸은 붙어 있다. 그 자리부터 한 번에 읽는다.
+  var head = tndCol_('행사명');
   if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, 4).getValues().forEach(function (line, i) {
+    sheet.getRange(2, head, lastRow - 1, 4).getValues().forEach(function (line, i) {
       at[tndFlatKey_(line[0], line[1], line[2])] = i + 2;
       copies[i + 2] = String(line[3] || '');
     });
@@ -7903,7 +7943,7 @@ function tndFlatWrite_(sheet, campaign, rows) {
       // 이미 있는 줄. 문구를 새로 보냈고 그 칸이 비어 있으면 채운다.
       // **적혀 있는 문구는 덮지 않는다** — 사람이 시트에서 다듬어 둔 값이다.
       if (row.copy && !copies[found]) {
-        sheet.getRange(found, 4).setValue(row.copy);
+        sheet.getRange(found, tndCol_('광고문구')).setValue(row.copy);
         copies[found] = row.copy;
         filled += 1;
       } else {
@@ -7912,7 +7952,8 @@ function tndFlatWrite_(sheet, campaign, rows) {
       return;
     }
     if (fresh.some(function (one) { return one.key === key; })) return;   // 한 요청 안의 중복
-    fresh.push({ key: key, line: [campaign, row.media, row.filename, row.copy, '', stamp] });
+    // 세팅명은 비워 둔다 — 사람이 시트에서 적는 칸이다
+    fresh.push({ key: key, line: ['', campaign, row.media, row.filename, row.copy, '', stamp] });
     at[key] = -1;
   });
 
@@ -7921,10 +7962,11 @@ function tndFlatWrite_(sheet, campaign, rows) {
     sheet.getRange(start, 1, fresh.length, TND_FLAT_HEADERS.length)
       .setValues(fresh.map(function (one) { return one.line; }));
     // 글자수는 수식으로 둔다 (시트에서 문구를 고쳐도 알아서 다시 센다)
-    sheet.getRange(start, 5, fresh.length, 1).setFormulas(fresh.map(function (one, i) {
-      return ['=IF(D' + (start + i) + '="","",LEN(D' + (start + i) + '))'];
+    var copyAt = colLetter_(tndCol_('광고문구'));
+    sheet.getRange(start, tndCol_('글자수'), fresh.length, 1).setFormulas(fresh.map(function (one, i) {
+      return ['=IF(' + copyAt + (start + i) + '="","",LEN(' + copyAt + (start + i) + '))'];
     }));
-    sheet.getRange(start, 4, fresh.length, 1).setWrap(true);
+    sheet.getRange(start, tndCol_('광고문구'), fresh.length, 1).setWrap(true);
   }
 
   return { added: fresh.length, filled: filled, kept: kept };
