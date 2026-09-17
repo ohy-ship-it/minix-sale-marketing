@@ -8482,8 +8482,10 @@ if (mediaPerformance) {
     purchase: sum.purchase + row.purchase,
     addToCart: sum.addToCart + row.addToCart,
     lead: sum.lead + row.lead,
+    // 커스텀 이벤트는 메타만 준다. 다른 매체 줄에는 아예 없으므로 0 으로 받는다.
+    custom: sum.custom + (row.custom || 0),
   }), { spend: 0, impressions: 0, linkClicks: 0, clicks: 0, results: 0, revenue: 0,
-    purchase: 0, addToCart: 0, lead: 0 });
+    purchase: 0, addToCart: 0, lead: 0, custom: 0 });
 
   // ── 화면 ────────────────────────────────────────────────────────
   const accountOptions = () => {
@@ -8560,7 +8562,7 @@ if (mediaPerformance) {
       ${statCard('총광고비', money(all.spend), `캠페인 ${count(rows.length)}개`)}
       ${source().splitResults
     ? statCard('총구매', count(all.purchase), `장바구니 ${count(all.addToCart)} · 리드 ${count(all.lead)}`)
-    : statCard('총결과', count(all.results), `구매 ${count(all.purchase)} · 장바구니 ${count(all.addToCart)} · 리드 ${count(all.lead)}`)}
+    : statCard('총결과', count(all.results), `구매 ${count(all.purchase)} · 장바구니 ${count(all.addToCart)} · 리드 ${count(all.lead)}${all.custom ? ` · 커스텀 ${count(all.custom)}` : ''}`)}
       ${statCard('CPC', blank(ratio(all.spend, all.linkClicks), money), `${source().clicks} ${count(all.linkClicks)}회`)}
       ${statCard('CTR', blank(ratio(all.linkClicks, all.impressions), percent), `${source().clicks} ÷ 노출`)}
       ${statCard('CPM', blank(ratio(all.spend * 1000, all.impressions), money), `노출 ${count(all.impressions)}회`)}
@@ -10501,8 +10503,10 @@ if (creativePerformance) {
       purchase: sum.purchase + row.purchase,
       addToCart: sum.addToCart + row.addToCart,
       lead: sum.lead + row.lead,
+      // 커스텀 이벤트는 메타만 준다 (위 매체별 성과와 같은 이유)
+      custom: sum.custom + (row.custom || 0),
     }), { spend: 0, impressions: 0, linkClicks: 0, results: 0, revenue: 0,
-      purchase: 0, addToCart: 0, lead: 0 });
+      purchase: 0, addToCart: 0, lead: 0, custom: 0 });
 
     const where = isAll() || !report ? ''
       : (state.adset
@@ -10520,7 +10524,7 @@ if (creativePerformance) {
     : ''}</small></p>
       <div class="perf-stats">
         ${card('총광고비', money(total.spend), `소재 ${perfCount(rows.length)}개`)}
-        ${card('총결과', perfCount(total.results), `구매 ${perfCount(total.purchase)} · 장바구니 ${perfCount(total.addToCart)} · 리드 ${perfCount(total.lead)}`)}
+        ${card('총결과', perfCount(total.results), `구매 ${perfCount(total.purchase)} · 장바구니 ${perfCount(total.addToCart)} · 리드 ${perfCount(total.lead)}${total.custom ? ` · 커스텀 ${perfCount(total.custom)}` : ''}`)}
         ${card('CPC', blank(perfRatio(total.spend, total.linkClicks), money), `${source().clicks} ${perfCount(total.linkClicks)}회`)}
         ${card('CTR', blank(perfRatio(total.linkClicks, total.impressions), perfPercent), `${source().clicks} ÷ 노출`)}
         ${card('CPM', blank(perfRatio(total.spend * 1000, total.impressions), money), `노출 ${perfCount(total.impressions)}회`)}

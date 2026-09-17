@@ -1619,7 +1619,17 @@ var GRAPH_URL = 'https://graph.facebook.com/v21.0';
 var RESULT_GROUPS = [
   { key: 'purchase', types: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_web_purchase', 'purchase'] },
   { key: 'addToCart', types: ['omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart', 'add_to_cart'] },
-  { key: 'lead', types: ['lead', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.lead_grouped'] }
+  { key: 'lead', types: ['lead', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.lead_grouped'] },
+  /* 커스텀 이벤트 (맞춤 이벤트). 광고세트가 promoted_object 의 custom_event_str 로
+     최적화하는 캠페인들이 여기 걸린다 — lead_Alarm 계열이 그렇다. 이걸 안 세면
+     그 캠페인은 리드가 0 으로 잡히고 결과가 구매+장바구니 합으로만 남는다.
+
+     **메타 화면의 '결과' 와 딱 맞지는 않는다.** API 가 낱개로 주는 것은 계정에
+     '맞춤 전환' 을 만들어 둔 것뿐이고(지금은 mini_restock_event 하나), 나머지는
+     offsite_conversion.fb_pixel_custom 하나에 **그 줄의 커스텀 이벤트가 다 합쳐** 온다.
+     이벤트마다 맞춤 전환을 만들어 두면 offsite_conversion.custom.<번호> 로 낱개가 와
+     그때 정확히 맞출 수 있다. */
+  { key: 'custom', types: ['offsite_conversion.fb_pixel_custom'] }
 ];
 
 // 조회 결과를 담아 두는 시간(초). 같은 계정 · 같은 기간을 다시 물으면 그 안에서는 메타를 부르지 않는다.
@@ -2612,7 +2622,8 @@ function metrics_(row, base, window) {
   base.purchase = counted.purchase || catalog.purchase;
   base.addToCart = counted.addToCart || catalog.addToCart;
   base.lead = counted.lead || catalog.lead;
-  base.results = base.purchase + base.addToCart + base.lead;
+  base.custom = counted.custom || catalog.custom;
+  base.results = base.purchase + base.addToCart + base.lead + base.custom;
   base.revenue = purchaseValue_(row, field);
   base.attribution = window || '';
 
@@ -2622,7 +2633,7 @@ function metrics_(row, base, window) {
 
 // field 를 주면 그 어트리뷰션 칸(1d_click · 7d_click)을 읽는다. 없으면 value(계정 기본).
 function countResults_(actions, field) {
-  var out = { purchase: 0, addToCart: 0, lead: 0, found: false };
+  var out = { purchase: 0, addToCart: 0, lead: 0, custom: 0, found: false };
   if (!actions || !actions.length) return out;
   RESULT_GROUPS.forEach(function (group) {
     for (var i = 0; i < group.types.length; i += 1) {
@@ -3019,6 +3030,7 @@ function adsMetrics_(row, categories, base) {
   base.purchase = categories ? categories.purchase : 0;
   base.addToCart = categories ? categories.addToCart : 0;
   base.lead = categories ? categories.lead : 0;
+  base.custom = 0;                     // 구글은 커스텀 이벤트를 따로 주지 않는다
   base.results = base.purchase + base.addToCart + base.lead;
   // 카테고리가 안 잡힌 계정(전환 액션 분류가 비어 있는 경우)은 전환수를 그대로 쓴다
   if (!base.results && metrics.conversions) base.results = Number(metrics.conversions);
@@ -3679,6 +3691,7 @@ function kakaoMetrics_(metrics, base, window) {
   base.purchase = counted.purchase;
   base.addToCart = counted.addToCart;
   base.lead = counted.lead;
+  base.custom = 0;                     // 카카오는 커스텀 이벤트를 따로 주지 않는다
   base.results = base.purchase + base.addToCart + base.lead;
   base.revenue = kakaoValue_(found, window);
   return base;
@@ -5073,7 +5086,7 @@ function naverGather_(account, since, until) {
         adsetName: String(line[9]),
         objective: String(line[10]),
         spend: 0, impressions: 0, clicks: 0, linkClicks: 0,
-        purchase: 0, addToCart: 0, lead: 0, results: 0, revenue: 0,
+        purchase: 0, addToCart: 0, lead: 0, custom: 0, results: 0, revenue: 0,
         active: false, status: '', budget: 0, budgetKind: '', goal: '',
         thumbnail: '', copy: '', altCopy: '', begin: '', end: ''
       };
@@ -5800,6 +5813,7 @@ function saRow_(base, stat) {
     purchase: num.conv,
     addToCart: 0,
     lead: 0,
+    custom: 0,
     results: num.conv,
     revenue: num.revenue,
     budget: 0,
