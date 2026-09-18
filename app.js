@@ -13481,6 +13481,7 @@ if (kolLiveView) {
     ['orders', '주문수', 'num', '수기'],
     ['alerts', '알림수', 'num', '수기'],
     ['sessions', '세션수', 'num', '수기'],
+    ['clicks', '클릭수', 'num', '수기'],
   ];
 
   let months = [];          // [{ month, phases, updatedBy, updatedAt }] — 새 달이 위
@@ -13530,6 +13531,9 @@ if (kolLiveView) {
   const cps = (one) => perfRatio(one.spend, one.orders);        // 주문 하나에 든 광고비
   const roas = (one) => perfRatio(one.revenue, one.spend);
   const cpa = (one) => perfRatio(one.spend, one.alerts);        // 사전알림 하나를 받는 데 든 광고비
+  /* CVR 은 CPA 와 짝이다 — 같은 전환(사전알림)을 클릭으로 나눈다.
+     사전알림신청률(알림수 ÷ 세션수)과는 나누는 바닥이 다르다. */
+  const cvr = (one) => perfRatio(one.alerts, one.clicks);
   const buyRate = (one) => perfRatio(one.orders, one.alerts);   // 사전알림구매률
   const askRate = (one) => perfRatio(one.alerts, one.sessions); // 사전알림신청률
 
@@ -13575,6 +13579,7 @@ if (kolLiveView) {
         ${FIELDS.map(([name]) => inputCell(key, name, one[name])).join('')}
         <td class="perf-num" data-kol-out="${key}:cps">${money(cps(one))}</td>
         <td class="perf-num" data-kol-out="${key}:cpa">${money(cpa(one))}</td>
+        <td class="perf-num" data-kol-out="${key}:cvr">${rate(cvr(one))}</td>
       </tr>`;
     };
     const one = sumOf(row);
@@ -13583,23 +13588,163 @@ if (kolLiveView) {
       <div class="tool-table-wrap"><table class="tool-table kol-sub">
         <thead><tr><th>단계</th>${FIELDS.map(([, label, , mark]) => `<th class="perf-num">${escape(label)}${mark
     ? `<small>${escape(mark)}</small>` : ''}</th>`).join('')}
-          <th class="perf-num">CPS</th><th class="perf-num">CPA<small>사전알림</small></th></tr></thead>
+          <th class="perf-num">CPS</th><th class="perf-num">CPA<small>사전알림</small></th>
+          <th class="perf-num">CVR<small>알림 ÷ 클릭</small></th></tr></thead>
         <tbody>${PHASES.map(line).join('')}
           <tr class="kol-part"><td class="perf-name"><span>합계</span></td>
             ${FIELDS.map(([name, , kind]) => `<td class="perf-num" data-kol-out="sum:${name}">${kind === 'won'
     ? money(one[name]) : count(one[name])}</td>`).join('')}
             <td class="perf-num" data-kol-out="sum:cps">${money(cps(one))}</td>
-            <td class="perf-num" data-kol-out="sum:cpa">${money(cpa(one))}</td></tr>
+            <td class="perf-num" data-kol-out="sum:cpa">${money(cpa(one))}</td>
+            <td class="perf-num" data-kol-out="sum:cvr">${rate(cvr(one))}</td></tr>
         </tbody>
       </table></div>
-      <p class="perf-note">CPS = 광고비 ÷ 주문수 · CPA = 광고비 ÷ 사전알림수 ·
+      <p class="perf-note">CPS = 광고비 ÷ 주문수 · CPA = 광고비 ÷ 알림수 · CVR = 알림수 ÷ 클릭수 ·
         사전알림구매률 = 주문수 ÷ 알림수 · 사전알림신청률 = 알림수 ÷ 세션수.
         세션수는 나중에 GA 에서 받아 채웁니다 — 그때까지는 손으로 적습니다.</p>
     </div>`;
   };
 
+
+  /* ── 매체별 결과 ────────────────────────────────────────────────
+     단계별 표는 사람이 적지만, 매체마다의 숫자는 적을 것이 너무 많다. 그래서
+     매체별 성과 → 전매체 검색 → [행사별 결과로 보내기] 로 받은 .json 파일을 올린다
+     (판매채널 추이가 읽는 그 파일이다 — kind 가 'minix-cross-result' 인 것).
+
+     파일을 통째로 담아 두지 않는다. Phase × 매체로 **더한 값만** 담는다 —
+     한 달치 파일은 광고그룹 수백 줄이라 시트 한 칸(5만 자)에 들어가지 않고,
+     화면에서 보는 것은 매체마다의 합뿐이다.
+     CPA · CVR · CPM · CPC · CTR 은 담지 않는다. 더한 값에서 그때그때 센다. */
+  const MEDIA_PHASES = ['사전', '당일', '사후', '상시'];
+  const MEDIA_FIELDS = [
+    ['spend', '광고비', 'won'],
+    ['imp', '노출', 'num'],
+    ['clk', '클릭', 'num'],
+    ['conv', '전환', 'num'],
+  ];
+  const MEDIA_MAX = 300;          // 담아 둘 줄의 끝 (매체가 늘어도 시트 한 칸을 넘지 않게)
+
+  const mediaRows = (row) => (Array.isArray(row.media) ? row.media : []);
+  const mediaBlank = () => ({ spend: 0, imp: 0, clk: 0, conv: 0 });
+  const mediaSum = (list) => list.reduce((into, one) => {
+    MEDIA_FIELDS.forEach(([name]) => { into[name] += Number(one[name]) || 0; });
+    return into;
+  }, mediaBlank());
+
+  // 이 표의 셈. 이미지의 *광고대시 칸과 같은 뜻이다.
+  const mCpa = (one) => perfRatio(one.spend, one.conv);          // 광고비 ÷ 전환
+  const mCvr = (one) => perfRatio(one.conv, one.clk);            // 전환 ÷ 클릭
+  const mCpm = (one) => (one.imp > 0 ? (one.spend / one.imp) * 1000 : null);
+  const mCpc = (one) => perfRatio(one.spend, one.clk);
+  const mCtr = (one) => perfRatio(one.clk, one.imp);
+
+  // 파일에서 Phase × 매체로 더한다. 여러 개를 한 번에 올리면 모두 합친다.
+  const mediaPack = (packs) => {
+    const box = {};
+    packs.forEach((pack) => {
+      ((pack.body && pack.body.phases) || []).forEach((phase) => {
+        const when = String(phase.name || '').trim() || '기타';
+        (phase.rows || []).forEach((line) => {
+          const name = String(line.sourceName || line.source || '').trim() || '(매체 없음)';
+          const key = `${when}|${name}`;
+          if (!box[key]) box[key] = Object.assign({ phase: when, name: name }, mediaBlank());
+          MEDIA_FIELDS.forEach(([field]) => { box[key][field] += Number(line[field]) || 0; });
+        });
+      });
+    });
+    // 단계는 사전 · 당일 · 사후 차례로, 그 안에서는 광고비가 큰 매체가 위로
+    const at = (one) => {
+      const found = MEDIA_PHASES.indexOf(one.phase);
+      return found < 0 ? MEDIA_PHASES.length : found;
+    };
+    return Object.keys(box).map((key) => box[key]).sort((one, two) => {
+      if (at(one) !== at(two)) return at(one) - at(two);
+      if (one.phase !== two.phase) return one.phase.localeCompare(two.phase);
+      return two.spend - one.spend;
+    }).slice(0, MEDIA_MAX);
+  };
+
+  // 올린 파일이 그 파일이 맞는지 본다. 아니면 까닭을 그대로 알려 준다.
+  const mediaRead = (picked) => picked.text().then((text) => {
+    let found = null;
+    try { found = JSON.parse(text); } catch (reason) { found = null; }
+    if (!found || found.kind !== 'minix-cross-result') {
+      throw new Error('전매체 검색에서 내려받은 파일이 아닙니다 (kind 가 minix-cross-result 여야 합니다).');
+    }
+    return { name: picked.name, body: found };
+  });
+
+  const mediaCard = (row) => {
+    const list = mediaRows(row);
+    const at = escape(row.month);
+    const from = row.mediaFrom || null;
+    const head = `<div class="kol-block kol-media">
+      <h5>매체별 결과 <small>Phase × 매체 · 올린 파일로 그립니다</small></h5>
+      <div class="kol-file">
+        <button type="button" class="tool-copy-all" data-kol="mediaPick" data-month="${at}">
+          <i data-lucide="upload"></i>${list.length ? '파일 다시 올리기' : '파일 올리기'}</button>
+        <input type="file" accept=".json,application/json" multiple hidden
+          data-kol="mediaFile" data-month="${at}">
+        ${list.length ? `<button type="button" class="tool-copy-all" data-kol="mediaClear"
+          data-month="${at}"><i data-lucide="trash-2"></i>지우기</button>` : ''}
+        ${from ? `<small>${escape((from.files || []).join(' · '))}${from.at
+    ? ` · ${escape(new Date(from.at).toLocaleString('ko-KR'))}` : ''}</small>` : ''}
+      </div>`;
+
+    if (!list.length) {
+      return `${head}<p class="tool-empty">매체별 성과 → <b>전매체 검색</b> → 
+        <b>행사별 결과로 보내기</b> 로 받은 .json 파일을 올리면
+        Phase × 매체로 펼쳐 보여 드립니다. 여러 개를 한 번에 올리면 합칩니다.</p></div>`;
+    }
+
+    const cell = (one) => MEDIA_FIELDS.map(([name, , kind]) => `<td class="perf-num">${kind === 'won'
+      ? money(one[name]) : count(one[name])}</td>`).join('')
+      + `<td class="perf-num">${money(mCpa(one))}</td>
+        <td class="perf-num">${rate(mCvr(one))}</td>
+        <td class="perf-num">${money(mCpm(one))}</td>
+        <td class="perf-num">${money(mCpc(one))}</td>
+        <td class="perf-num">${rate(mCtr(one))}</td>`;
+
+    /* Phase 는 그 묶음의 첫 줄에만 적는다. 줄마다 되풀이하면 정작 봐야 할
+       매체 이름이 뒤로 밀린다 (시트에서도 병합해 둔 칸이다). */
+    const body = [];
+    let last = null;
+    list.forEach((one, i) => {
+      const fresh = one.phase !== last;
+      if (fresh && last !== null) {
+        const part = mediaSum(list.filter((each) => each.phase === last));
+        body.push(`<tr class="kol-part"><td class="perf-name"><span></span></td>
+          <td class="perf-name"><span>종합</span></td>${cell(part)}</tr>`);
+      }
+      body.push(`<tr class="${fresh ? 'kol-fresh' : ''}">
+        <td class="perf-name"><span>${fresh ? escape(one.phase) : ''}</span></td>
+        <td class="perf-name"><span>${escape(one.name)}</span></td>${cell(one)}</tr>`);
+      last = one.phase;
+      if (i === list.length - 1) {
+        const part = mediaSum(list.filter((each) => each.phase === last));
+        body.push(`<tr class="kol-part"><td class="perf-name"><span></span></td>
+          <td class="perf-name"><span>종합</span></td>${cell(part)}</tr>`);
+      }
+    });
+
+    return `${head}
+      <div class="tool-table-wrap"><table class="tool-table kol-sub kol-media-table">
+        <thead><tr><th>Phase</th><th>매체</th>
+          ${MEDIA_FIELDS.map(([, label]) => `<th class="perf-num">${escape(label)}</th>`).join('')}
+          <th class="perf-num">CPA</th><th class="perf-num">CVR</th>
+          <th class="perf-num">CPM</th><th class="perf-num">CPC</th>
+          <th class="perf-num">CTR</th></tr></thead>
+        <tbody>${body.join('')}
+          <tr class="budget-total"><td class="perf-name"><span><b>total</b></span></td>
+            <td class="perf-name"><span></span></td>${cell(mediaSum(list))}</tr>
+        </tbody>
+      </table></div>
+      <p class="perf-note">CPA = 광고비 ÷ 전환 · CVR = 전환 ÷ 클릭 · CPM = 광고비 ÷ 노출 × 1,000 ·
+        CPC = 광고비 ÷ 클릭 · CTR = 클릭 ÷ 노출. 종합 · total 은 더한 값에서 다시 셉니다.</p>
+    </div>`;
+  };
   const detailRow = (row) => `<tr class="perf-detail-row" data-kol-detail="${escape(row.month)}">
-    <td colspan="9"><div class="kol-detail">${heroBox(row)}${stepTable(row)}</div></td></tr>`;
+    <td colspan="10"><div class="kol-detail">${heroBox(row)}${stepTable(row)}${mediaCard(row)}</div></td></tr>`;
 
   const listRow = (row) => {
     const one = sumOf(row);
@@ -13610,6 +13755,9 @@ if (kolLiveView) {
           <i data-lucide="${open ? 'chevron-down' : 'chevron-right'}"></i></button>
         <span><b>${escape(monthLabel(row.month))}</b><small>${escape(row.month)}</small></span>
       </td>
+      <td class="kol-promo"><input type="text" class="kol-promo-in" data-kol-promo="1"
+        data-month="${escape(row.month)}" value="${escape(row.promo || '')}"
+        placeholder="프로모션명" autocomplete="off" spellcheck="false"></td>
       <td class="perf-num">${money(one.spend)}</td>
       <td class="perf-num">${money(one.revenue)}</td>
       <td class="perf-num">${count(one.orders)}</td>
@@ -13625,6 +13773,7 @@ if (kolLiveView) {
     const one = addUp(months.map(sumOf));
     return `<tr class="perf-row kol-total"><td class="perf-name"><span><b>합계</b>
       <small>달 ${num(months.length)}개</small></span></td>
+      <td class="kol-promo"></td>
       <td class="perf-num"><b>${money(one.spend)}</b></td>
       <td class="perf-num"><b>${money(one.revenue)}</b></td>
       <td class="perf-num">${count(one.orders)}</td>
@@ -13649,7 +13798,7 @@ if (kolLiveView) {
         </div>
       </div>
       <div class="tool-table-wrap"><table class="tool-table perf-table kol-table">
-        <thead><tr><th>달</th><th class="perf-num">총 광고비</th><th class="perf-num">총 매출</th>
+        <thead><tr><th>달</th><th>프로모션<small>수기</small></th><th class="perf-num">총 광고비</th><th class="perf-num">총 매출</th>
           <th class="perf-num">총 주문수</th><th class="perf-num">총 CPS</th><th class="perf-num">총 ROAS</th>
           <th class="perf-num">총 CPA<small>사전알림</small></th>
           <th class="perf-num">사전알림구매률</th><th class="perf-num">사전알림신청률</th></tr></thead>
@@ -13716,11 +13865,13 @@ if (kolLiveView) {
     PHASES.forEach(([key]) => {
       put(`${key}:cps`, money(cps(row.phases[key])));
       put(`${key}:cpa`, money(cpa(row.phases[key])));
+      put(`${key}:cvr`, rate(cvr(row.phases[key])));
     });
     const one = sumOf(row);
     FIELDS.forEach(([name, , kind]) => put(`sum:${name}`, kind === 'won' ? money(one[name]) : count(one[name])));
     put('sum:cps', money(cps(one)));
     put('sum:cpa', money(cpa(one)));
+    put('sum:cvr', rate(cvr(one)));
     swap(kolLiveView.querySelector('.kol-hero'), heroBox(row));
     swap(kolLiveView.querySelector(`tr[data-kol-row="${want}"]`), listRow(row));
     swap(kolLiveView.querySelector('.kol-total'), totalRow());
@@ -13738,7 +13889,8 @@ if (kolLiveView) {
     return Promise.all(list.map((want) => {
       const row = rowOf(want);
       if (!row) return null;
-      return askSheet({ action: 'kolPut', month: want, phases: row.phases, by: '' })
+      return askSheet({ action: 'kolPut', month: want, promo: row.promo || '',
+        phases: row.phases, media: mediaRows(row), mediaFrom: row.mediaFrom || null, by: '' })
         .then((body) => {
           row.updatedAt = body.savedAt || row.updatedAt;
           note = `${monthLabel(want)} 저장했습니다`;
@@ -13763,7 +13915,8 @@ if (kolLiveView) {
 
   const addMonth = (want) => {
     if (rowOf(want)) { opened = want; render(); return; }
-    months.push({ month: want, phases: blankPhases(), updatedBy: '', updatedAt: '' });
+    months.push({ month: want, promo: '', phases: blankPhases(), media: [], mediaFrom: null,
+      updatedBy: '', updatedAt: '' });
     sortMonths();
     opened = want;                 // 새로 만든 달은 펼쳐 둔다 — 바로 적기 시작하게
     note = `${monthLabel(want)} 를 만들었습니다`;
@@ -13791,14 +13944,14 @@ if (kolLiveView) {
   };
 
   const excelText = () => {
-    const head = ['달', '총 광고비', '총 매출', '총 주문수', '총 CPS', '총 ROAS',
+    const head = ['달', '프로모션', '총 광고비', '총 매출', '총 주문수', '총 CPS', '총 ROAS',
       '총 CPA(사전알림)', '사전알림구매률', '사전알림신청률'];
     const lines = [head.join('\t')];
     months.forEach((row) => {
       const one = sumOf(row);
       const done = (value) => (Number.isFinite(value) ? Math.round(value) : '');
       const part = (value) => (Number.isFinite(value) ? perfRoas(value) : '');
-      lines.push([monthLabel(row.month), one.spend, one.revenue, one.orders,
+      lines.push([monthLabel(row.month), row.promo || '', one.spend, one.revenue, one.orders,
         done(cps(one)), part(roas(one)), done(cpa(one)), part(buyRate(one)), part(askRate(one))].join('\t'));
     });
     return lines.join('\n');
@@ -13812,7 +13965,10 @@ if (kolLiveView) {
       .then((body) => {
         months = (body.months || []).map((row) => ({
           month: String(row.month || '').slice(0, 7),
+          promo: String(row.promo || ''),
           phases: usePhases(row.phases),
+          media: Array.isArray(row.media) ? row.media : [],
+          mediaFrom: row.mediaFrom || null,
           updatedBy: row.updatedBy || '',
           updatedAt: row.updatedAt || '',
         })).filter((row) => row.month);
@@ -13847,6 +14003,23 @@ if (kolLiveView) {
       if (what === 'reload') { saveNow().then(load); return; }
       if (what === 'sheetOpen') { window.open(sheetUrl || SHEET_URL, '_blank', 'noopener'); return; }
       if (what === 'dropMonth') { dropMonth(opened); return; }
+      if (what === 'mediaPick') {
+        // 파일 고르개는 숨겨 두고 단추로 연다 (칸 모양이 브라우저마다 달라 보기 흉하다)
+        const box = kolLiveView.querySelector(`[data-kol="mediaFile"][data-month="${hit.dataset.month}"]`);
+        if (box) box.click();
+        return;
+      }
+      if (what === 'mediaClear') {
+        const row = rowOf(hit.dataset.month);
+        if (!row) return;
+        row.media = [];
+        row.mediaFrom = null;
+        note = `${monthLabel(row.month)} 매체별 결과를 지웠습니다`;
+        error = '';
+        render();
+        save(row.month);
+        return;
+      }
       if (what === 'excel') {
         perfDownload(`KOL라이브_결과_${perfYmd(new Date())}.csv`, excelText());
         return;
@@ -13860,7 +14033,9 @@ if (kolLiveView) {
         return;
       }
     }
-    // 줄 아무 데나 눌러도 펼쳐진다 (적는 칸은 펼친 판 안에 있어 겹치지 않는다)
+    // 줄 아무 데나 눌러도 펼쳐진다. 다만 적는 칸(프로모션명)은 빼 둔다 —
+    // 누르면 다시 그려져 치려던 칸이 갈리고 커서가 사라진다.
+    if (event.target.closest('input, select, textarea')) return;
     const line = event.target.closest('[data-kol-row]');
     if (line) {
       opened = opened === line.dataset.kolRow ? '' : line.dataset.kolRow;
@@ -13880,6 +14055,14 @@ if (kolLiveView) {
   };
 
   kolLiveView.addEventListener('input', (event) => {
+    const named = event.target.closest('[data-kol-promo]');
+    if (named) {
+      const row = rowOf(named.dataset.month);
+      if (!row) return;
+      row.promo = named.value;
+      save(row.month);
+      return;
+    }
     const hit = event.target.closest('[data-kol-in]');
     if (!hit) return;
     const row = readCell(hit);
@@ -13889,6 +14072,30 @@ if (kolLiveView) {
   });
 
   kolLiveView.addEventListener('change', (event) => {
+    const file = event.target.closest('[data-kol="mediaFile"]');
+    if (file) {
+      const row = rowOf(file.dataset.month);
+      const picked = Array.from(file.files || []);
+      file.value = '';                      // 같은 파일을 다시 골라도 change 가 오게
+      if (!row || !picked.length) return;
+      const bad = [];
+      Promise.all(picked.map((one) => mediaRead(one)
+        .catch((reason) => { bad.push(`${one.name} — ${reason.message}`); return null; })))
+        .then((packs) => {
+          const good = packs.filter(Boolean);
+          if (good.length) {
+            // 올릴 때마다 **갈아 끼운다.** 덧붙이면 같은 파일을 두 번 올렸을 때
+            // 광고비가 두 배가 되는데, 화면만 봐서는 그걸 알 수가 없다.
+            row.media = mediaPack(good);
+            row.mediaFrom = { files: good.map((one) => one.name), at: new Date().toISOString() };
+            note = `${monthLabel(row.month)} 매체별 결과를 파일 ${good.length}개에서 읽었습니다`;
+            save(row.month);
+          }
+          error = bad.length ? `못 읽은 파일 ${bad.length}개 — ${bad.join(' · ')}` : '';
+          render();
+        });
+      return;
+    }
     const hit = event.target.closest('[data-kol-in]');
     if (!hit) return;
     const row = readCell(hit);

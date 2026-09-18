@@ -1136,6 +1136,19 @@ span.bg-kind{cursor:default}
 .kol-in:focus{outline:none;border-color:#2a78d6;box-shadow:0 0 0 3px rgba(42,120,214,.12)}
 /* 못 센 수식. 값을 되돌리지 않고 칸만 빨갛게 둔다 — 적다 만 것일 수 있어서다. */
 .kol-in.is-bad{border-color:#d9534f;background:#fdf4f3}
+/* 프로모션명 — 목록 줄에서 바로 적는다. 숫자 칸과 달리 왼쪽 맞춤이다. */
+.kol-promo{width:220px}
+.kol-promo-in{width:100%;padding:5px 8px;border:1px solid #dcdbd4;border-radius:7px;background:#fff;
+  font-family:inherit;font-size:12px;color:#3d3d39}
+.kol-promo-in::placeholder{color:#c9c8c3}
+.kol-promo-in:focus{outline:none;border-color:#2a78d6;box-shadow:0 0 0 3px rgba(42,120,214,.12)}
+/* 매체별 결과 — 올린 파일로 그린다. 표가 넓어 따로 가로 폭을 준다. */
+.kol-file{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 9px}
+.kol-file small{font-size:11px;color:#a5a49f}
+.kol-media-table{min-width:1080px}
+.kol-media-table .budget-total td{border-top:1px solid #ddddd6;background:#fafaf8;font-weight:700}
+.kol-media-table .kol-fresh td{border-top:1px solid #e2e1da}
+.kol-media-table td:nth-child(2) span{font-weight:600;color:#6f6f68}
 
 /* ── 사이드바 스크롤 ────────────────────────────────────────── */
 /* 사이드바는 화면에 붙어 있어(position:fixed) 창이 낮으면 아래 메뉴가 잘려 못 눌렀다.

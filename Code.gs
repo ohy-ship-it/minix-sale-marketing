@@ -7754,9 +7754,16 @@ function promoCalendar_(payload) {
 // 이제는 앱에서 적는다. 적은 값은 적재 시트의 KOL라이브 탭에 담겨 팀이 같이 본다.
 //
 //   한 달이 한 줄이다 — 월 | 내용(JSON) | 수정자 | 수정시각
-//   내용 JSON = { phases: { pre: {…}, day: {…}, post: {…} } }   (사전 · 당일 · 사후)
+//   내용 JSON = { promo: '프로모션명', phases: { pre: {…}, day: {…}, post: {…} } }
+//   프로모션명은 사람이 적는 이름이라 칸을 따로 두지 않고 내용 JSON 안에 둔다 —
+//   칸을 늘리면 이미 쌓인 줄의 수정자 · 수정시각이 밀린다.
 //   한 단계에 적는 칸은 다섯이다:
-//     spend 광고비 · revenue 매출 · orders 주문수 · alerts 사전알림수 · sessions 세션수
+//     spend 광고비 · revenue 매출 · orders 주문수 · alerts 사전알림수 ·
+//     sessions 세션수 · clicks 클릭수
+//
+//   매체별 결과(media)는 사람이 적지 않는다. 매체별 성과에서 받은 .json 을 올리면
+//   화면이 Phase × 매체로 더해 보낸다 — 파일을 통째로 담지 않는 까닭은 한 달치가
+//   광고그룹 수백 줄이라 시트 한 칸(5만 자)에 들어가지 않아서다.
 //
 //   CPS · CPA · ROAS · 사전알림구매률 · 사전알림신청률은 **담지 않는다.**
 //   이 다섯 칸에서 바로 나오는 값이라, 함께 담아 두면 한 쪽만 고쳐졌을 때 어느 것이
@@ -7764,7 +7771,9 @@ function promoCalendar_(payload) {
 var KOL_SHEET_NAME = 'KOL라이브';
 var KOL_HEADERS = ['월', '내용(JSON)', '수정자', '수정시각'];
 var KOL_PHASES = ['pre', 'day', 'post'];
-var KOL_FIELDS = ['spend', 'revenue', 'orders', 'alerts', 'sessions'];
+var KOL_FIELDS = ['spend', 'revenue', 'orders', 'alerts', 'sessions', 'clicks'];
+var KOL_MEDIA_FIELDS = ['spend', 'imp', 'clk', 'conv'];
+var KOL_MEDIA_MAX = 300;          // 담아 둘 줄의 끝 (시트 한 칸을 넘지 않게)
 
 function kolSheet_(book) {
   book = book || SpreadsheetApp.openById(SHEET_ID);
@@ -7799,10 +7808,36 @@ function kolPhases_(found) {
   return out;
 }
 
+// 매체별 결과. 화면이 보낸 것을 그대로 믿지 않고 숫자 · 글자만 남긴다.
+function kolMedia_(found) {
+  var list = (found && found.media) || [];
+  if (Object.prototype.toString.call(list) !== '[object Array]') return [];
+  return list.slice(0, KOL_MEDIA_MAX).map(function (one) {
+    var out = { phase: String((one && one.phase) || ''), name: String((one && one.name) || '') };
+    KOL_MEDIA_FIELDS.forEach(function (name) {
+      var value = one ? Number(one[name]) : 0;
+      out[name] = isFinite(value) ? value : 0;
+    });
+    return out;
+  });
+}
+
+// 어느 파일에서 언제 읽었나 (화면이 그대로 적어 보여 준다)
+function kolFrom_(found) {
+  var from = found && found.mediaFrom;
+  if (!from) return null;
+  var files = (from.files || []).slice(0, 20).map(function (one) { return String(one || ''); });
+  return { files: files, at: String(from.at || '') };
+}
+
 function kolRow_(line) {
+  var found = monthBudgetParse_(line[1], null);
   return {
     month: monthBudgetKey_(line[0]),
-    phases: kolPhases_(monthBudgetParse_(line[1], null)),
+    promo: String((found && found.promo) || ''),
+    phases: kolPhases_(found),
+    media: kolMedia_(found),
+    mediaFrom: kolFrom_(found),
     updatedBy: String(line[2] || ''),
     updatedAt: line[3] ? new Date(line[3]).toISOString() : ''
   };
@@ -7837,7 +7872,10 @@ function kolPut_(payload) {
   var month = monthBudgetKey_((payload && payload.month) || '');
   if (!month) throw new Error('저장할 달이 비어 있습니다.');
   var who = String((payload && payload.by) || '');
+  var promo = String((payload && payload.promo) || '');
   var phases = kolPhases_({ phases: (payload && payload.phases) || {} });
+  var media = kolMedia_(payload);
+  var from = kolFrom_(payload);
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -7856,8 +7894,10 @@ function kolPut_(payload) {
     }
     if (!at) at = sheet.getLastRow() + 1;
     sheet.getRange(at, 1, 1, KOL_HEADERS.length)
-      .setValues([[month, JSON.stringify({ phases: phases }), who, new Date()]]);
-    return { ok: true, month: month, savedAt: new Date().toISOString() };
+      .setValues([[month,
+        JSON.stringify({ promo: promo, phases: phases, media: media, mediaFrom: from }),
+        who, new Date()]]);
+    return { ok: true, month: month, promo: promo, savedAt: new Date().toISOString() };
   } finally {
     lock.releaseLock();
   }
