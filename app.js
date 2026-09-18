@@ -13895,7 +13895,7 @@ if (kolLiveView) {
         </div>
       </div>
       <div class="tool-table-wrap"><table class="tool-table perf-table kol-table">
-        <thead><tr><th>달</th><th>프로모션<small>수기</small></th><th class="perf-num">총 광고비</th><th class="perf-num">총 매출</th>
+        <thead><tr><th>달</th><th class="kol-promo">프로모션<small>수기</small></th><th class="perf-num">총 광고비</th><th class="perf-num">총 매출</th>
           <th class="perf-num">총 주문수</th><th class="perf-num">총 CPS</th><th class="perf-num">총 ROAS</th>
           <th class="perf-num">총 CPA<small>사전알림</small></th>
           <th class="perf-num">사전알림구매률</th><th class="perf-num">사전알림신청률</th></tr></thead>

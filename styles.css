@@ -1126,7 +1126,9 @@ span.bg-kind{cursor:default}
 .kol-block:last-child{margin-bottom:0}
 .kol-block h5{margin:0 0 7px;font-size:12px;font-weight:700;color:#3d3d39}
 .kol-block h5 small{margin-left:5px;font-size:11px;font-weight:600;color:#a5a49f}
-.kol-sub{min-width:820px;font-size:11.5px}
+/* 적는 칸 6개(92px) + 셈한 칸 3개 + 단계 칸이 눌리지 않을 만큼. 좁게 잡아 두면
+   표가 칸을 줄이는데, 제일 먼저 눌리는 것이 글자 칸(단계)이라 '사 전' 처럼 세로로 선다. */
+.kol-sub{min-width:980px;font-size:11.5px}
 .kol-sub th{padding:7px 9px;font-size:10.5px}
 .kol-sub th small{display:block;font-size:9.5px;font-weight:500;color:#b5b4ae}
 .kol-sub td{padding:6px 9px;vertical-align:middle}
@@ -1138,7 +1140,11 @@ span.bg-kind{cursor:default}
    전환 자리에 CPA 금액이 있는 것처럼 읽혔다. */
 .kol-sub .perf-num{text-align:right}
 .kol-sub .kol-part td{background:#f7f7f3;font-weight:700}
-.kol-sub .perf-name span{font-weight:700;color:#3d3d39;white-space:normal}
+/* 단계(사전 · 당일 · 사후 · 합계)와 매체 이름은 짧다. 줄바꿈을 막아 가로로 적는다.
+   .perf-name 이 깔아 두는 min-width:290px 도 여기서는 뗀다 — 이 표의 첫 칸은
+   '사전' 넉 자면 되고, 290px 을 깔면 남은 칸이 그만큼 눌린다. */
+.kol-sub td.perf-name{min-width:0;white-space:nowrap}
+.kol-sub .perf-name span{font-weight:700;color:#3d3d39;white-space:nowrap}
 /* 적는 칸. 셈한 칸(CPS · CPA)과 눈으로 갈리게 테두리를 준다. */
 .kol-in{width:92px;padding:5px 7px;border:1px solid #dcdbd4;border-radius:7px;background:#fff;
   font-family:inherit;font-size:12px;text-align:right;color:#3d3d39;font-variant-numeric:tabular-nums}
@@ -1146,7 +1152,10 @@ span.bg-kind{cursor:default}
 /* 못 센 수식. 값을 되돌리지 않고 칸만 빨갛게 둔다 — 적다 만 것일 수 있어서다. */
 .kol-in.is-bad{border-color:#d9534f;background:#fdf4f3}
 /* 프로모션명 — 목록 줄에서 바로 적는다. 숫자 칸과 달리 왼쪽 맞춤이다. */
-.kol-promo{width:200px;padding-left:4px!important}
+/* 머리글도 값과 같은 이름표를 달고 있다. 이 한 줄이 없으면 머리글만
+   .perf-table th:not(:first-child) 규칙에 걸려 오른쪽 끝으로 가, 200px 떨어진 자리에
+   '프로모션' 이 앉고 값은 왼쪽에 앉는다 — 서로 다른 칸처럼 보인다. */
+.kol-promo{width:200px;padding-left:4px!important;text-align:left}
 /* 적어 둔 값 — 칸을 닫고 글자로 보여 준다. 누르면 다시 열린다. */
 .kol-pick{cursor:pointer;border-radius:5px;padding:1px 3px;margin-left:-3px}
 .kol-pick:hover{background:#f0f0eb;color:#2a78d6}
