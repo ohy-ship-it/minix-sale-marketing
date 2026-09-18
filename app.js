@@ -9173,8 +9173,8 @@ if (mediaPerformance) {
 
   // 매체 줄 · 광고그룹 줄 · 합계 줄이 같은 숫자 칸을 쓴다. 한 군데서 만든다.
   // 비율은 더한 값에서 다시 계산한다 — 줄마다의 CTR 을 평균 내면 틀린 값이 된다.
-  const CROSS_CELLS = 11;
-  // 차례는 crossHead 와 짝이다: 광고비 · 전환값 · ROAS · CPA · 노출 · 클릭 · 결과 · CPM · CPC · CTR · CVR(구매)
+  const CROSS_CELLS = 12;   // 광고비 … CVR (커스텀 칸을 더해 열둘)
+  // 차례는 crossHead 와 짝이다: 광고비 · 전환값 · ROAS · CPA · 노출 · 클릭 · 결과 · 커스텀 · CPM · CPC · CTR · CVR(구매)
   const crossCells = (row, strong) => {
     const spend = strong ? `<b>${money(row.spend)}</b>` : money(row.spend);
     return `<td class="perf-num">${spend}</td>
@@ -9184,6 +9184,7 @@ if (mediaPerformance) {
       <td class="perf-num">${count(row.impressions)}</td>
       <td class="perf-num">${count(row.linkClicks)}</td>
       <td class="perf-num">${count(row.results)}</td>
+      <td class="perf-num">${row.custom ? count(row.custom) : '<span class="tool-blank">—</span>'}</td>
       <td class="perf-num">${blank(ratio(row.spend * 1000, row.impressions), money)}</td>
       <td class="perf-num">${blank(ratio(row.spend, row.linkClicks), money)}</td>
       <td class="perf-num">${blank(ratio(row.linkClicks, row.impressions), percent)}</td>
@@ -9197,7 +9198,8 @@ if (mediaPerformance) {
 
   const crossTable = () => {
     const head = ['구분', '매체', '광고그룹', '캠페인', '집행시작', '집행종료',
-      '광고비', '노출', '클릭', 'CTR', 'CPC', 'CPM', '결과', 'CVR(구매)', 'CPA', '구매전환값', 'ROAS'];
+      '광고비', '노출', '클릭', 'CTR', 'CPC', 'CPM', '결과', '커스텀(메타)',
+      'CVR(구매)', 'CPA', '구매전환값', 'ROAS'];
     const lines = [head.join('\t')];
     const cells = (row) => {
       const ctr = ratio(row.linkClicks, row.impressions);
@@ -9212,6 +9214,7 @@ if (mediaPerformance) {
         cpc === null ? '' : Math.round(cpc),
         cpm === null ? '' : Math.round(cpm),
         row.results,
+        row.custom || 0,
         cvr === null ? '' : percent(cvr),
         cpa === null ? '' : Math.round(cpa),
         Math.round(row.revenue || 0),
@@ -9382,6 +9385,9 @@ if (mediaPerformance) {
     clk: row.linkClicks,
     conv: row.purchase,
     results: row.results,
+    /* 커스텀 이벤트(메타의 맞춤 이벤트)는 results 안에 이미 더해져 있다.
+       받는 쪽이 '이 결과가 구매인가 알람 신청인가' 를 가릴 수 있게 낱개도 함께 담는다. */
+    custom: row.custom || 0,
     rev: Math.round(row.revenue || 0),
   });
 
@@ -9487,8 +9493,12 @@ if (mediaPerformance) {
 
   // 지표 차례는 행사별 성과(미닉스 워크스페이스 · 행사별 결과) 와 같게 둔다 —
   // 돈 · 성과(광고비 · 전환값 · ROAS · CPA)가 앞, 규모 · 효율이 뒤다. 두 화면을 나란히 읽으려고.
+  /* 커스텀은 **메타만** 준다 (그쪽에서 맞춤 이벤트로 최적화하는 캠페인들이다).
+     다른 매체 줄은 늘 비어 보이는데, 그래도 결과 옆에 칸으로 둔다 —
+     결과 안에 섞여 있으면 그 숫자가 구매인지 알람 신청인지 가릴 수가 없다. */
   const crossHead = (first) => `<thead><tr><th>${first}</th><th class="perf-span-head">집행일자</th>
     <th>광고비</th><th>전환값</th><th>ROAS</th><th>CPA</th><th>노출</th><th>클릭</th><th>결과</th>
+    <th>커스텀<small>메타</small></th>
     <th>CPM</th><th>CPC</th><th>CTR</th><th>CVR<small>구매</small></th></tr></thead>`;
 
   // 단계마다의 합을 맨 위에 한 표로 모은다.
