@@ -7754,7 +7754,8 @@ function promoCalendar_(payload) {
 // 이제는 앱에서 적는다. 적은 값은 적재 시트의 KOL라이브 탭에 담겨 팀이 같이 본다.
 //
 //   한 달이 한 줄이다 — 월 | 내용(JSON) | 수정자 | 수정시각
-//   내용 JSON = { promo: '프로모션명', phases: { pre: {…}, day: {…}, post: {…} } }
+//   내용 JSON = { day: '라이브 일자', promo: '프로모션명',
+//                phases: { pre: {…}, day: {…}, post: {…} } }
 //   프로모션명은 사람이 적는 이름이라 칸을 따로 두지 않고 내용 JSON 안에 둔다 —
 //   칸을 늘리면 이미 쌓인 줄의 수정자 · 수정시각이 밀린다.
 //   한 단계에 적는 칸은 다섯이다:
@@ -7834,6 +7835,7 @@ function kolRow_(line) {
   var found = monthBudgetParse_(line[1], null);
   return {
     month: monthBudgetKey_(line[0]),
+    day: String((found && found.day) || '').slice(0, 10),
     promo: String((found && found.promo) || ''),
     phases: kolPhases_(found),
     media: kolMedia_(found),
@@ -7872,6 +7874,7 @@ function kolPut_(payload) {
   var month = monthBudgetKey_((payload && payload.month) || '');
   if (!month) throw new Error('저장할 달이 비어 있습니다.');
   var who = String((payload && payload.by) || '');
+  var day = String((payload && payload.day) || '').slice(0, 10);
   var promo = String((payload && payload.promo) || '');
   var phases = kolPhases_({ phases: (payload && payload.phases) || {} });
   var media = kolMedia_(payload);
@@ -7895,7 +7898,7 @@ function kolPut_(payload) {
     if (!at) at = sheet.getLastRow() + 1;
     sheet.getRange(at, 1, 1, KOL_HEADERS.length)
       .setValues([[month,
-        JSON.stringify({ promo: promo, phases: phases, media: media, mediaFrom: from }),
+        JSON.stringify({ day: day, promo: promo, phases: phases, media: media, mediaFrom: from }),
         who, new Date()]]);
     return { ok: true, month: month, promo: promo, savedAt: new Date().toISOString() };
   } finally {

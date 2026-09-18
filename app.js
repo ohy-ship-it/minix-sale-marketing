@@ -13491,10 +13491,20 @@ if (kolLiveView) {
   let opened = '';          // 펼쳐 둔 달
   let sheetUrl = '';
 
-  const thisMonth = perfYmd(new Date()).slice(0, 7);
+  const today = perfYmd(new Date());
+  const thisMonth = today.slice(0, 7);
+
+  /* 다 적은 칸은 닫아 둔다 — 줄마다 빈 칸이 늘어서 있으면 표가 어수선하고,
+     적어 둔 값보다 칸 테두리가 먼저 눈에 든다. 적어 둔 값을 누르면 다시 열린다.
+     한 번에 한 칸만 연다 (열어 둔 칸은 손을 떼는 순간 담기고 닫힌다). */
+  let editAt = { month: '', field: '' };
+  const isEditing = (row, field) => editAt.month === row.month && editAt.field === field;
 
   // '2026-09' → '26년 9월'. 시트에는 늘 YYYY-MM 으로 담는다.
   const monthLabel = (want) => `${String(want).slice(2, 4)}년 ${Number(String(want).slice(5, 7))}월`;
+  // 라이브 일자. 달은 위에 적혀 있으니 월 · 일만 적는다.
+  const dayLabel = (day) => (/^\d{4}-\d{2}-\d{2}/.test(String(day || ''))
+    ? `${Number(String(day).slice(5, 7))}월 ${Number(String(day).slice(8, 10))}일` : '');
   const monthStep = (want, by) => {
     const when = new Date(Number(String(want).slice(0, 4)), Number(String(want).slice(5, 7)) - 1 + by, 1);
     return `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}`;
@@ -13746,6 +13756,21 @@ if (kolLiveView) {
   const detailRow = (row) => `<tr class="perf-detail-row" data-kol-detail="${escape(row.month)}">
     <td colspan="10"><div class="kol-detail">${heroBox(row)}${stepTable(row)}${mediaCard(row)}</div></td></tr>`;
 
+  // 라이브 일자 — 달 밑에 작게. 눌러야 칸이 열린다.
+  const dayCell = (row) => (isEditing(row, 'day')
+    ? `<input type="date" class="kol-day-in" data-kol-day="1"
+        data-month="${escape(row.month)}" value="${escape(row.day || '')}">`
+    : `<small class="kol-pick" data-kol="dayEdit" data-month="${escape(row.month)}"
+        title="눌러서 고칩니다">${row.day ? escape(dayLabel(row.day)) : '일자 넣기'}</small>`);
+
+  // 프로모션명 — 적어 두었으면 글자로, 비어 있으면 적는 칸으로
+  const promoCell = (row) => (row.promo && !isEditing(row, 'promo')
+    ? `<span class="kol-promo-name kol-pick" data-kol="promoEdit"
+        data-month="${escape(row.month)}" title="눌러서 고칩니다">${escape(row.promo)}</span>`
+    : `<input type="text" class="kol-promo-in" data-kol-promo="1"
+        data-month="${escape(row.month)}" value="${escape(row.promo || '')}"
+        placeholder="프로모션명" autocomplete="off" spellcheck="false">`);
+
   const listRow = (row) => {
     const one = sumOf(row);
     const open = opened === row.month;
@@ -13753,11 +13778,9 @@ if (kolLiveView) {
       <td class="perf-name">
         <button type="button" class="perf-toggle" data-kol="toggle" data-month="${escape(row.month)}">
           <i data-lucide="${open ? 'chevron-down' : 'chevron-right'}"></i></button>
-        <span><b>${escape(monthLabel(row.month))}</b><small>${escape(row.month)}</small></span>
+        <span><b>${escape(monthLabel(row.month))}</b>${dayCell(row)}</span>
       </td>
-      <td class="kol-promo"><input type="text" class="kol-promo-in" data-kol-promo="1"
-        data-month="${escape(row.month)}" value="${escape(row.promo || '')}"
-        placeholder="프로모션명" autocomplete="off" spellcheck="false"></td>
+      <td class="kol-promo">${promoCell(row)}</td>
       <td class="perf-num">${money(one.spend)}</td>
       <td class="perf-num">${money(one.revenue)}</td>
       <td class="perf-num">${count(one.orders)}</td>
@@ -13767,6 +13790,21 @@ if (kolLiveView) {
       <td class="perf-num">${rate(buyRate(one))}</td>
       <td class="perf-num">${rate(askRate(one))}</td>
     </tr>`;
+  };
+
+  const paintRow = (want) => {
+    const row = rowOf(want);
+    if (!row) return;
+    swap(kolLiveView.querySelector(`tr[data-kol-row="${want}"]`), listRow(row));
+    lucide.createIcons();
+  };
+
+  // 막 연 칸에 커서를 둔다 (한 번 더 누르게 하지 않는다)
+  const focusCell = (want, sel) => {
+    const at = kolLiveView.querySelector(`tr[data-kol-row="${want}"] ${sel}`);
+    if (!at) return;
+    at.focus();
+    if (at.select) at.select();
   };
 
   const totalRow = () => {
@@ -13827,7 +13865,8 @@ if (kolLiveView) {
       lucide.createIcons();
       return;
     }
-    const next = months.length ? monthStep(months[0].month, 1) : thisMonth;
+    // 새로 적을 날의 첫값 — 가장 늦은 달의 다음 달 1일 (대개 그 달을 짜려고 누른다)
+    const next = months.length ? `${monthStep(months[0].month, 1)}-01` : today;
     kolLiveView.innerHTML = `<div class="tool-head">
         <h2>KOL 라이브</h2>
         <p>이 화면에서 <b>직접 적습니다</b>. 달을 펼쳐 <b>사전 · 당일 · 사후</b> 로 광고비 · 매출 ·
@@ -13842,7 +13881,8 @@ if (kolLiveView) {
           ${opened ? `<button type="button" class="tool-copy-all bg-drop-month" data-kol="dropMonth"
             title="펼쳐 둔 달을 통째로 지웁니다"><i data-lucide="trash-2"></i>${escape(monthLabel(opened))} 지우기</button>` : ''}
           <span class="bg-newmonth">
-            <input type="month" data-kol="newMonth" value="${escape(next)}" title="새로 적을 달">
+            <input type="date" data-kol="newMonth" value="${escape(next)}"
+              title="라이브 날짜 — 그 달의 줄을 만듭니다">
             <button type="button" class="tool-copy-all" data-kol="addMonth">
               <i data-lucide="calendar-plus"></i>달 추가</button>
           </span>
@@ -13889,7 +13929,7 @@ if (kolLiveView) {
     return Promise.all(list.map((want) => {
       const row = rowOf(want);
       if (!row) return null;
-      return askSheet({ action: 'kolPut', month: want, promo: row.promo || '',
+      return askSheet({ action: 'kolPut', month: want, day: row.day || '', promo: row.promo || '',
         phases: row.phases, media: mediaRows(row), mediaFrom: row.mediaFrom || null, by: '' })
         .then((body) => {
           row.updatedAt = body.savedAt || row.updatedAt;
@@ -13913,13 +13953,22 @@ if (kolLiveView) {
     return flush();
   };
 
-  const addMonth = (want) => {
-    if (rowOf(want)) { opened = want; render(); return; }
-    months.push({ month: want, promo: '', phases: blankPhases(), media: [], mediaFrom: null,
-      updatedBy: '', updatedAt: '' });
+  const addMonth = (want, day) => {
+    const already = rowOf(want);
+    if (already) {
+      // 이미 있는 달이다. 일자를 아직 안 적어 두었으면 이번에 고른 날을 넣어 준다
+      // (적어 둔 날은 덮지 않는다 — 고치려던 것인지 알 수 없다).
+      if (day && !already.day) { already.day = day; save(want); }
+      opened = want;
+      note = `${monthLabel(want)} 는 이미 있습니다`;
+      render();
+      return;
+    }
+    months.push({ month: want, day: day || '', promo: '', phases: blankPhases(),
+      media: [], mediaFrom: null, updatedBy: '', updatedAt: '' });
     sortMonths();
     opened = want;                 // 새로 만든 달은 펼쳐 둔다 — 바로 적기 시작하게
-    note = `${monthLabel(want)} 를 만들었습니다`;
+    note = `${monthLabel(want)}${day ? ` (${dayLabel(day)})` : ''} 를 만들었습니다`;
     error = '';
     render();
     save(want);
@@ -13944,14 +13993,14 @@ if (kolLiveView) {
   };
 
   const excelText = () => {
-    const head = ['달', '프로모션', '총 광고비', '총 매출', '총 주문수', '총 CPS', '총 ROAS',
+    const head = ['달', '일자', '프로모션', '총 광고비', '총 매출', '총 주문수', '총 CPS', '총 ROAS',
       '총 CPA(사전알림)', '사전알림구매률', '사전알림신청률'];
     const lines = [head.join('\t')];
     months.forEach((row) => {
       const one = sumOf(row);
       const done = (value) => (Number.isFinite(value) ? Math.round(value) : '');
       const part = (value) => (Number.isFinite(value) ? perfRoas(value) : '');
-      lines.push([monthLabel(row.month), row.promo || '', one.spend, one.revenue, one.orders,
+      lines.push([monthLabel(row.month), row.day || '', row.promo || '', one.spend, one.revenue, one.orders,
         done(cps(one)), part(roas(one)), done(cpa(one)), part(buyRate(one)), part(askRate(one))].join('\t'));
     });
     return lines.join('\n');
@@ -13965,6 +14014,7 @@ if (kolLiveView) {
       .then((body) => {
         months = (body.months || []).map((row) => ({
           month: String(row.month || '').slice(0, 7),
+          day: String(row.day || ''),
           promo: String(row.promo || ''),
           phases: usePhases(row.phases),
           media: Array.isArray(row.media) ? row.media : [],
@@ -14003,6 +14053,12 @@ if (kolLiveView) {
       if (what === 'reload') { saveNow().then(load); return; }
       if (what === 'sheetOpen') { window.open(sheetUrl || SHEET_URL, '_blank', 'noopener'); return; }
       if (what === 'dropMonth') { dropMonth(opened); return; }
+      if (what === 'promoEdit' || what === 'dayEdit') {
+        editAt = { month: hit.dataset.month, field: what === 'promoEdit' ? 'promo' : 'day' };
+        paintRow(editAt.month);
+        focusCell(editAt.month, editAt.field === 'promo' ? '.kol-promo-in' : '.kol-day-in');
+        return;
+      }
       if (what === 'mediaPick') {
         // 파일 고르개는 숨겨 두고 단추로 연다 (칸 모양이 브라우저마다 달라 보기 흉하다)
         const box = kolLiveView.querySelector(`[data-kol="mediaFile"][data-month="${hit.dataset.month}"]`);
@@ -14026,10 +14082,14 @@ if (kolLiveView) {
       }
       if (what === 'addMonth') {
         const box = kolLiveView.querySelector('[data-kol="newMonth"]');
-        const want = String((box && box.value) || '').slice(0, 7);
-        if (!/^\d{4}-\d{2}$/.test(want)) { error = '달을 골라 주세요 (2026-09 처럼).'; paintNote(); return; }
+        const day = String((box && box.value) || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+          error = '날짜를 골라 주세요 (2026-09-12 처럼).';
+          paintNote();
+          return;
+        }
         error = '';
-        addMonth(want);
+        addMonth(day.slice(0, 7), day);
         return;
       }
     }
@@ -14094,6 +14154,20 @@ if (kolLiveView) {
           error = bad.length ? `못 읽은 파일 ${bad.length}개 — ${bad.join(' · ')}` : '';
           render();
         });
+      return;
+    }
+    const named = event.target.closest('[data-kol-promo]');
+    const dated = event.target.closest('[data-kol-day]');
+    if (named || dated) {
+      const box = named || dated;
+      const row = rowOf(box.dataset.month);
+      if (!row) return;
+      if (named) row.promo = box.value.trim();
+      else row.day = box.value.slice(0, 10);
+      editAt = { month: '', field: '' };       // 담고 나면 칸을 닫는다
+      paintRow(row.month);
+      save(row.month);
+      saveNow();
       return;
     }
     const hit = event.target.closest('[data-kol-in]');

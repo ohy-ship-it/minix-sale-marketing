@@ -1112,7 +1112,11 @@ span.bg-kind{cursor:default}
 /* 한 줄이 한 달이다. 줄을 펼치면 그 달의 총계 상자와 단계별 표(적는 칸)가 열린다. */
 .kol-table{min-width:1020px}
 .kol-table th small{display:block;font-size:9.5px;font-weight:500;color:#b5b4ae}
-.kol-table .perf-name small{margin-left:6px;font-size:10.5px;font-weight:600;color:#b5b4ae}
+/* 달 칸은 글자만큼만 차지한다. 기본 .perf-name 은 290px 을 깔고 있어,
+   그대로 두면 프로모션명이 달에서 한참 떨어져 앉는다. */
+.kol-table td.perf-name,.kol-table th:first-child{width:1%;white-space:nowrap}
+.kol-table td.perf-name{min-width:0}
+.kol-table .perf-name small{font-size:10.5px;font-weight:600;color:#b5b4ae}
 .kol-table .kol-roas>span{font-weight:700}
 .kol-table .kol-total td{border-top:1px solid #ddddd6;background:#fafaf8}
 .kol-detail{padding:12px 4px 14px}
@@ -1137,7 +1141,15 @@ span.bg-kind{cursor:default}
 /* 못 센 수식. 값을 되돌리지 않고 칸만 빨갛게 둔다 — 적다 만 것일 수 있어서다. */
 .kol-in.is-bad{border-color:#d9534f;background:#fdf4f3}
 /* 프로모션명 — 목록 줄에서 바로 적는다. 숫자 칸과 달리 왼쪽 맞춤이다. */
-.kol-promo{width:220px}
+.kol-promo{width:200px;padding-left:4px!important}
+/* 적어 둔 값 — 칸을 닫고 글자로 보여 준다. 누르면 다시 열린다. */
+.kol-pick{cursor:pointer;border-radius:5px;padding:1px 3px;margin-left:-3px}
+.kol-pick:hover{background:#f0f0eb;color:#2a78d6}
+.kol-promo-name{display:inline-block;font-size:12px;font-weight:600;color:#3d3d39;
+  overflow-wrap:anywhere}
+.kol-day-in{padding:3px 6px;border:1px solid #dcdbd4;border-radius:6px;background:#fff;
+  font-family:inherit;font-size:11px;color:#3d3d39}
+.kol-day-in:focus{outline:none;border-color:#2a78d6;box-shadow:0 0 0 3px rgba(42,120,214,.12)}
 .kol-promo-in{width:100%;padding:5px 8px;border:1px solid #dcdbd4;border-radius:7px;background:#fff;
   font-family:inherit;font-size:12px;color:#3d3d39}
 .kol-promo-in::placeholder{color:#c9c8c3}
