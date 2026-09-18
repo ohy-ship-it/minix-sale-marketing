@@ -9252,6 +9252,17 @@ if (mediaPerformance) {
   // 캠페인명에서 제품을 발라낸다 (월별 예산도 같은 규칙을 쓴다 — perfProductOf)
   const NO_PRODUCT = PERF_NO_PRODUCT;
   const productOf = perfProductOf;
+
+  /* 네이버 브랜드검색은 **제 묶음**으로 뽑는다.
+     이름이 매체가 정해 준 꼴이라('[MO]브랜드검색_네이버_영상형(NEW)') 캠페인명 규칙
+     (소스_제품_목적)을 안 따른다 — 제품을 발라낼 수가 없다.
+     그렇다고 제품 미상에 섞으면 '규칙을 안 지켜서 못 바른 캠페인' 과 한 파일이 되어,
+     그 파일을 보고도 무엇을 고쳐야 하는지 알 수 없다. 브랜드검색은 고칠 것이 없고
+     그 자체로 한 덩어리다.
+     소스로 가른다 — 브랜드검색 탭이 받아 오는 것은 BRAND_SEARCH 캠페인뿐이다. */
+  const BRAND_SEARCH = '브랜드검색';
+  const bucketOf = (one) => (one.key === 'naverSa'
+    ? BRAND_SEARCH : (productOf(one.row.campaignName) || NO_PRODUCT));
   /* 제품으로 묶는다 (묶음 하나가 파일 하나).
      매체로는 가르지 않는다 — 받는 쪽(행사별 결과 → 매체결과)이 매체 · 캠페인으로 다시 묶어
      보여 주기 때문이다. 단계는 파일 **안에서** 갈라 담는다. 행사별 결과는 제품마다 파일
@@ -9283,10 +9294,10 @@ if (mediaPerformance) {
     };
 
     crossFlat().forEach((one) => {
-      room(productOf(one.row.campaignName) || NO_PRODUCT).searched.push(one);
+      room(bucketOf(one)).searched.push(one);
     });
     PHASES.forEach((phase) => phaseRows(phase).forEach((one) => {
-      const pack = room(productOf(one.row.campaignName) || NO_PRODUCT);
+      const pack = room(bucketOf(one));
       if (!pack.byPhase[phase]) pack.byPhase[phase] = [];
       pack.byPhase[phase].push(one);
     }));
@@ -9336,7 +9347,8 @@ if (mediaPerformance) {
       products: crossProdText(),
       range: { since: period.since, until: period.until },
       madeAt: new Date().toISOString(),
-      note: `제품 '${file.product}' 만 담은 파일입니다. `
+      note: `${file.product === BRAND_SEARCH
+    ? '네이버 브랜드검색만' : `제품 '${file.product}' 만`} 담은 파일입니다. `
         + '카카오모먼트 · 메타 · 구글은 매체가 준 값 그대로, 네이버는 부가세를 뺀 공급가입니다.',
       // 조회 기간 전체는 담지 않는다. 받는 쪽(행사별 결과 → 매체결과)에서 '조회 기간'
       // 블록으로 한 번 더 나와 같은 광고비가 겹쳐 보였다. 이 파일은 단계(사전 · 당일 ·
@@ -9451,7 +9463,9 @@ if (mediaPerformance) {
           담습니다 — 받는 쪽이 매체 · 캠페인으로 다시 묶어 보여 줍니다.
           세일즈 워크스페이스 <b>행사별 결과 → 매체결과</b> 에서 그 <b>상품</b>을 고르고 이 파일을 올리세요.
           캠페인명이 규칙(<b>소스_제품_목적</b>)을 안 따르는 줄은
-          <b>${escapeHtml(NO_PRODUCT)}</b> 로 묶입니다.</small></div>
+          <b>${escapeHtml(NO_PRODUCT)}</b> 로 묶입니다.
+          네이버 <b>브랜드검색</b>은 캠페인명이 매체가 정해 준 꼴이라 제품을 못 바릅니다 —
+          제품 미상에 섞지 않고 <b>${escapeHtml(BRAND_SEARCH)}</b> 파일로 따로 뽑습니다.</small></div>
       ${files.length ? `<div class="perf-mix-list">
         ${files.map((one) => `<button type="button" class="perf-mix-btn" data-cross="mix"
           data-product="${escapeHtml(one.product)}">
