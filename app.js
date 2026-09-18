@@ -12448,17 +12448,26 @@ if (budgetPlanView) {
     at.forEach((i, k) => { plan.rows[i] = mine[k]; });
   };
 
-  // 끌어 옮기기. 같은 SKU 안에서만 옮긴다 (다른 SKU 로 떨어뜨리면 그 줄이 남의 표로 간다).
+  /* 끌어 옮기기. 프로모션 줄과 고정비 줄이 같은 손잡이를 쓴다 — 둘 다 표의 한 줄이라
+     같은 손놀림이어야 한다. 옮기는 곳은 **제 표 안**으로만 막는다:
+       프로모션 줄은 같은 SKU 표 안에서만 · 고정비 줄은 고정비 표 안에서만.
+     안 막으면 떨어뜨린 줄이 남의 표로 넘어가 버린다. */
   let dragId = '';
+  const listOf = (id) => {
+    if (plan.rows.some((one) => one.id === id)) return plan.rows;
+    return fixedRows().some((one) => one.id === id) ? fixedRows() : null;
+  };
   const moveRow = (fromId, toId, after) => {
     if (!fromId || !toId || fromId === toId) return false;
-    const from = plan.rows.findIndex((one) => one.id === fromId);
-    const onto = plan.rows.findIndex((one) => one.id === toId);
+    const list = listOf(fromId);
+    if (!list || listOf(toId) !== list) return false;
+    const from = list.findIndex((one) => one.id === fromId);
+    const onto = list.findIndex((one) => one.id === toId);
     if (from < 0 || onto < 0) return false;
-    if (plan.rows[from].sku !== plan.rows[onto].sku) return false;
-    const [one] = plan.rows.splice(from, 1);
-    const to = plan.rows.findIndex((row) => row.id === toId);
-    plan.rows.splice(after ? to + 1 : to, 0, one);
+    if (list === plan.rows && list[from].sku !== list[onto].sku) return false;
+    const [one] = list.splice(from, 1);
+    const to = list.findIndex((row) => row.id === toId);
+    list.splice(after ? to + 1 : to, 0, one);
     return true;
   };
 
@@ -12640,7 +12649,9 @@ if (budgetPlanView) {
         <td class="perf-num">${want ? pct(spare, want) : '—'}</td>
       </tr>`;
     }
-    return `<tr>
+    return `<tr data-line="${id}">
+      <td class="bg-grip"><span draggable="true" data-bg="grip" data-row="${id}"
+        title="끌어서 차례를 바꿉니다"><i data-lucide="grip-vertical"></i></span></td>
       <td>${pick('fixedCat', CATEGORIES, row.category, '공통')}</td>
       <td>${pick('fixedSku', skus, row.sku, '공통')}</td>
       <td>${pick('fixedItem', FIXED_ITEMS, row.item, '고르기')}</td>
@@ -12677,7 +12688,7 @@ if (budgetPlanView) {
     const rows = fixedRows();
     const sum = fixedSum();
     const spare = sum.plan - sum.used;
-    const wide = editing ? 9 : 8;
+    const wide = editing ? 10 : 8;   // 고칠 때는 손잡이 · 지우기 두 칸이 더 붙는다
     return `<div class="tool-list-head bg-title"><h3>고정비
       <small>프로모션과 상관없이 달마다 나가는 돈입니다${fixedStamp()}</small></h3></div>
     <div class="tool-card">
@@ -12690,6 +12701,7 @@ if (budgetPlanView) {
       </div>
       <div class="tool-table-wrap"><table class="tool-table bg-table bg-fixed">
         <thead><tr>
+          ${editing ? '<th class="bg-grip"></th>' : ''}
           <th>카테고리</th><th>상세 SKU</th><th>항목</th>
           <th class="perf-num">사용예정</th><th class="perf-num">실사용비</th>
           <th class="perf-num">잔여비</th><th class="perf-num">사용(%)</th><th class="perf-num">잔여(%)</th>
@@ -12699,8 +12711,11 @@ if (budgetPlanView) {
     : `<tr><td colspan="${wide}" class="bg-none">${editing
       ? '아직 적어 둔 고정비가 없습니다. 아래에서 줄을 더해 주세요.' : '적어 둔 고정비가 없습니다.'}</td></tr>`}</tbody>
       </table></div>
-      ${editing ? `<button type="button" class="tool-add bg-add" data-bg="fixedAdd">
-        <i data-lucide="plus"></i>고정비 줄 추가</button>` : ''}
+      ${editing ? `<div class="bg-row-tools">
+        <button type="button" class="tool-add bg-add" data-bg="fixedAdd">
+          <i data-lucide="plus"></i>고정비 줄 추가</button>
+        ${rows.length > 1 ? '<small>손잡이(⠿)를 끌면 차례를 손으로 바꿀 수 있습니다.</small>' : ''}
+      </div>` : ''}
     </div>`;
   };
 
