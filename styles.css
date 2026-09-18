@@ -1131,7 +1131,12 @@ span.bg-kind{cursor:default}
 .kol-sub th small{display:block;font-size:9.5px;font-weight:500;color:#b5b4ae}
 .kol-sub td{padding:6px 9px;vertical-align:middle}
 /* 이 표는 perf-table 이 아니라 숫자 오른쪽 맞춤을 따로 준다 */
-.kol-sub th:not(:first-child),.kol-sub .perf-num{text-align:right}
+/* **숫자 칸만** 오른쪽으로 붙인다 (머리글 · 값 모두 .perf-num 을 달고 있다).
+   예전에는 '첫 칸을 뺀 머리글' 을 다 붙였는데, 그러면 **매체** 머리글이 제 칸의 오른쪽
+   끝까지 밀린다 — 매체 칸은 넓은데 이름은 왼쪽에 적히니, 머리글만 저 혼자 옆 칸(광고비)
+   값 위에 가서 앉는다. 그 한 칸 때문에 머리글이 죄다 한 칸씩 오른쪽으로 보이고,
+   전환 자리에 CPA 금액이 있는 것처럼 읽혔다. */
+.kol-sub .perf-num{text-align:right}
 .kol-sub .kol-part td{background:#f7f7f3;font-weight:700}
 .kol-sub .perf-name span{font-weight:700;color:#3d3d39;white-space:normal}
 /* 적는 칸. 셈한 칸(CPS · CPA)과 눈으로 갈리게 테두리를 준다. */
