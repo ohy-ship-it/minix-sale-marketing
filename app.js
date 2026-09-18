@@ -9395,8 +9395,13 @@ if (mediaPerformance) {
     spend: Math.round(row.spend),
     imp: row.impressions,
     clk: row.linkClicks,
-    conv: row.purchase,
-    results: row.results,
+    /* **전매체 표에 보이는 그 값**을 그대로 담는다.
+       conv 는 예전에 구매 수였는데, 그러면 파일을 받아 그린 표와 전매체 표의 '결과' 가
+       달라진다 (알람 신청 캠페인은 구매가 0 이라 CPA 가 터무니없이 커졌다).
+       구매는 없애지 않고 제 이름으로 따로 담는다 — CVR(구매) 을 다시 세려면 필요하다. */
+    conv: row.results,        // = 전매체의 결과 (그 줄의 목표 전환 하나)
+    results: row.results,     // 같은 값. 이름으로도 찾을 수 있게 둔다
+    purchase: row.purchase,   // 구매 수
     /* 커스텀 이벤트(메타의 맞춤 이벤트)는 results 안에 이미 더해져 있다.
        받는 쪽이 '이 결과가 구매인가 알람 신청인가' 를 가릴 수 있게 낱개도 함께 담는다. */
     custom: row.custom || 0,
@@ -13654,8 +13659,16 @@ if (kolLiveView) {
     ['spend', '광고비', 'won'],
     ['imp', '노출', 'num'],
     ['clk', '클릭', 'num'],
-    ['conv', '전환', 'num'],
+    ['conv', '결과', 'num'],
   ];
+
+  /* 담아 두는 칸 이름(왼쪽)과 **파일에서 읽는 칸 이름**(오른쪽)이 하나만 다르다.
+     결과는 파일의 results 를 읽는다 — 전매체의 '결과' 와 같은 값이다
+     (그 줄이 최적화하는 전환 하나. 구매 목표면 구매, 맞춤 이벤트 목표면 커스텀).
+     파일의 conv 는 **구매 수**라서, 그걸로 세면 알람 신청 캠페인이 0 이 되어
+     CPA 가 터무니없이 커진다. conv 칸 자체는 세일즈 워크스페이스가 구매로 읽으므로
+     파일에서는 건드리지 않고, 여기서 읽는 자리만 바꾼다. */
+  const MEDIA_FROM = { spend: 'spend', imp: 'imp', clk: 'clk', conv: 'results' };
   const MEDIA_MAX = 300;          // 담아 둘 줄의 끝 (매체가 늘어도 시트 한 칸을 넘지 않게)
 
   const mediaRows = (row) => (Array.isArray(row.media) ? row.media : []);
@@ -13666,8 +13679,8 @@ if (kolLiveView) {
   }, mediaBlank());
 
   // 이 표의 셈. 이미지의 *광고대시 칸과 같은 뜻이다.
-  const mCpa = (one) => perfRatio(one.spend, one.conv);          // 광고비 ÷ 전환
-  const mCvr = (one) => perfRatio(one.conv, one.clk);            // 전환 ÷ 클릭
+  const mCpa = (one) => perfRatio(one.spend, one.conv);          // 광고비 ÷ 결과
+  const mCvr = (one) => perfRatio(one.conv, one.clk);            // 결과 ÷ 클릭
   const mCpm = (one) => (one.imp > 0 ? (one.spend / one.imp) * 1000 : null);
   const mCpc = (one) => perfRatio(one.spend, one.clk);
   const mCtr = (one) => perfRatio(one.clk, one.imp);
@@ -13682,7 +13695,11 @@ if (kolLiveView) {
           const name = String(line.sourceName || line.source || '').trim() || '(매체 없음)';
           const key = `${when}|${name}`;
           if (!box[key]) box[key] = Object.assign({ phase: when, name: name }, mediaBlank());
-          MEDIA_FIELDS.forEach(([field]) => { box[key][field] += Number(line[field]) || 0; });
+          MEDIA_FIELDS.forEach(([field]) => {
+            // results 가 없는 옛 파일이면 같은 이름 칸을 쓴다 (그때는 구매가 들어온다)
+            const found = line[MEDIA_FROM[field]];
+            box[key][field] += Number(found === undefined ? line[field] : found) || 0;
+          });
         });
       });
     });
@@ -13773,7 +13790,7 @@ if (kolLiveView) {
             <td class="perf-name"><span></span></td>${cell(mediaSum(list))}</tr>
         </tbody>
       </table></div>
-      <p class="perf-note">CPA = 광고비 ÷ 전환 · CVR = 전환 ÷ 클릭 · CPM = 광고비 ÷ 노출 × 1,000 ·
+      <p class="perf-note">CPA = 광고비 ÷ 결과 · CVR = 결과 ÷ 클릭 · CPM = 광고비 ÷ 노출 × 1,000 ·
         CPC = 광고비 ÷ 클릭 · CTR = 클릭 ÷ 노출. 종합 · total 은 더한 값에서 다시 셉니다.</p>
     </div>`;
   };
