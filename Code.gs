@@ -5129,7 +5129,13 @@ function naverGather_(account, since, until) {
     entry.purchase += Number(line[14] || 0);
     entry.addToCart += Number(line[15] || 0);
     entry.lead += Number(line[16] || 0);
-    entry.results += Number(line[17] || 0);
+    /* 결과는 **구매완료 수**(14번 칸)만 센다.
+       시트의 '결과' 칸(17번)은 GFA 화면이 센 전환 합(convCount)이라 위시리스트 ·
+       페이지뷰처럼 우리가 안 보는 전환까지 들어가 있다. 그대로 쓰면 GFA 만 결과가
+       부풀고 CPA 가 싸 보인다.
+       시트에는 매체가 센 값이 그 칸에 그대로 남는다 — 바꿔 보는 것은 읽을 때뿐이다. */
+    entry.results += Number(line[14] || 0);
+    // 전환값도 구매완료 전환매출액이다 (적재가 purchaseConvSales 를 넣는다)
     entry.revenue += Number(line[18] || 0);
     entry.linkClicks = entry.clicks;   // GFA 는 클릭이 한 가지다
 
