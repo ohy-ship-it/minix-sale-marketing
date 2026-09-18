@@ -1646,6 +1646,37 @@ var RESULT_GROUPS = [
   { key: 'custom', types: ['offsite_conversion.fb_pixel_custom'] }
 ];
 
+/* 결과는 **그 줄이 최적화하는 전환 하나**만 센다.
+   구매 목표면 구매, 맞춤 이벤트 목표면 커스텀 — 장바구니 · 가입은 더하지 않는다.
+   더해 두면 목표가 다른 줄끼리 CPA 를 견줄 수가 없다 (구매 캠페인은 장바구니가 얹혀
+   싸 보이고, 알람 신청 캠페인은 구매가 0 이라 비싸 보인다).
+
+   무엇으로 최적화하는지는 **광고세트**의 promoted_object 에 적혀 있다.
+   custom_event_type 이 OTHER 면 맞춤 이벤트이고 그 이름은 custom_event_str 에 있다
+   (lead_Alarm 계열이 그렇다). 캠페인 · 소재에는 그 칸이 없어 광고세트에서 물려받는다. */
+var META_GOAL_SLOT = {
+  PURCHASE: 'purchase',
+  ADD_TO_CART: 'addToCart',
+  LEAD: 'lead',
+  COMPLETE_REGISTRATION: 'lead',
+  OTHER: 'custom'
+};
+
+/* 못 읽으면 **구매**로 본다. 전환 목표가 아닌 줄(트래픽 · 도달 · 참여)도 여기로 온다 —
+   그런 줄은 구매가 대개 0 이라 결과도 0 이 되는데, 그게 맞다. 결과는 목표를 센 값이고
+   트래픽 캠페인의 목표는 클릭이지 전환이 아니다. */
+function metaSlotOf_(promoted) {
+  var type = String(((promoted || {}).custom_event_type) || '');
+  return META_GOAL_SLOT[type] || 'purchase';
+}
+
+// 목표에 맞는 전환 하나를 결과로 다시 적는다
+function metaPick_(entry, slot) {
+  entry.slot = slot || entry.slot || 'purchase';
+  entry.results = Number(entry[entry.slot] || 0);
+  return entry;
+}
+
 // 조회 결과를 담아 두는 시간(초). 같은 계정 · 같은 기간을 다시 물으면 그 안에서는 메타를 부르지 않는다.
 var META_CACHE_SECONDS = 300;
 
@@ -2487,7 +2518,8 @@ function metaReport_(payload) {
   var liveCampaigns = graphAll_('/' + account + '/campaigns',
     { fields: 'id,name,objective,effective_status,daily_budget,lifetime_budget', effective_status: '["ACTIVE"]', limit: 200 }, 5);
   var liveAdsets = graphAll_('/' + account + '/adsets',
-    { fields: 'id,name,campaign_id,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time', effective_status: '["ACTIVE"]', limit: 300 }, 5);
+    { fields: 'id,name,campaign_id,effective_status,daily_budget,lifetime_budget,optimization_goal,'
+      + 'promoted_object,start_time,end_time', effective_status: '["ACTIVE"]', limit: 300 }, 5);
 
   // 기간 안에 돈을 쓴 것 + 지금 켜져 있는 것을 합친다.
   // (기간에는 돌았지만 지금 꺼진 캠페인도 광고비에는 들어가야 하므로 목록에서 빼지 않는다)
@@ -2539,13 +2571,28 @@ function metaReport_(payload) {
     entry.status = row.effective_status || 'ACTIVE';
     entry.campaignId = entry.campaignId || row.campaign_id || '';
     entry.goal = row.optimization_goal || '';
+    metaPick_(entry, metaSlotOf_(row.promoted_object));   // 결과를 목표 전환 하나로
     entry.begin = metaDay_(row.start_time);
     entry.end = metaDay_(row.end_time);
     if (row.daily_budget) { entry.budget = Number(row.daily_budget); entry.budgetKind = 'daily'; }
     else if (row.lifetime_budget) { entry.budget = Number(row.lifetime_budget); entry.budgetKind = 'lifetime'; }
   });
   // 기간에는 돌았지만 지금 꺼져 있는 광고세트는 위 목록에 없다. 그 줄만 id 로 물어 채운다.
-  metaFillSchedule_(adsets);
+  metaFillAdsets_(adsets);
+
+  /* 캠페인 줄의 결과는 **그 아래 광고세트 결과의 합**이다.
+     캠페인 하나에 목표가 다른 광고세트가 섞여 있을 수 있어 캠페인 단위로는 하나를 못 고른다.
+     광고세트를 하나도 못 받은 캠페인은 구매로 둔다 (metrics_ 이 적어 둔 값 그대로). */
+  var byCampaign = {};
+  Object.keys(adsets).forEach(function (id) {
+    var one = adsets[id];
+    if (!one.campaignId) return;
+    byCampaign[one.campaignId] = (byCampaign[one.campaignId] || 0) + Number(one.results || 0);
+  });
+  Object.keys(campaigns).forEach(function (id) {
+    if (byCampaign[id] === undefined) return;
+    campaigns[id].results = byCampaign[id];
+  });
 
   var result = {
     ok: true,
@@ -2594,12 +2641,13 @@ function metaDay_(text) {
   return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : '';
 }
 
-// 지금 꺼져 있는 광고세트의 집행 기간을 채운다.
-// 켜진 것만 목록으로 받기 때문에, 기간에 돌고 지금은 꺼진 줄은 날짜가 비어 있다.
+// 지금 꺼져 있는 광고세트의 집행 기간과 **목표 전환**을 채운다.
+// 켜진 것만 목록으로 받기 때문에, 기간에 돌고 지금은 꺼진 줄은 둘 다 비어 있다.
 // 돈을 쓴 줄만, 50개씩 묶어 물어본다. (한 묶음이 실패해도 나머지는 채운다)
+// 여기서 못 채운 줄의 결과는 구매로 남는다 — 알 수 없는 것을 지어내지 않는다.
 var META_SCHEDULE_LOOKUP = 150;
 
-function metaFillSchedule_(adsets) {
+function metaFillAdsets_(adsets) {
   var need = Object.keys(adsets)
     .filter(function (id) { return !adsets[id].begin && adsets[id].spend > 0; })
     .sort(function (a, b) { return adsets[b].spend - adsets[a].spend; })
@@ -2609,12 +2657,13 @@ function metaFillSchedule_(adsets) {
   for (var at = 0; at < need.length; at += 50) {
     var chunk = need.slice(at, at + 50);
     try {
-      var body = graph_('/', { ids: chunk.join(','), fields: 'start_time,end_time' });
+      var body = graph_('/', { ids: chunk.join(','), fields: 'start_time,end_time,promoted_object' });
       chunk.forEach(function (id) {
         var found = body[id];
         if (!found) return;
         adsets[id].begin = metaDay_(found.start_time);
         adsets[id].end = metaDay_(found.end_time);
+        metaPick_(adsets[id], metaSlotOf_(found.promoted_object));
       });
     } catch (error) { /* 이 묶음은 볼 수 없다 */ }
   }
@@ -2639,7 +2688,11 @@ function metrics_(row, base, window) {
   base.addToCart = counted.addToCart || catalog.addToCart;
   base.lead = counted.lead || catalog.lead;
   base.custom = counted.custom || catalog.custom;
-  base.results = base.purchase + base.addToCart + base.lead + base.custom;
+  /* 결과는 목표 전환 하나다 (metaPick_). 여기서는 구매로 두고, 광고세트의 목표를
+     읽은 뒤 그 줄의 전환으로 다시 적는다. 쪼개기(게재지면 · 연령 · 성별)처럼
+     목표를 알 수 없는 줄은 이 값 그대로 남는다. */
+  base.slot = 'purchase';
+  base.results = base.purchase;
   base.revenue = purchaseValue_(row, field);
   base.attribution = window || '';
 
@@ -3047,9 +3100,13 @@ function adsMetrics_(row, categories, base) {
   base.addToCart = categories ? categories.addToCart : 0;
   base.lead = categories ? categories.lead : 0;
   base.custom = 0;                     // 구글은 커스텀 이벤트를 따로 주지 않는다
-  base.results = base.purchase + base.addToCart + base.lead;
-  // 카테고리가 안 잡힌 계정(전환 액션 분류가 비어 있는 경우)은 전환수를 그대로 쓴다
-  if (!base.results && metrics.conversions) base.results = Number(metrics.conversions);
+  /* 결과는 구매 하나만 센다 (메타와 같은 규칙 — 장바구니 · 리드는 칸으로만 남는다).
+     구글은 캠페인이 무슨 전환으로 최적화하는지를 보고서에서 주지 않아 구매로 둔다. */
+  base.slot = 'purchase';
+  base.results = base.purchase;
+  /* 전환 액션 분류가 비어 있는 계정은 구매 · 장바구니 · 리드가 다 0 으로 온다.
+     그때만 전환수를 그대로 쓴다 — 구매가 0 인 것과 분류가 없는 것은 다르다. */
+  if (!categories && metrics.conversions) base.results = Number(metrics.conversions);
   // 구매전환값 = 구글의 '전환 가치'. 구글도 이 값으로 ROAS 를 센다.
   base.revenue = Number(metrics.conversionsValue || 0);
   return base;
@@ -3188,6 +3245,25 @@ function metaCreatives_(payload) {
       if (creative.effective_object_story_id) stories[row.id] = creative.effective_object_story_id;
     });
   }
+
+  /* 소재 줄의 결과도 **그 광고세트의 목표**를 따른다 (매체별 성과와 같은 규칙).
+     소재에는 promoted_object 가 없어 광고세트에 물어 물려받는다. */
+  var wantSets = [];
+  creatives.forEach(function (row) {
+    var one = String(row.adsetId || '');
+    if (one && wantSets.indexOf(one) < 0) wantSets.push(one);
+  });
+  var slotOf = {};
+  for (var st = 0; st < wantSets.length; st += 50) {
+    var pack = wantSets.slice(st, st + 50);
+    try {
+      var goals = graph_('/', { ids: pack.join(','), fields: 'promoted_object' });
+      pack.forEach(function (one) {
+        if (goals[one]) slotOf[one] = metaSlotOf_(goals[one].promoted_object);
+      });
+    } catch (error) { /* 이 묶음은 볼 수 없다 — 구매로 둔다 */ }
+  }
+  creatives.forEach(function (row) { metaPick_(row, slotOf[String(row.adsetId || '')]); });
 
   fillBigPictures_(creatives, instagram, 'media_url');
   fillBigPictures_(creatives, videos, 'picture');
@@ -3708,7 +3784,10 @@ function kakaoMetrics_(metrics, base, window) {
   base.addToCart = counted.addToCart;
   base.lead = counted.lead;
   base.custom = 0;                     // 카카오는 커스텀 이벤트를 따로 주지 않는다
-  base.results = base.purchase + base.addToCart + base.lead;
+  /* 결과는 구매 하나만 센다 (메타와 같은 규칙). 카카오모먼트는 전환 목표가 'CONVERSION'
+     하나뿐이라 무슨 이벤트로 최적화하는지를 알려 주지 않는다 — 구매로 둔다. */
+  base.slot = 'purchase';
+  base.results = base.purchase;
   base.revenue = kakaoValue_(found, window);
   return base;
 }

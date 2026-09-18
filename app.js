@@ -8571,7 +8571,7 @@ if (mediaPerformance) {
       ${statCard('총광고비', money(all.spend), `캠페인 ${count(rows.length)}개`)}
       ${source().splitResults
     ? statCard('총구매', count(all.purchase), `장바구니 ${count(all.addToCart)} · 리드 ${count(all.lead)}`)
-    : statCard('총결과', count(all.results), `구매 ${count(all.purchase)} · 장바구니 ${count(all.addToCart)} · 리드 ${count(all.lead)}${all.custom ? ` · 커스텀 ${count(all.custom)}` : ''}`)}
+    : statCard('총결과', count(all.results), `구매 ${count(all.purchase)} · 장바구니 ${count(all.addToCart)} · 리드 ${count(all.lead)}${all.custom ? ` · 커스텀 ${count(all.custom)}` : ''} · 결과는 목표 전환만 셉니다`)}
       ${statCard('CPC', blank(ratio(all.spend, all.linkClicks), money), `${source().clicks} ${count(all.linkClicks)}회`)}
       ${statCard('CTR', blank(ratio(all.linkClicks, all.impressions), percent), `${source().clicks} ÷ 노출`)}
       ${statCard('CPM', blank(ratio(all.spend * 1000, all.impressions), money), `노출 ${count(all.impressions)}회`)}
@@ -10543,7 +10543,7 @@ if (creativePerformance) {
     : ''}</small></p>
       <div class="perf-stats">
         ${card('총광고비', money(total.spend), `소재 ${perfCount(rows.length)}개`)}
-        ${card('총결과', perfCount(total.results), `구매 ${perfCount(total.purchase)} · 장바구니 ${perfCount(total.addToCart)} · 리드 ${perfCount(total.lead)}${total.custom ? ` · 커스텀 ${perfCount(total.custom)}` : ''}`)}
+        ${card('총결과', perfCount(total.results), `구매 ${perfCount(total.purchase)} · 장바구니 ${perfCount(total.addToCart)} · 리드 ${perfCount(total.lead)}${total.custom ? ` · 커스텀 ${perfCount(total.custom)}` : ''} · 결과는 목표 전환만 셉니다`)}
         ${card('CPC', blank(perfRatio(total.spend, total.linkClicks), money), `${source().clicks} ${perfCount(total.linkClicks)}회`)}
         ${card('CTR', blank(perfRatio(total.linkClicks, total.impressions), perfPercent), `${source().clicks} ÷ 노출`)}
         ${card('CPM', blank(perfRatio(total.spend * 1000, total.impressions), money), `노출 ${perfCount(total.impressions)}회`)}
