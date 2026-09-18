@@ -1868,7 +1868,7 @@ const SHEET_TIMEOUT = 60000;
 // Apps Script 자체 한도가 6분이라 3분까지 기다려 준다.
 // 오래 걸리는 요청은 기다려 주는 시간을 늘린다. 소재를 올리는 길(metaAd · metaVideo)도
 // 그림 · 영상 조각이 오가서 60초로는 모자랄 수 있다.
-const SHEET_SLOW = /(Creatives|Report|Breakdown|kolLive|promoCalendar|clarity|metaAd|metaVideo)/;
+const SHEET_SLOW = /(Creatives|Report|Breakdown|promoCalendar|clarity|metaAd|metaVideo)/;
 const askBudget = (payload) => (SHEET_SLOW.test(String((payload && payload.action) || '')) ? 180000 : SHEET_TIMEOUT);
 
 const askSheetOnce = (payload) => {
@@ -13454,290 +13454,449 @@ if (promotionView) {
   openPromoOnce();
 }
 
-// ── KOL 라이브 (라이브 & 행사 결과 시트) ────────────────────────────────
-// 라이브 하나가 시트 탭 하나다. 탭마다 표 모양이 조금씩 달라서, 값은 **열 이름으로** 찾고
-// 숫자 말투(돈 · % · 개수)도 열 이름으로 가른다. 새 라이브 탭이 늘어도 그대로 그려진다.
+// ── KOL 라이브 (이 화면에서 직접 적는다) ────────────────────────────────
+// 예전에는 '라이브 & 행사 결과' 시트를 읽어다 그렸다. 라이브마다 표 모양이 달라서
+// 머리글 낱말로 더듬어 찾아야 했고, 시트를 조금만 손대면 읽는 쪽이 비어 버렸다.
+// 이제는 여기서 적는다. 적은 값은 적재 시트의 KOL라이브 탭에 담겨 팀이 같이 본다.
+//
+//   한 줄이 한 달이다. 줄을 펼치면 그 달의 **단계별(사전 · 당일 · 사후)** 표가 열린다.
+//   손으로 적는 칸은 단계마다 다섯이다 — 광고비 · 매출 · 주문수 · 알림수 · 세션수.
+//   나머지(CPS · ROAS · CPA · 사전알림구매률 · 사전알림신청률)는 모두 셈한 값이다.
+//   셈하는 자리를 여기 한 곳에만 두었다 — 담아 두면 고칠 때마다 두 곳이 어긋난다.
 const kolLiveView = document.querySelector('#kol-live');
 if (kolLiveView) {
   const escape = perfEscape;
   const won = perfMoney('KRW');
   const num = perfCount;
+  const commaNum = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
-  let book = null;
-  let status = 'idle';
+  // 단계 — 시트에 담기는 열쇠와 사람이 보는 이름
+  const PHASES = [['pre', '사전'], ['day', '당일'], ['post', '사후']];
+  /* 한 단계에 적는 칸. 여기 적은 차례가 곧 표의 차례다.
+     '수기' 라고 적어 둔 칸은 매체에서 못 받아 오는 값이다 — 주문수 · 알림수는 사람이 세고,
+     세션수는 나중에 GA 에서 받아 채운다 (그때까지는 손으로 적는다). */
+  const FIELDS = [
+    ['spend', '광고비', 'won', ''],
+    ['revenue', '매출', 'won', ''],
+    ['orders', '주문수', 'num', '수기'],
+    ['alerts', '알림수', 'num', '수기'],
+    ['sessions', '세션수', 'num', '수기'],
+  ];
+
+  let months = [];          // [{ month, phases, updatedBy, updatedAt }] — 새 달이 위
+  let status = 'loading';
   let error = '';
-  let opened = '';   // 펼쳐 둔 라이브 (탭 이름)
+  let note = '';
+  let opened = '';          // 펼쳐 둔 달
+  let sheetUrl = '';
 
-  // 시트는 ROAS 를 3730% 가 아니라 37.3 으로 담고 있다 (칸 서식이 %다).
-  // CVR · CTR · 비중도 같다. 그래서 % 로 보여 줄 열은 이름으로 가른다.
-  const RATE_WORDS = ['ROAS', 'ROI', 'CVR', 'CTR', '비중', '률', '구매율'];
-  const MONEY_WORDS = ['광고비', '매출', '전환값', '예산', 'CPS', 'CPA', 'CPM', 'CPC', 'AOV',
-    '결제가', '객단가', '유치비'];
-  const hasWord = (name, words) => words.some((one) => String(name || '').indexOf(one) >= 0);
+  const thisMonth = perfYmd(new Date()).slice(0, 7);
 
-  const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
-  const cellText = (name, value) => {
-    if (!isNumber(value)) return String(value ?? '') || '·';
-    if (hasWord(name, RATE_WORDS)) return perfRoas(value);
-    if (hasWord(name, MONEY_WORDS)) return won(value);
-    return num(value);
+  // '2026-09' → '26년 9월'. 시트에는 늘 YYYY-MM 으로 담는다.
+  const monthLabel = (want) => `${String(want).slice(2, 4)}년 ${Number(String(want).slice(5, 7))}월`;
+  const monthStep = (want, by) => {
+    const when = new Date(Number(String(want).slice(0, 4)), Number(String(want).slice(5, 7)) - 1 + by, 1);
+    return `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}`;
   };
 
-  // 열 이름으로 값을 집는다. 탭마다 이름이 조금씩 달라 여러 후보를 받는다.
-  const pick = (table, row, ...names) => {
-    if (!table || !row) return null;
-    for (const name of names) {
-      const at = table.columns.findIndex((one) => one === name);
-      if (at >= 0) return row[at];
-    }
-    for (const name of names) {
-      const at = table.columns.findIndex((one) => one.indexOf(name) >= 0);
-      if (at >= 0) return row[at];
-    }
-    return null;
-  };
-  const numberOf = (table, row, ...names) => {
-    const found = pick(table, row, ...names);
-    return isNumber(found) ? found : null;
-  };
+  const blankPhase = () => FIELDS.reduce((into, [name]) => { into[name] = 0; return into; }, {});
+  const blankPhases = () => PHASES.reduce((into, [key]) => { into[key] = blankPhase(); return into; }, {});
+  // 시트에서 온 값을 늘 같은 모양으로 편다 (칸이 늘어도 옛 줄이 그대로 열린다)
+  const usePhases = (found) => PHASES.reduce((into, [key]) => {
+    const one = (found && found[key]) || {};
+    into[key] = FIELDS.reduce((phase, [name]) => {
+      phase[name] = Number(one[name]) || 0;
+      return phase;
+    }, {});
+    return into;
+  }, {});
 
-  // 라이브 한 줄로 줄인 값. 목록 표와 합계가 이걸 쓴다.
-  const oneLine = (live) => {
-    const table = live.summary;
-    const row = table && table.rows.length ? table.rows[0] : null;
-    return {
-      name: live.name,
-      caption: live.caption || '',
-      spend: numberOf(table, row, '광고비'),
-      revenue: numberOf(table, row, '매출', '전환값'),
-      orders: numberOf(table, row, '주문수', '구매수'),
-      roas: numberOf(table, row, 'ROAS'),
-      cps: numberOf(table, row, 'CPS'),
-      aov: numberOf(table, row, 'AOV', '객단가', '결제가'),
-      lead: numberOf(table, row, '사전알림신청', '리드고객'),
-      goal: numberOf(table, row, '실 목표수량', '목표수량'),
-      live: live,
-    };
-  };
+  const rowOf = (want) => months.find((one) => one.month === want);
+  const sortMonths = () => months.sort((one, two) => two.month.localeCompare(one.month));
+
+  // 한 달을 한 줄로 줄인 값 — 세 단계를 더한다. 목록 · 펼친 판 · 엑셀이 모두 이걸 쓴다.
+  const sumOf = (row) => PHASES.reduce((into, [key]) => {
+    FIELDS.forEach(([name]) => { into[name] += Number(row.phases[key][name]) || 0; });
+    return into;
+  }, blankPhase());
+
+  const addUp = (list) => list.reduce((into, one) => {
+    FIELDS.forEach(([name]) => { into[name] += one[name] || 0; });
+    return into;
+  }, blankPhase());
+
+  /* 셈하는 값. 비율은 **더한 값에서 다시 센다** — 단계마다의 비율을 평균 내면
+     광고비가 큰 단계와 작은 단계가 같은 무게가 된다. */
+  const cps = (one) => perfRatio(one.spend, one.orders);        // 주문 하나에 든 광고비
+  const roas = (one) => perfRatio(one.revenue, one.spend);
+  const cpa = (one) => perfRatio(one.spend, one.alerts);        // 사전알림 하나를 받는 데 든 광고비
+  const buyRate = (one) => perfRatio(one.orders, one.alerts);   // 사전알림구매률
+  const askRate = (one) => perfRatio(one.alerts, one.sessions); // 사전알림신청률
 
   const blank = '<span class="tool-blank">—</span>';
-  const money = (value) => (isNumber(value) ? won(value) : blank);
-  const rate = (value) => (isNumber(value) ? perfRoas(value) : blank);
-  const count = (value) => (isNumber(value) ? num(value) : blank);
+  const money = (value) => (Number.isFinite(value) && value ? won(value) : blank);
+  const count = (value) => (Number.isFinite(value) && value ? num(value) : blank);
+  const rate = (value) => (Number.isFinite(value) && value ? perfRoas(value) : blank);
 
-  // ── 라이브별 결과 (이 화면의 본체) ────────────────────────────────
-  const listTable = () => {
-    const rows = book.lives.map(oneLine);
-    const sum = rows.reduce((into, one) => ({
-      spend: into.spend + (one.spend || 0),
-      revenue: into.revenue + (one.revenue || 0),
-      orders: into.orders + (one.orders || 0),
-      lead: into.lead + (one.lead || 0),
-    }), { spend: 0, revenue: 0, orders: 0, lead: 0 });
-    const peak = Math.max(...rows.map((one) => one.roas || 0), 0);
+  // ── 그리기 ──────────────────────────────────────────────────────
+  // 표의 줄은 div 안에서 살아남지 못한다 (브라우저가 <tr> 을 버린다). template 으로 옮긴다.
+  const swap = (at, html) => {
+    if (!at) return;
+    const box = document.createElement('template');
+    box.innerHTML = html;
+    if (box.content.firstElementChild) at.replaceWith(box.content.firstElementChild);
+  };
 
-    const line = (one) => {
-      const open = opened === one.name;
-      const size = peak > 0 && one.roas ? Math.min(100, (one.roas / peak) * 100) : 0;
-      return `<tr class="perf-row${open ? ' is-open' : ''}" data-kol-row="${escape(one.name)}">
-        <td class="perf-name">
-          <button type="button" class="perf-toggle" data-kol="toggle" data-name="${escape(one.name)}">
-            <i data-lucide="${open ? 'chevron-down' : 'chevron-right'}"></i></button>
-          <span><b>${escape(one.name)}</b>${one.caption
-        ? `<small>${escape(one.caption)}</small>` : ''}</span>
-        </td>
-        <td class="perf-num">${money(one.spend)}</td>
-        <td class="perf-num">${money(one.revenue)}</td>
-        <td class="perf-num">${count(one.orders)}</td>
-        <td class="perf-num kol-roas">${size ? `<span class="budget-cell-bar" style="width:${size.toFixed(1)}%"></span>` : ''
-      }<span>${rate(one.roas)}</span></td>
-        <td class="perf-num">${money(one.cps)}</td>
-        <td class="perf-num">${money(one.aov)}</td>
-        <td class="perf-num">${count(one.lead)}</td>
-      </tr>${open ? detailRow(one.live) : ''}`;
+  const statBox = (label, value, hint) => `<span class="bg-stat">
+    <small>${escape(label)}</small><b>${value}</b>${hint ? `<em>${escape(hint)}</em>` : ''}</span>`;
+
+  // 펼친 판 맨 위 — 그 달의 총계
+  const heroBox = (row) => {
+    const one = sumOf(row);
+    return `<div class="bg-stats kol-hero">
+      ${statBox('총 광고비', money(one.spend))}
+      ${statBox('총 매출', money(one.revenue))}
+      ${statBox('총 주문수', count(one.orders))}
+      ${statBox('총 CPS', money(cps(one)), '광고비 ÷ 주문수')}
+      ${statBox('총 ROAS', rate(roas(one)), '매출 ÷ 광고비')}
+    </div>`;
+  };
+
+  // 단계별 결과 — 손으로 적는 칸 다섯 + 셈한 칸 둘
+  const stepTable = (row) => {
+    const at = escape(row.month);
+    const inputCell = (key, name, value) => `<td class="perf-num"><input type="text" class="kol-in"
+      inputmode="numeric" data-kol-in="1" data-month="${at}" data-phase="${key}" data-field="${name}"
+      value="${value ? escape(commaNum(value)) : ''}" placeholder="0"></td>`;
+    const line = ([key, label]) => {
+      const one = row.phases[key];
+      return `<tr>
+        <td class="perf-name"><span>${escape(label)}</span></td>
+        ${FIELDS.map(([name]) => inputCell(key, name, one[name])).join('')}
+        <td class="perf-num" data-kol-out="${key}:cps">${money(cps(one))}</td>
+        <td class="perf-num" data-kol-out="${key}:cpa">${money(cpa(one))}</td>
+      </tr>`;
     };
+    const one = sumOf(row);
+    return `<div class="kol-block">
+      <h5>단계별 결과 <small>사전 · 당일 · 사후</small></h5>
+      <div class="tool-table-wrap"><table class="tool-table kol-sub">
+        <thead><tr><th>단계</th>${FIELDS.map(([, label, , mark]) => `<th class="perf-num">${escape(label)}${mark
+    ? `<small>${escape(mark)}</small>` : ''}</th>`).join('')}
+          <th class="perf-num">CPS</th><th class="perf-num">CPA<small>사전알림</small></th></tr></thead>
+        <tbody>${PHASES.map(line).join('')}
+          <tr class="kol-part"><td class="perf-name"><span>합계</span></td>
+            ${FIELDS.map(([name, , kind]) => `<td class="perf-num" data-kol-out="sum:${name}">${kind === 'won'
+    ? money(one[name]) : count(one[name])}</td>`).join('')}
+            <td class="perf-num" data-kol-out="sum:cps">${money(cps(one))}</td>
+            <td class="perf-num" data-kol-out="sum:cpa">${money(cpa(one))}</td></tr>
+        </tbody>
+      </table></div>
+      <p class="perf-note">CPS = 광고비 ÷ 주문수 · CPA = 광고비 ÷ 사전알림수 ·
+        사전알림구매률 = 주문수 ÷ 알림수 · 사전알림신청률 = 알림수 ÷ 세션수.
+        세션수는 나중에 GA 에서 받아 채웁니다 — 그때까지는 손으로 적습니다.</p>
+    </div>`;
+  };
 
+  const detailRow = (row) => `<tr class="perf-detail-row" data-kol-detail="${escape(row.month)}">
+    <td colspan="9"><div class="kol-detail">${heroBox(row)}${stepTable(row)}</div></td></tr>`;
+
+  const listRow = (row) => {
+    const one = sumOf(row);
+    const open = opened === row.month;
+    return `<tr class="perf-row${open ? ' is-open' : ''}" data-kol-row="${escape(row.month)}">
+      <td class="perf-name">
+        <button type="button" class="perf-toggle" data-kol="toggle" data-month="${escape(row.month)}">
+          <i data-lucide="${open ? 'chevron-down' : 'chevron-right'}"></i></button>
+        <span><b>${escape(monthLabel(row.month))}</b><small>${escape(row.month)}</small></span>
+      </td>
+      <td class="perf-num">${money(one.spend)}</td>
+      <td class="perf-num">${money(one.revenue)}</td>
+      <td class="perf-num">${count(one.orders)}</td>
+      <td class="perf-num">${money(cps(one))}</td>
+      <td class="perf-num kol-roas"><span>${rate(roas(one))}</span></td>
+      <td class="perf-num">${money(cpa(one))}</td>
+      <td class="perf-num">${rate(buyRate(one))}</td>
+      <td class="perf-num">${rate(askRate(one))}</td>
+    </tr>`;
+  };
+
+  const totalRow = () => {
+    const one = addUp(months.map(sumOf));
+    return `<tr class="perf-row kol-total"><td class="perf-name"><span><b>합계</b>
+      <small>달 ${num(months.length)}개</small></span></td>
+      <td class="perf-num"><b>${money(one.spend)}</b></td>
+      <td class="perf-num"><b>${money(one.revenue)}</b></td>
+      <td class="perf-num">${count(one.orders)}</td>
+      <td class="perf-num">${money(cps(one))}</td>
+      <td class="perf-num">${rate(roas(one))}</td>
+      <td class="perf-num">${money(cpa(one))}</td>
+      <td class="perf-num">${rate(buyRate(one))}</td>
+      <td class="perf-num">${rate(askRate(one))}</td></tr>`;
+  };
+
+  const listCard = () => {
+    if (!months.length) {
+      return `<div class="tool-card page-todo"><h3>아직 적은 달이 없습니다</h3>
+        <ul><li>위의 <b>달 추가</b> 로 달을 하나 만들고, 줄을 펼쳐 단계별로 적어 주세요</li></ul></div>`;
+    }
     return `<div class="tool-card">
       <div class="tool-list-head">
-        <h3>라이브별 결과 <small>라이브 ${num(rows.length)}건 · 줄을 누르면 단계별 · 매체별로 펼칩니다</small></h3>
+        <h3>월별 결과 <small>달 ${num(months.length)}개 · 줄을 누르면 단계별로 펼쳐 적습니다</small></h3>
         <div class="tool-list-actions">
           <button type="button" class="tool-copy-all" data-kol="excel">
             <i data-lucide="sheet"></i>엑셀 받기</button>
         </div>
       </div>
       <div class="tool-table-wrap"><table class="tool-table perf-table kol-table">
-        <thead><tr><th>라이브</th><th>광고비</th><th>매출</th><th>주문수</th><th>ROAS</th>
-          <th>CPS</th><th>AOV</th><th>사전알림</th></tr></thead>
-        <tbody>${rows.map(line).join('')}
-          <tr class="perf-row kol-sum"><td class="perf-name"><span><b>합계</b>
-            <small>라이브 ${num(rows.length)}건</small></span></td>
-            <td class="perf-num"><b>${money(sum.spend)}</b></td>
-            <td class="perf-num"><b>${money(sum.revenue)}</b></td>
-            <td class="perf-num">${count(sum.orders)}</td>
-            <td class="perf-num">${rate(perfRatio(sum.revenue, sum.spend))}</td>
-            <td class="perf-num">${money(perfRatio(sum.spend, sum.orders))}</td>
-            <td class="perf-num">${money(perfRatio(sum.revenue, sum.orders))}</td>
-            <td class="perf-num">${count(sum.lead)}</td></tr>
-        </tbody>
+        <thead><tr><th>달</th><th class="perf-num">총 광고비</th><th class="perf-num">총 매출</th>
+          <th class="perf-num">총 주문수</th><th class="perf-num">총 CPS</th><th class="perf-num">총 ROAS</th>
+          <th class="perf-num">총 CPA<small>사전알림</small></th>
+          <th class="perf-num">사전알림구매률</th><th class="perf-num">사전알림신청률</th></tr></thead>
+        <tbody>${months.map((row) => `${listRow(row)}${opened === row.month ? detailRow(row) : ''}`).join('')}
+          ${totalRow()}</tbody>
       </table></div>
-      <p class="perf-note">합계의 ROAS · CPS · AOV 는 더한 값에서 다시 계산합니다 —
-        라이브마다의 비율을 평균 내면 큰 라이브와 작은 라이브가 같은 무게가 됩니다.</p>
+      <p class="perf-note">합계의 CPS · ROAS · CPA · 비율은 더한 값에서 다시 셉니다 —
+        달마다의 비율을 평균 내면 큰 달과 작은 달이 같은 무게가 됩니다.</p>
     </div>`;
   };
 
-  // ── 펼친 상세 ──────────────────────────────────────────────────
-  // 시트의 표를 그대로 옮기되, 열 이름으로 말투만 맞춘다.
-  const plainTable = (table, title, note) => {
-    if (!table || !table.rows.length) return '';
-    // 글자 칸(매체 이름 · 소재구분)은 값이 **있는** 것이다. 빈 칸과 같은 회색으로 두면
-    // '브랜드검색' 이 '값 없음' 처럼 보인다. 없는 칸('' · '-')만 흐리게 둔다.
-    const cell = (value, at) => {
-      if (isNumber(value)) return `<td class="perf-num">${escape(cellText(table.columns[at], value))}</td>`;
-      const text = String(value ?? '').trim();
-      return text && text !== '-'
-        ? `<td class="perf-num kol-text">${escape(text)}</td>`
-        : '<td class="perf-num"><span class="tool-blank">·</span></td>';
-    };
-    // Phase 는 그 묶음의 첫 줄에만 적는다. 줄마다 '사전 (8/9~8/11)' 을 되풀이하면
-    // 정작 봐야 할 매체 이름이 뒤로 밀린다. (시트에서도 병합해 둔 칸이다)
-    let last = null;
-    const line = (row, klass) => {
-      const name = String(row[0] ?? '');
-      const fresh = name !== last;
-      last = name;
-      return `<tr class="${klass || ''}${fresh && klass !== 'budget-total' ? ' kol-fresh' : ''}">
-        <td class="perf-name"><span>${fresh ? escape(name) || '·' : ''}</span></td>
-        ${row.slice(1).map((value, at) => cell(value, at + 1)).join('')}</tr>`;
-    };
-    // 시트가 표 위에 얹어 둔 묶음 이름(*광고대시 · *GA4). 전환 · CPA · CVR 이 두 번 나오는
-    // 표에서는 이게 없으면 어느 쪽이 GA4 값인지 알 수 없다.
-    const groupRow = () => {
-      if (!table.groups) return '';
-      // 표 제목이 그 자리에 적혀 있기도 하다 ('단계별 결과'). 위 h5 와 겹치므로 지운다.
-      const groups = table.groups.map((name) => (String(name).trim() === title.trim() ? '' : name));
-      if (!groups.some(Boolean)) return '';
-      const cells = [];
-      let at = 0;
-      while (at < groups.length) {
-        const name = groups[at];
-        let span = 1;
-        while (at + span < groups.length && groups[at + span] === name) span += 1;
-        cells.push(`<th colspan="${span}">${escape(name || '')}</th>`);
-        at += span;
-      }
-      return `<tr class="budget-group-row">${cells.join('')}</tr>`;
-    };
-    return `<div class="kol-block">
-      <h5>${escape(title)}${note ? ` <small>${escape(note)}</small>` : ''}</h5>
-      <div class="tool-table-wrap"><table class="tool-table kol-sub">
-        <thead>${groupRow()}
-          <tr>${table.columns.map((name, at) => `<th${at ? ' class="perf-num"' : ''}>${escape(name)}</th>`).join('')}</tr></thead>
-        <tbody>${table.rows.map((row) => line(row, /종합|total|합계/i.test(String(row[1] ?? '')) ? 'kol-part' : ''))
-    .join('')}${table.total ? line(table.total, 'budget-total') : ''}</tbody>
-      </table></div>
-    </div>`;
+  const noteLine = () => {
+    const row = rowOf(opened) || months[0];
+    const when = row && row.updatedAt
+      ? `마지막 저장 ${escape(new Date(row.updatedAt).toLocaleString('ko-KR'))}` : '아직 저장한 적이 없습니다.';
+    return `<p class="perf-note kol-note${error ? ' bg-note-bad' : ''}">${error
+      ? escape(error) : `${when}${note ? ` · ${escape(note)}` : ''} · 적으면 손을 뗀 뒤 저절로 담깁니다.`}</p>`;
   };
 
-  // 사전 행동지표는 네 칸뿐이라 표보다 카드가 읽기 쉽다.
-  const preCards = (table) => {
-    if (!table || !table.rows.length) return '';
-    const row = table.rows[0];
-    return `<div class="kol-block"><h5>사전 신청유저 구매율</h5>
-      <div class="budget-chips kol-chips">${table.columns.map((name, at) => `<span>
-        <small>${escape(name)}</small><b>${escape(cellText(name, row[at]))}</b></span>`).join('')}</div>
-    </div>`;
+  const paintNote = () => swap(kolLiveView.querySelector('.kol-note'), noteLine());
+
+  const render = () => {
+    if (status === 'loading') {
+      kolLiveView.innerHTML = `<div class="tool-head"><h2>KOL 라이브</h2></div>
+        <div class="tool-card page-loading">적어 둔 달을 읽는 중…</div>`;
+      lucide.createIcons();
+      return;
+    }
+    const next = months.length ? monthStep(months[0].month, 1) : thisMonth;
+    kolLiveView.innerHTML = `<div class="tool-head">
+        <h2>KOL 라이브</h2>
+        <p>이 화면에서 <b>직접 적습니다</b>. 달을 펼쳐 <b>사전 · 당일 · 사후</b> 로 광고비 · 매출 ·
+          주문수 · 알림수 · 세션수를 적으면 CPS · ROAS · CPA · 사전알림 구매률 · 신청률은 저절로 셉니다.
+          적은 값은 적재 시트의 <b>KOL라이브</b> 탭에 담겨 팀이 같이 봅니다.</p>
+      </div>
+      <div class="tool-card">
+        <div class="perf-filter">
+          <button type="button" class="tool-add" data-kol="save"><i data-lucide="save"></i>저장하기</button>
+          <button type="button" class="tool-copy-all" data-kol="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
+          <button type="button" class="tool-copy-all" data-kol="sheetOpen"><i data-lucide="external-link"></i>시트 열기</button>
+          ${opened ? `<button type="button" class="tool-copy-all bg-drop-month" data-kol="dropMonth"
+            title="펼쳐 둔 달을 통째로 지웁니다"><i data-lucide="trash-2"></i>${escape(monthLabel(opened))} 지우기</button>` : ''}
+          <span class="bg-newmonth">
+            <input type="month" data-kol="newMonth" value="${escape(next)}" title="새로 적을 달">
+            <button type="button" class="tool-copy-all" data-kol="addMonth">
+              <i data-lucide="calendar-plus"></i>달 추가</button>
+          </span>
+        </div>
+        ${noteLine()}
+      </div>
+      ${listCard()}`;
+    lucide.createIcons();
   };
 
-  const detailRow = (live) => {
-    const inside = [
-      plainTable(live.phases, '단계별 결과', '사전 · 당일 · 사후'),
-      preCards(live.pre),
-      plainTable(live.media, '매체별 결과', 'Phase × 매체'),
-    ].filter(Boolean).join('');
-    return `<tr class="perf-detail-row"><td colspan="8">
-      <div class="kol-detail">${inside
-    || '<p class="tool-empty">이 탭에서는 단계별 · 매체별 표를 찾지 못했습니다. 시트에서 확인해 주세요.</p>'}</div>
-    </td></tr>`;
+  /* 글자를 칠 때마다 화면을 통째로 다시 그리면 적고 있던 칸에서 커서가 튄다.
+     그래서 숫자를 적을 때는 **셈해서 보여 주는 자리만** 갈아 끼운다. */
+  const repaint = (want) => {
+    const row = rowOf(want);
+    if (!row) return;
+    const put = (key, html) => {
+      const at = kolLiveView.querySelector(`[data-kol-out="${key}"]`);
+      if (at) at.innerHTML = html;
+    };
+    PHASES.forEach(([key]) => {
+      put(`${key}:cps`, money(cps(row.phases[key])));
+      put(`${key}:cpa`, money(cpa(row.phases[key])));
+    });
+    const one = sumOf(row);
+    FIELDS.forEach(([name, , kind]) => put(`sum:${name}`, kind === 'won' ? money(one[name]) : count(one[name])));
+    put('sum:cps', money(cps(one)));
+    put('sum:cpa', money(cpa(one)));
+    swap(kolLiveView.querySelector('.kol-hero'), heroBox(row));
+    swap(kolLiveView.querySelector(`tr[data-kol-row="${want}"]`), listRow(row));
+    swap(kolLiveView.querySelector('.kol-total'), totalRow());
+    lucide.createIcons();
+  };
+
+  // ── 담기 · 읽기 ─────────────────────────────────────────────────
+  // 손을 뗀 뒤 한 번만 보낸다. 단추를 안 눌러도 잃지 않게 해 두는 안전망이다.
+  const dirty = new Set();
+  let saveTimer = 0;
+  const flush = () => {
+    const list = Array.from(dirty);
+    dirty.clear();
+    if (!list.length) return Promise.resolve();
+    return Promise.all(list.map((want) => {
+      const row = rowOf(want);
+      if (!row) return null;
+      return askSheet({ action: 'kolPut', month: want, phases: row.phases, by: '' })
+        .then((body) => {
+          row.updatedAt = body.savedAt || row.updatedAt;
+          note = `${monthLabel(want)} 저장했습니다`;
+          error = '';
+        })
+        .catch((reason) => {
+          error = /모르는 요청/.test(reason.message)
+            ? `저장하지 못했습니다 — Apps Script 를 새 버전으로 다시 배포해 주세요 (${reason.message})`
+            : `저장하지 못했습니다 — ${reason.message}`;
+        });
+    })).then(paintNote);
+  };
+  const save = (want) => {
+    dirty.add(want);
+    window.clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(flush, 1500);
+  };
+  const saveNow = () => {
+    window.clearTimeout(saveTimer);
+    return flush();
+  };
+
+  const addMonth = (want) => {
+    if (rowOf(want)) { opened = want; render(); return; }
+    months.push({ month: want, phases: blankPhases(), updatedBy: '', updatedAt: '' });
+    sortMonths();
+    opened = want;                 // 새로 만든 달은 펼쳐 둔다 — 바로 적기 시작하게
+    note = `${monthLabel(want)} 를 만들었습니다`;
+    error = '';
+    render();
+    save(want);
+  };
+
+  const dropMonth = (want) => {
+    const row = rowOf(want);
+    if (!row) return;
+    const one = sumOf(row);
+    const what = one.spend || one.revenue || one.orders
+      ? `광고비 ${won(one.spend)} · 매출 ${won(one.revenue)} · 주문수 ${num(one.orders)}`
+      : '아직 아무것도 안 적은 달입니다';
+    if (!window.confirm(`${monthLabel(want)} 을 통째로 지웁니다.\n\n${what}\n\n되돌릴 수 없습니다. 지울까요?`)) return;
+    dirty.delete(want);            // 지운 뒤에 자동 저장이 되살아나면 안 된다
+    window.clearTimeout(saveTimer);
+    months = months.filter((line) => line.month !== want);
+    if (opened === want) opened = '';
+    render();
+    askSheet({ action: 'kolDrop', month: want, by: '' })
+      .then(() => { note = `${monthLabel(want)} 를 지웠습니다`; error = ''; paintNote(); })
+      .catch((reason) => { error = `지우지 못했습니다 — ${reason.message}`; paintNote(); });
   };
 
   const excelText = () => {
-    const head = ['라이브', '날짜/이름', '광고비', '매출', '주문수', 'ROAS', 'CPS', 'AOV', '사전알림'];
+    const head = ['달', '총 광고비', '총 매출', '총 주문수', '총 CPS', '총 ROAS',
+      '총 CPA(사전알림)', '사전알림구매률', '사전알림신청률'];
     const lines = [head.join('\t')];
-    book.lives.map(oneLine).forEach((one) => {
-      lines.push([one.name, one.caption,
-        one.spend === null ? '' : Math.round(one.spend),
-        one.revenue === null ? '' : Math.round(one.revenue),
-        one.orders === null ? '' : one.orders,
-        one.roas === null ? '' : perfRoas(one.roas),
-        one.cps === null ? '' : Math.round(one.cps),
-        one.aov === null ? '' : Math.round(one.aov),
-        one.lead === null ? '' : one.lead].join('\t'));
+    months.forEach((row) => {
+      const one = sumOf(row);
+      const done = (value) => (Number.isFinite(value) ? Math.round(value) : '');
+      const part = (value) => (Number.isFinite(value) ? perfRoas(value) : '');
+      lines.push([monthLabel(row.month), one.spend, one.revenue, one.orders,
+        done(cps(one)), part(roas(one)), done(cpa(one)), part(buyRate(one)), part(askRate(one))].join('\t'));
     });
     return lines.join('\n');
   };
 
-  const render = () => {
-    if (!book) {
-      kolLiveView.innerHTML = `<div class="tool-head"><h2>KOL 라이브</h2></div>
-        ${status === 'error' ? `<p class="perf-warn">${escape(error)}</p>
-          <div class="tool-card page-todo"><h3>시트를 읽지 못했습니다</h3>
-            <ul><li>Apps Script 를 <b>새 버전으로 다시 배포</b>했는지 확인해 주세요</li>
-              <li>시트 접근 권한이 있어야 합니다 (링크가 있는 사람 보기 이상)</li></ul></div>`
-    : '<div class="tool-card page-loading">시트를 읽는 중…</div>'}`;
-      lucide.createIcons();
-      return;
-    }
-
-    kolLiveView.innerHTML = `<div class="tool-head">
-        <h2>KOL 라이브 <small>${escape(book.bookName || '')}</small></h2>
-        <p>라이브마다 따로 쓰던 결과 시트를 한 표로 모았습니다. 줄을 누르면
-          그 라이브의 <b>단계별(사전 · 당일 · 사후)</b> 과 <b>매체별</b> 결과가 펼쳐집니다.</p>
-      </div>
-      <div class="tool-card">
-        <div class="perf-filter">
-          <a class="tool-add" href="${escape(book.url)}" target="_blank" rel="noopener">
-            <i data-lucide="external-link"></i>시트 열기</a>
-          <button type="button" class="tool-copy-all" data-kol="refresh"${status === 'loading' ? ' disabled' : ''}>
-            <i data-lucide="refresh-cw"></i>${status === 'loading' ? '받는 중…' : '다시 받기'}</button>
-        </div>
-        <p class="perf-note">${escape(book.bookName || '')} · 탭 ${num((book.lives || []).length)}개${book.fetchedAt
-    ? ` · 갱신 ${new Date(book.fetchedAt).toLocaleString('ko-KR')}` : ''}${book.cached ? ' (담아 둔 값)' : ''}</p>
-      </div>
-      ${listTable()}`;
-    lucide.createIcons();
-  };
-
-  const load = (refresh) => {
-    status = 'loading';
+  const load = () => {
     error = '';
+    if (!months.length) status = 'loading';
     render();
-    window.fetch(SHEET_ENDPOINT, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'kolLive', refresh: Boolean(refresh) }),
-    }).then((response) => response.json()).then((body) => {
-      if (!body.ok) throw new Error(body.error || '시트를 읽지 못했습니다.');
-      book = body;
-      status = 'ready';
-      render();
-    }).catch((reason) => {
-      status = 'error';
-      error = reason.message;
-      render();
-    });
+    askSheet({ action: 'kolGet' })
+      .then((body) => {
+        months = (body.months || []).map((row) => ({
+          month: String(row.month || '').slice(0, 7),
+          phases: usePhases(row.phases),
+          updatedBy: row.updatedBy || '',
+          updatedAt: row.updatedAt || '',
+        })).filter((row) => row.month);
+        sortMonths();
+        sheetUrl = body.url || sheetUrl;
+        status = 'ready';
+        // 아직 한 달도 없으면 이 달 판을 하나 깔아 둔다 — 빈 화면에서 시작하지 않게
+        if (!months.length) { addMonth(thisMonth); return; }
+        if (opened && !rowOf(opened)) opened = '';
+        render();
+      })
+      .catch((reason) => {
+        status = 'ready';
+        error = /모르는 요청/.test(reason.message)
+          ? `읽지 못했습니다 — Apps Script 를 새 버전으로 다시 배포해 주세요 (${reason.message})`
+          : `읽지 못했습니다 — ${reason.message}`;
+        render();
+      });
   };
 
+  // ── 손놀림 ──────────────────────────────────────────────────────
   kolLiveView.addEventListener('click', (event) => {
-    if (event.target.closest('[data-kol="refresh"]')) { load(true); return; }
-    if (event.target.closest('[data-kol="excel"]')) {
-      perfDownload(`KOL라이브_결과_${perfYmd(new Date())}.csv`, excelText());
-      return;
+    const hit = event.target.closest('[data-kol]');
+    if (hit && hit.tagName !== 'INPUT') {
+      const what = hit.dataset.kol;
+      if (what === 'toggle') {
+        opened = opened === hit.dataset.month ? '' : hit.dataset.month;
+        render();
+        return;
+      }
+      if (what === 'save') { saveNow(); return; }
+      if (what === 'reload') { saveNow().then(load); return; }
+      if (what === 'sheetOpen') { window.open(sheetUrl || SHEET_URL, '_blank', 'noopener'); return; }
+      if (what === 'dropMonth') { dropMonth(opened); return; }
+      if (what === 'excel') {
+        perfDownload(`KOL라이브_결과_${perfYmd(new Date())}.csv`, excelText());
+        return;
+      }
+      if (what === 'addMonth') {
+        const box = kolLiveView.querySelector('[data-kol="newMonth"]');
+        const want = String((box && box.value) || '').slice(0, 7);
+        if (!/^\d{4}-\d{2}$/.test(want)) { error = '달을 골라 주세요 (2026-09 처럼).'; paintNote(); return; }
+        error = '';
+        addMonth(want);
+        return;
+      }
     }
-    const row = event.target.closest('[data-kol-row]');
-    if (row) {
-      const name = row.dataset.kolRow;
-      opened = opened === name ? '' : name;
+    // 줄 아무 데나 눌러도 펼쳐진다 (적는 칸은 펼친 판 안에 있어 겹치지 않는다)
+    const line = event.target.closest('[data-kol-row]');
+    if (line) {
+      opened = opened === line.dataset.kolRow ? '' : line.dataset.kolRow;
       render();
     }
+  });
+
+  // 치는 동안에는 셈한 자리만 따라 바뀐다. 수식('=35000*12')은 칸을 떠날 때 센다.
+  const readCell = (hit) => {
+    const row = rowOf(hit.dataset.month);
+    if (!row) return null;
+    const value = numValue(hit.value);
+    hit.classList.toggle('is-bad', value === null);
+    if (value === null) return null;        // 못 센 수식은 그대로 두고 빨간 칸을 남긴다
+    row.phases[hit.dataset.phase][hit.dataset.field] = value;
+    return row;
+  };
+
+  kolLiveView.addEventListener('input', (event) => {
+    const hit = event.target.closest('[data-kol-in]');
+    if (!hit) return;
+    const row = readCell(hit);
+    if (!row) return;
+    repaint(row.month);
+    save(row.month);
+  });
+
+  kolLiveView.addEventListener('change', (event) => {
+    const hit = event.target.closest('[data-kol-in]');
+    if (!hit) return;
+    const row = readCell(hit);
+    if (!row) return;
+    const value = row.phases[hit.dataset.phase][hit.dataset.field];
+    hit.value = value ? commaNum(value) : '';
+    repaint(row.month);
+    save(row.month);
   });
 
   // 메뉴에 들어올 때 한 번만 부른다
@@ -13745,7 +13904,7 @@ if (kolLiveView) {
   const openKolOnce = () => {
     if (kolLoaded || kolLiveView.hidden) return;
     kolLoaded = true;
-    load(false);
+    load();
   };
   new MutationObserver(openKolOnce).observe(kolLiveView, { attributes: true, attributeFilter: ['hidden'] });
   openKolOnce();

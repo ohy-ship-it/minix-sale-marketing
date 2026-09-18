@@ -1109,24 +1109,33 @@ span.bg-kind{cursor:default}
 .page-days small{font-size:11px;color:#a5a49f;line-height:1.5}
 
 /* ── KOL 라이브 ─────────────────────────────────────────────── */
-.kol-table{min-width:900px}
-.kol-table .kol-roas{position:relative}
-.kol-table .kol-roas>span{position:relative;font-weight:700}
-.kol-table .kol-sum td{border-top:1px solid #ddddd6;background:#fafaf8}
+/* 한 줄이 한 달이다. 줄을 펼치면 그 달의 총계 상자와 단계별 표(적는 칸)가 열린다. */
+.kol-table{min-width:1020px}
+.kol-table th small{display:block;font-size:9.5px;font-weight:500;color:#b5b4ae}
+.kol-table .perf-name small{margin-left:6px;font-size:10.5px;font-weight:600;color:#b5b4ae}
+.kol-table .kol-roas>span{font-weight:700}
+.kol-table .kol-total td{border-top:1px solid #ddddd6;background:#fafaf8}
 .kol-detail{padding:12px 4px 14px}
+/* 총계 상자 — 펼치자마자 보이는 다섯 칸 (총 광고비 · 매출 · 주문수 · CPS · ROAS) */
+.kol-hero{margin-bottom:14px}
 .kol-block{margin-bottom:14px}
 .kol-block:last-child{margin-bottom:0}
 .kol-block h5{margin:0 0 7px;font-size:12px;font-weight:700;color:#3d3d39}
 .kol-block h5 small{margin-left:5px;font-size:11px;font-weight:600;color:#a5a49f}
 .kol-sub{min-width:820px;font-size:11.5px}
 .kol-sub th{padding:7px 9px;font-size:10.5px}
-.kol-sub td{padding:6px 9px}
+.kol-sub th small{display:block;font-size:9.5px;font-weight:500;color:#b5b4ae}
+.kol-sub td{padding:6px 9px;vertical-align:middle}
+/* 이 표는 perf-table 이 아니라 숫자 오른쪽 맞춤을 따로 준다 */
+.kol-sub th:not(:first-child),.kol-sub .perf-num{text-align:right}
 .kol-sub .kol-part td{background:#f7f7f3;font-weight:700}
-.kol-sub .kol-fresh td{border-top:1px solid #e2e1da}
-.kol-sub .perf-name span{font-weight:600;color:#6f6f68;white-space:normal}
-.kol-sub .kol-text{color:#3d3d39;font-weight:600}
-.kol-chips{flex-wrap:wrap}
-.kol-chips span{flex:0 1 150px}
+.kol-sub .perf-name span{font-weight:700;color:#3d3d39;white-space:normal}
+/* 적는 칸. 셈한 칸(CPS · CPA)과 눈으로 갈리게 테두리를 준다. */
+.kol-in{width:92px;padding:5px 7px;border:1px solid #dcdbd4;border-radius:7px;background:#fff;
+  font-family:inherit;font-size:12px;text-align:right;color:#3d3d39;font-variant-numeric:tabular-nums}
+.kol-in:focus{outline:none;border-color:#2a78d6;box-shadow:0 0 0 3px rgba(42,120,214,.12)}
+/* 못 센 수식. 값을 되돌리지 않고 칸만 빨갛게 둔다 — 적다 만 것일 수 있어서다. */
+.kol-in.is-bad{border-color:#d9534f;background:#fdf4f3}
 
 /* ── 사이드바 스크롤 ────────────────────────────────────────── */
 /* 사이드바는 화면에 붙어 있어(position:fixed) 창이 낮으면 아래 메뉴가 잘려 못 눌렀다.

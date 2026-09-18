@@ -1708,7 +1708,9 @@ function handleAction_(payload) {
     if (payload.action === 'budgetPut') return budgetPut_(payload);
     if (payload.action === 'budgetDrop') return budgetDrop_(payload);
     if (payload.action === 'promoCalendar') return promoCalendar_(payload);
-    if (payload.action === 'kolLive') return kolLive_(payload);
+    if (payload.action === 'kolGet') return kolGet_();
+    if (payload.action === 'kolPut') return kolPut_(payload);
+    if (payload.action === 'kolDrop') return kolDrop_(payload);
     if (payload.action === 'weeksGet') return weeksGet_();
     if (payload.action === 'weeksPut') return weeksPut_(payload);
     if (payload.action === 'scheduleGet') return schedGet_();
@@ -7746,149 +7748,141 @@ function promoCalendar_(payload) {
   return result;
 }
 
-// ── KOL 라이브 (라이브 & 행사 결과 시트) ────────────────────────────────
-// 라이브 하나가 탭 하나다. 탭마다 표 모양이 조금씩 달라서 (사람이 그때그때 늘려 온 시트다)
-// 줄 · 열 번호로 잡지 않고 머리글 낱말로 찾는다. 못 찾은 덩어리는 그냥 비워 둔다.
-//   종합    광고비 · 매출 · 주문수 · ROAS · CPS · AOV
-//   단계별  Phase(사전 · 당일 · 사후) 별 같은 지표
-//   매체별  Phase × 매체 × 광고비 · 노출 · 클릭 · 전환 · CPA · CVR · CPM · CPC · CTR
-//   사전    신청자 · 사전신청 구매자 · 구매 CVR · 사전신청 CPA
-var KOL_SHEET_ID = '1LYGn3DUUKS0eUvCgGtSaVT6WtBFAKjQYUt7R5lcEIzs';
-var KOL_CACHE_SECONDS = 600;
+// ── KOL 라이브 (이 화면에서 직접 적는다) ───────────────────────────────
+// 예전에는 '라이브 & 행사 결과' 시트를 읽어다 그렸다. 라이브마다 표 모양이 달라
+// 머리글 낱말로 더듬어 찾아야 했고, 시트를 조금만 손대도 읽는 쪽이 비어 버렸다.
+// 이제는 앱에서 적는다. 적은 값은 적재 시트의 KOL라이브 탭에 담겨 팀이 같이 본다.
+//
+//   한 달이 한 줄이다 — 월 | 내용(JSON) | 수정자 | 수정시각
+//   내용 JSON = { phases: { pre: {…}, day: {…}, post: {…} } }   (사전 · 당일 · 사후)
+//   한 단계에 적는 칸은 다섯이다:
+//     spend 광고비 · revenue 매출 · orders 주문수 · alerts 사전알림수 · sessions 세션수
+//
+//   CPS · CPA · ROAS · 사전알림구매률 · 사전알림신청률은 **담지 않는다.**
+//   이 다섯 칸에서 바로 나오는 값이라, 함께 담아 두면 한 쪽만 고쳐졌을 때 어느 것이
+//   맞는지 알 수 없게 된다. 세는 자리는 화면 한 곳뿐이다.
+var KOL_SHEET_NAME = 'KOL라이브';
+var KOL_HEADERS = ['월', '내용(JSON)', '수정자', '수정시각'];
+var KOL_PHASES = ['pre', 'day', 'post'];
+var KOL_FIELDS = ['spend', 'revenue', 'orders', 'alerts', 'sessions'];
 
-function kolSheetId_() {
-  var found = cleanToken_(PropertiesService.getScriptProperties().getProperty('KOL_SHEET_ID'));
-  var picked = found || KOL_SHEET_ID;
-  var inside = String(picked).match(/\/d\/([a-zA-Z0-9_-]{20,})/);
-  return inside ? inside[1] : picked;
-}
-
-// 이 줄이 우리가 찾는 머리글인가. 낱말이 모두 들어 있어야 한다.
-function kolHead_(line, words, without) {
-  var text = line.map(function (cell) { return budgetText_(cell); }).join(' ');
-  for (var i = 0; i < words.length; i += 1) {
-    if (text.indexOf(words[i]) < 0) return false;
+function kolSheet_(book) {
+  book = book || SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(KOL_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(KOL_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, KOL_HEADERS.length).setValues([KOL_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    // 월 칸은 글자로 둔다. 그냥 두면 시트가 '2026-09' 를 날짜로 바꿔 버려,
+    // 시간대가 어긋나는 순간 앞 달로 읽히는 일이 생긴다. (월별예산 탭과 같은 까닭)
+    sheet.getRange('A:A').setNumberFormat('@');
+    sheet.setColumnWidth(1, 90);
+    sheet.setColumnWidth(2, 560);
   }
-  for (var k = 0; k < (without || []).length; k += 1) {
-    if (text.indexOf(without[k]) >= 0) return false;
-  }
-  return true;
+  return sheet;
 }
 
-// 시트에 적힌 대로 '사전\n(8/9~8/11)' 처럼 줄바꿈이 든 칸이 있다. 한 줄로 편다.
-function kolFlat_(value) {
-  return budgetText_(value).replace(/\s*\n\s*/g, ' ');
-}
-
-// 표 하나를 { columns, rows, total } 로 읽고, Phase 처럼 병합된 첫 칸은 위 줄에서 물려받는다.
-function kolBlock_(grid, headRow, carry) {
-  var table = budgetTable_(grid, headRow);
-  if (!table) return null;
-  table.columns = table.columns.map(kolFlat_);
-  var last = '';
-  table.rows = table.rows.map(function (row) {
-    var out = row.map(function (cell) { return typeof cell === 'number' ? cell : kolFlat_(cell); });
-    if (carry) {
-      if (out[0]) last = out[0];
-      else out[0] = last;
-    }
-    return out;
+// 단계 하나. 칸이 늘어도 옛 줄이 그대로 읽히게, 늘 같은 모양으로 편다.
+function kolPhase_(found) {
+  var one = {};
+  KOL_FIELDS.forEach(function (name) {
+    var value = found ? Number(found[name]) : 0;
+    one[name] = isFinite(value) ? value : 0;
   });
-  // 숫자가 하나도 없는 줄은 값 줄이 아니다 — 다음 덩어리의 제목('단계별 결과')이 딸려 온 것이다.
-  table.rows = table.rows.filter(function (row) {
-    return row.some(function (cell) { return typeof cell === 'number'; });
-  });
-  if (table.total) {
-    table.total = table.total.map(function (cell) { return typeof cell === 'number' ? cell : kolFlat_(cell); });
-  }
-  return table;
+  return one;
 }
 
-function kolTab_(sheet) {
-  var grid = sheet.getDataRange().getValues();
+function kolPhases_(found) {
+  var phases = (found && found.phases) || {};
+  var out = {};
+  KOL_PHASES.forEach(function (name) { out[name] = kolPhase_(phases[name]); });
+  return out;
+}
 
-  // 탭 이름이 라이브 이름이다. 시트 안에 적어 둔 날짜 · 이름은 곁말로 쓴다.
-  var caption = '';
-  for (var r = 0; r < Math.min(grid.length, 8) && !caption; r += 1) {
-    (grid[r] || []).forEach(function (cell) {
-      var text = kolFlat_(cell);
-      if (caption) return;
-      if (/라이브|\d{2}\.\d{2}\.\d{2}|^\d{1,2}\/\d{1,2}/.test(text)) caption = text;
+function kolRow_(line) {
+  return {
+    month: monthBudgetKey_(line[0]),
+    phases: kolPhases_(monthBudgetParse_(line[1], null)),
+    updatedBy: String(line[2] || ''),
+    updatedAt: line[3] ? new Date(line[3]).toISOString() : ''
+  };
+}
+
+// 적어 둔 달을 모두 준다. 한 달이 숫자 열다섯 개라 다 보내도 가볍다 —
+// 목록 화면이 달마다 따로 물어보지 않아도 되게.
+function kolGet_() {
+  var sheet = kolSheet_();
+  var last = sheet.getLastRow();
+  var months = [];
+  if (last > 1) {
+    sheet.getRange(2, 1, last - 1, KOL_HEADERS.length).getValues().forEach(function (line) {
+      if (!monthBudgetKey_(line[0])) return;
+      months.push(kolRow_(line));
     });
   }
-
-  // 종합 — 광고비 · 매출(전환값) · ROAS 가 한 줄에 있는 머리글
-  var sumHead = budgetFindRow_(grid, 0, function (line) {
-    return (kolHead_(line, ['광고비', 'ROAS', '매출']) || kolHead_(line, ['광고비', 'ROAS', '전환값']))
-      && !kolHead_(line, ['Phase']) && !kolHead_(line, ['노출']);
+  // 새 달이 위로 온다 (대개 지금 적고 있는 달이다)
+  months.sort(function (one, two) {
+    return one.month < two.month ? 1 : (one.month > two.month ? -1 : 0);
   });
-  var summary = sumHead < 0 ? null : kolBlock_(grid, sumHead, false);
-
-  // 단계별 — Phase 로 시작하고 ROAS 가 있으며 매체 쪼개기가 아닌 것
-  var phaseHead = budgetFindRow_(grid, 0, function (line) {
-    return budgetText_(line[budgetFirst_(line)] || '') === 'Phase'
-      && kolHead_(line, ['ROAS'], ['매체']);
-  });
-  var phases = phaseHead < 0 ? null : kolBlock_(grid, phaseHead, true);
-
-  // 매체별 — Phase × 매체 × 노출
-  var mediaHead = budgetFindRow_(grid, 0, function (line) {
-    return budgetText_(line[budgetFirst_(line)] || '') === 'Phase' && kolHead_(line, ['매체', '광고비'])
-      && (kolHead_(line, ['노출']) || kolHead_(line, ['클릭']));
-  });
-  var media = mediaHead < 0 ? null : kolBlock_(grid, mediaHead, true);
-
-  // 사전 신청유저 구매율
-  var preHead = budgetFindRow_(grid, 0, function (line) {
-    return budgetText_(line[budgetFirst_(line)] || '') === '신청자';
-  });
-  var pre = preHead < 0 ? null : kolBlock_(grid, preHead, false);
-
   return {
-    name: sheet.getName(),
-    caption: caption,
-    gid: sheet.getSheetId(),
-    summary: summary,
-    phases: phases,
-    media: media,
-    pre: pre
+    ok: true,
+    months: months,
+    url: 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit',
+    fetchedAt: new Date().toISOString()
   };
 }
 
-function kolLive_(payload) {
-  var cache = CacheService.getScriptCache();
-  var key = 'kol|' + kolSheetId_();
-  if (!payload || !payload.refresh) {
-    var hit = cacheGet_(cache, key);
-    if (hit) {
-      try {
-        var kept = JSON.parse(hit);
-        kept.cached = true;
-        return kept;
-      } catch (error) { /* 깨졌으면 다시 읽는다 */ }
+// 한 달만 고친다. 다른 달은 건드리지 않는다.
+function kolPut_(payload) {
+  var month = monthBudgetKey_((payload && payload.month) || '');
+  if (!month) throw new Error('저장할 달이 비어 있습니다.');
+  var who = String((payload && payload.by) || '');
+  var phases = kolPhases_({ phases: (payload && payload.phases) || {} });
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = kolSheet_();
+    var last = sheet.getLastRow();
+    var at = 0;
+    // 자리를 찾을 때는 월 칸만 읽는다 (내용 JSON 은 찾는 데 쓰지 않는다)
+    if (last > 1) {
+      var months = sheet.getRange(2, 1, last - 1, 1).getValues();
+      for (var i = 0; i < months.length; i += 1) {
+        if (monthBudgetKey_(months[i][0]) !== month) continue;
+        at = i + 2;
+        break;
+      }
     }
+    if (!at) at = sheet.getLastRow() + 1;
+    sheet.getRange(at, 1, 1, KOL_HEADERS.length)
+      .setValues([[month, JSON.stringify({ phases: phases }), who, new Date()]]);
+    return { ok: true, month: month, savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
   }
+}
 
-  var book = SpreadsheetApp.openById(kolSheetId_());
-  var lives = book.getSheets().map(function (sheet) {
-    try {
-      return kolTab_(sheet);
-    } catch (error) {
-      return { name: sheet.getName(), caption: '', error: String(error && error.message ? error.message : error) };
+// 한 달을 통째로 지운다 (줄을 없앤다 — 목록에서도 사라진다).
+function kolDrop_(payload) {
+  var month = monthBudgetKey_((payload && payload.month) || '');
+  if (!month) throw new Error('지울 달이 비어 있습니다.');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = kolSheet_();
+    var last = sheet.getLastRow();
+    if (last > 1) {
+      var months = sheet.getRange(2, 1, last - 1, 1).getValues();
+      for (var i = months.length - 1; i >= 0; i -= 1) {
+        if (monthBudgetKey_(months[i][0]) === month) sheet.deleteRow(i + 2);
+      }
     }
-  });
-
-  var result = {
-    ok: true,
-    source: 'kol',
-    bookName: book.getName(),
-    url: 'https://docs.google.com/spreadsheets/d/' + kolSheetId_() + '/edit',
-    lives: lives,
-    fetchedAt: new Date().toISOString()
-  };
-
-  cachePut_(cache, key, JSON.stringify(result), KOL_CACHE_SECONDS);
-  return result;
+    return { ok: true, month: month, droppedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ── 소재문구 탭 (발번한 파일명 · 광고문구) ─────────────────────────────
