@@ -13686,8 +13686,16 @@ if (kolLiveView) {
   const mCtr = (one) => perfRatio(one.clk, one.imp);
 
   // 파일에서 Phase × 매체로 더한다. 여러 개를 한 번에 올리면 모두 합친다.
-  const mediaPack = (packs) => {
+  /* 파일을 여러 개 읽어 **단계 × 매체** 한 칸씩 더한다.
+     seed 를 주면 이미 그려 둔 줄 위에 얹는다 — 브랜드검색처럼 파일이 따로 나오는 매체를
+     나중에 더할 수 있게 하는 자리다. 안 주면 이번 파일들만으로 새로 짠다. */
+  const mediaBox = (packs, seed) => {
     const box = {};
+    (seed || []).forEach((one) => {
+      const key = `${one.phase}|${one.name}`;
+      if (!box[key]) box[key] = Object.assign({ phase: one.phase, name: one.name }, mediaBlank());
+      MEDIA_FIELDS.forEach(([field]) => { box[key][field] += Number(one[field]) || 0; });
+    });
     packs.forEach((pack) => {
       ((pack.body && pack.body.phases) || []).forEach((phase) => {
         const when = String(phase.name || '').trim() || '기타';
@@ -13703,7 +13711,11 @@ if (kolLiveView) {
         });
       });
     });
-    // 단계는 사전 · 당일 · 사후 차례로, 그 안에서는 광고비가 큰 매체가 위로
+    return box;
+  };
+
+  // 단계는 사전 · 당일 · 사후 차례로, 그 안에서는 광고비가 큰 매체가 위로
+  const mediaSort = (box) => {
     const at = (one) => {
       const found = MEDIA_PHASES.indexOf(one.phase);
       return found < 0 ? MEDIA_PHASES.length : found;
@@ -13714,6 +13726,8 @@ if (kolLiveView) {
       return two.spend - one.spend;
     }).slice(0, MEDIA_MAX);
   };
+
+  const mediaPack = (packs, seed) => mediaSort(mediaBox(packs, seed));
 
   // 올린 파일이 그 파일이 맞는지 본다. 아니면 까닭을 그대로 알려 준다.
   const mediaRead = (picked) => picked.text().then((text) => {
@@ -13736,7 +13750,10 @@ if (kolLiveView) {
           <i data-lucide="upload"></i>${list.length ? '파일 다시 올리기' : '파일 올리기'}</button>
         <input type="file" accept=".json,application/json" multiple hidden
           data-kol="mediaFile" data-month="${at}">
-        ${list.length ? `<button type="button" class="tool-copy-all" data-kol="mediaClear"
+        ${list.length ? `<button type="button" class="tool-copy-all" data-kol="mediaMore"
+          data-month="${at}" title="이미 올린 값 위에 더합니다 (브랜드검색처럼 파일이 따로 나오는 매체)">
+          <i data-lucide="plus"></i>파일 더하기</button>
+        <button type="button" class="tool-copy-all" data-kol="mediaClear"
           data-month="${at}"><i data-lucide="trash-2"></i>지우기</button>` : ''}
         ${from ? `<small>${escape((from.files || []).join(' · '))}${from.at
     ? ` · ${escape(new Date(from.at).toLocaleString('ko-KR'))}` : ''}</small>` : ''}
@@ -13745,7 +13762,8 @@ if (kolLiveView) {
     if (!list.length) {
       return `${head}<p class="tool-empty">매체별 성과 → <b>전매체 검색</b> → 
         <b>행사별 결과로 보내기</b> 로 받은 .json 파일을 올리면
-        Phase × 매체로 펼쳐 보여 드립니다. 여러 개를 한 번에 올리면 합칩니다.</p></div>`;
+        Phase × 매체로 펼쳐 보여 드립니다. <b>여러 개를 한 번에 골라</b> 올리면 합칩니다
+        (브랜드검색은 파일이 따로 나옵니다 — 같이 고르세요). 나중에 <b>파일 더하기</b> 로도 얹을 수 있습니다.</p></div>`;
     }
 
     const cell = (one) => MEDIA_FIELDS.map(([name, , kind]) => `<td class="perf-num">${kind === 'won'
@@ -14100,10 +14118,13 @@ if (kolLiveView) {
         focusCell(editAt.month, editAt.field === 'promo' ? '.kol-promo-in' : '.kol-day-in');
         return;
       }
-      if (what === 'mediaPick') {
+      if (what === 'mediaPick' || what === 'mediaMore') {
         // 파일 고르개는 숨겨 두고 단추로 연다 (칸 모양이 브라우저마다 달라 보기 흉하다)
         const box = kolLiveView.querySelector(`[data-kol="mediaFile"][data-month="${hit.dataset.month}"]`);
-        if (box) box.click();
+        if (!box) return;
+        // 고르개는 하나다. 다시 올리기인지 더하기인지만 적어 두고 연다.
+        box.dataset.mode = what === 'mediaMore' ? 'more' : 'fresh';
+        box.click();
         return;
       }
       if (what === 'mediaClear') {
@@ -14179,20 +14200,37 @@ if (kolLiveView) {
       const picked = Array.from(file.files || []);
       file.value = '';                      // 같은 파일을 다시 골라도 change 가 오게
       if (!row || !picked.length) return;
+      const more = file.dataset.mode === 'more';
+      /* 같은 파일을 두 번 더하면 광고비가 두 배가 되는데 화면만 봐서는 알 수가 없다.
+         그래서 **이름이 같은 파일은 건너뛰고** 무엇을 건너뛰었는지 알려 준다.
+         [파일 다시 올리기] 는 갈아 끼우는 것이라 이 검사를 하지 않는다. */
+      const already = more ? ((row.mediaFrom || {}).files || []) : [];
+      const twice = picked.filter((one) => already.indexOf(one.name) >= 0).map((one) => one.name);
+      const wanted = picked.filter((one) => already.indexOf(one.name) < 0);
+      if (!wanted.length) {
+        error = `이미 올린 파일입니다 — ${twice.join(' · ')}`;
+        render();
+        return;
+      }
       const bad = [];
-      Promise.all(picked.map((one) => mediaRead(one)
+      Promise.all(wanted.map((one) => mediaRead(one)
         .catch((reason) => { bad.push(`${one.name} — ${reason.message}`); return null; })))
         .then((packs) => {
           const good = packs.filter(Boolean);
           if (good.length) {
-            // 올릴 때마다 **갈아 끼운다.** 덧붙이면 같은 파일을 두 번 올렸을 때
-            // 광고비가 두 배가 되는데, 화면만 봐서는 그걸 알 수가 없다.
-            row.media = mediaPack(good);
-            row.mediaFrom = { files: good.map((one) => one.name), at: new Date().toISOString() };
-            note = `${monthLabel(row.month)} 매체별 결과를 파일 ${good.length}개에서 읽었습니다`;
+            // 더하기면 그려 둔 줄 위에 얹고, 아니면 이번 파일들로 갈아 끼운다
+            row.media = mediaPack(good, more ? mediaRows(row) : null);
+            row.mediaFrom = { files: already.concat(good.map((one) => one.name)),
+              at: new Date().toISOString() };
+            note = more
+              ? `${monthLabel(row.month)} 매체별 결과에 파일 ${good.length}개를 더했습니다`
+              : `${monthLabel(row.month)} 매체별 결과를 파일 ${good.length}개에서 읽었습니다`;
             save(row.month);
           }
-          error = bad.length ? `못 읽은 파일 ${bad.length}개 — ${bad.join(' · ')}` : '';
+          const notes = [];
+          if (bad.length) notes.push(`못 읽은 파일 ${bad.length}개 — ${bad.join(' · ')}`);
+          if (twice.length) notes.push(`이미 올린 파일은 건너뛰었습니다 — ${twice.join(' · ')}`);
+          error = notes.join(' / ');
           render();
         });
       return;
