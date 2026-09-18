@@ -684,8 +684,10 @@ function weeksPut_(payload) {
 // 주간소재요청과 같은 이유로 시트에 담는다 — 브라우저마다 따로 갖고 있으면 다른 PC 에서
 // 안 보인다. 일정 하나가 한 줄이고, 칸을 그대로 펼쳐 둔다 (사람이 시트에서도 읽게).
 var SCHED_SHEET_NAME = '퍼포먼스일정';
+/* 수급일자는 **맨 뒤에** 붙인다. 종료일 옆에 끼워 넣으면 이미 쌓인 줄의 SKU 부터
+   수정시각까지가 두 칸씩 밀려 엉뚱하게 읽힌다 (단계날짜에서 겪은 것과 같다). */
 var SCHED_HEADERS = ['차례', 'ID', '일정명', '시작일', '종료일', 'SKU', '판매채널', '매체',
-  '세팅완료', '수정자', '수정시각'];
+  '세팅완료', '수정자', '수정시각', '수급시작일', '수급종료일'];
 
 function schedSheet_() {
   var book = SpreadsheetApp.openById(SHEET_ID);
@@ -697,6 +699,13 @@ function schedSheet_() {
     sheet.setColumnWidth(1, 50);
     sheet.setColumnWidth(2, 240);
     sheet.setColumnWidth(3, 320);
+    return sheet;
+  }
+  // 수급일자 칸이 생기기 전에 만든 시트면 머리글만 이어 붙인다 (쌓인 줄은 그대로 둔다)
+  var width = sheet.getLastColumn();
+  if (width < SCHED_HEADERS.length) {
+    sheet.getRange(1, width + 1, 1, SCHED_HEADERS.length - width)
+      .setValues([SCHED_HEADERS.slice(width)]).setFontWeight('bold');
   }
   return sheet;
 }
@@ -718,11 +727,13 @@ function schedGet_() {
     var id = String(line[1] || '').trim();
     if (!id) continue;
     var start = naverDay_(line[3]);
+    var supply = naverDay_(line[11]);
     rows.push({
       order: Number(line[0] || at),
       id: id,
       name: String(line[2] || ''),
       date: start ? { start: start, end: naverDay_(line[4]) } : null,
+      supply: supply ? { start: supply, end: naverDay_(line[12]) } : null,
       sku: schedList_(line[5]),
       channel: schedList_(line[6]),
       media: schedList_(line[7]),
@@ -760,6 +771,7 @@ function schedPut_(payload) {
       var now = new Date();
       var lines = rows.map(function (one, at) {
         var date = one.date || {};
+        var supply = one.supply || {};
         return [
           at + 1,
           String(one.id || ''),
@@ -771,7 +783,9 @@ function schedPut_(payload) {
           (one.media || []).join(', '),
           one.done ? true : false,
           who,
-          now
+          now,
+          String(supply.start || ''),
+          String(supply.end || '')
         ];
       });
       sheet.getRange(2, 1, lines.length, SCHED_HEADERS.length).setValues(lines);

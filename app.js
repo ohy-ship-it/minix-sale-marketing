@@ -7602,6 +7602,9 @@ if (brandSchedule) {
     { key: 'name', name: '이름', type: 'title', icon: 'type' },
     { key: 'sku', name: 'SKU', type: 'multi_select', icon: 'tag', options: SKU_OPTIONS },
     { key: 'date', name: '날짜', type: 'date', icon: 'calendar' },
+    /* 소재를 언제 받기로 했는지. **날짜와 따로 둔다** — 날짜는 달력에 카드를 놓는 자리라
+       옮길 수 없고, 사람이 보고 싶어 하는 건 수급일자다. 그래서 카드에는 수급일자를 적는다. */
+    { key: 'supply', name: '수급일자', type: 'date', icon: 'calendar-check' },
     { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS },
     { key: 'channel', name: '판매채널', type: 'multi_select', icon: 'store', options: CHANNEL_OPTIONS },
     { key: 'done', name: '세팅완료', type: 'checkbox', icon: 'square-check-big' },
@@ -7621,6 +7624,7 @@ if (brandSchedule) {
     media: listOf(row.media),
     done: Boolean(row.done),
     date: row.date?.start ? { start: row.date.start, end: row.date.end || '' } : null,
+    supply: row.supply?.start ? { start: row.supply.start, end: row.supply.end || '' } : null,
   });
 
   /* 시트가 원본이다. localStorage 는 사본 — 화면을 바로 띄우고, 시트를 못 읽을 때 버틴다.
@@ -7803,9 +7807,11 @@ if (brandSchedule) {
     const [year, month, day] = value.split('-');
     return `${year}년 ${Number(month)}월 ${Number(day)}일`;
   };
-  const cardDate = (row) => (row.date?.end
-    ? `${longDay(row.date.start)} → ${longDay(row.date.end)}`
-    : longDay(row.date.start));
+  /* 카드에는 **수급일자만** 적는다. 날짜는 카드가 놓인 자리가 곧 그 날이라 두 번 적는 셈이고,
+     사람이 카드에서 알고 싶어 하는 건 소재를 언제 받는지다. 안 적어 둔 일정은 줄을 비운다. */
+  const cardSupply = (row) => (row.supply?.start
+    ? `수급 ${row.supply.end ? `${longDay(row.supply.start)} → ${longDay(row.supply.end)}` : longDay(row.supply.start)}`
+    : '');
 
   const renderCalendar = () => {
     const list = visibleRows();
@@ -7844,7 +7850,7 @@ if (brandSchedule) {
               data-id="${row.id}">
               <span class="cal-card-title">${escapeHtml(row.name) || '제목 없음'}</span>
               ${row.sku.length ? `<span class="cal-card-line">${row.sku.map((name) => chip(propByKey.sku, name)).join('')}</span>` : ''}
-              <span class="cal-card-line cal-card-date">${escapeHtml(cardDate(row))}</span>
+              ${cardSupply(row) ? `<span class="cal-card-line cal-card-date">${escapeHtml(cardSupply(row))}</span>` : ''}
               ${row.media.length ? `<span class="cal-card-line">${row.media.map((name) => chip(propByKey.media, name)).join('')}</span>` : ''}
               <span class="cal-card-line cal-card-check"><i class="cal-box"></i>세팅완료</span>
               ${segment.opens ? '<span class="cal-grab cal-grab-start" data-grab="start"></span>' : ''}
@@ -8182,8 +8188,10 @@ if (brandSchedule) {
     }
     const range = event.target.closest('.peek-range');
     if (range) {
-      const current = row.date || { start: today, end: '' };
-      row.date = current.end ? { start: current.start, end: '' } : { start: current.start || today, end: current.start || today };
+      // 날짜 · 수급일자 둘 다 이 단추를 쓴다. 누른 칸이 어느 것인지 보고 그 칸만 고친다.
+      const key = range.dataset.edit;
+      const current = row[key] || { start: today, end: '' };
+      row[key] = current.end ? { start: current.start, end: '' } : { start: current.start || today, end: current.start || today };
       return commit();
     }
     if (!event.target.closest('.peek-options')) peek.querySelectorAll('.peek-options').forEach((list) => { list.hidden = true; });
@@ -8203,9 +8211,10 @@ if (brandSchedule) {
     if (!field || field.type !== 'date') return;
     const row = rows.find((entry) => entry.id === openId);
     if (!row) return;
-    const current = row.date || { start: '', end: '' };
+    const key = field.dataset.edit;          // 'date' 또는 'supply'
+    const current = row[key] || { start: '', end: '' };
     const next = { ...current, [field.dataset.part]: field.value };
-    row.date = next.start ? { start: next.start, end: next.end && next.end >= next.start ? next.end : '' } : null;
+    row[key] = next.start ? { start: next.start, end: next.end && next.end >= next.start ? next.end : '' } : null;
     commit();
   });
 
