@@ -6131,8 +6131,15 @@ function saApplyCost_(groupRows, adRows, adKey, since, until) {
 
 /* 브랜드검색 성과. 캠페인 자리에 **광고그룹**, 광고그룹 자리에 **소재** 를 넣는다.
    광고비는 부가세 별도이고, 브랜드검색은 정액(CPT) 이라 고른 기간에 걸친 금액이다. */
+/* all 을 주면 **꺼진 줄 · 숫자 없는 줄도 그대로 준다.**
+   브랜드검색 광고그룹은 행사가 끝나면 곧 꺼진다. 전매체 검색은 지나간 행사를 찾는
+   자리라, 꺼졌다고 빼면 정작 찾으려는 줄이 안 나온다.
+   그쪽은 검색어로 한 번 더 걸러지므로 빈 줄이 쏟아지지 않는다.
+   브랜드검색 탭(매체별 성과)은 안 준다 — 계정에 몇 해 전 줄이 수백 개라 표가 덮인다. */
 function naverSaReport_(payload) {
   var when = naverDates_(payload);
+  var all = !!(payload && payload.all);
+  var keep = function (row) { return all || saAlive_(row); };
   var got = saGather_(when.since, when.until, !!payload.refresh);
   var id = saProp_('NAVER_SA_CUSTOMER_ID');
 
@@ -6192,8 +6199,8 @@ function naverSaReport_(payload) {
       : ('브랜드검색은 정액(CPT) 상품이라 검색광고 API 가 광고비를 주지 않습니다 — '
         + '「' + SA_COST_SHEET_NAME + '」 에 대상 · 기간 · 금액(부가세 포함)을 적어 두면 여기에 넣어 드립니다.'),
     costUrl: saCostUrl_(),
-    campaigns: saSort_(groupRows.filter(saAlive_)),
-    adsets: saSort_(adRows.filter(saAlive_)),
+    campaigns: saSort_(groupRows.filter(keep)),
+    adsets: saSort_(adRows.filter(keep)),
     fetchedAt: new Date().toISOString()
   };
 }
@@ -6201,6 +6208,7 @@ function naverSaReport_(payload) {
 // 소재별 결과. 브랜드검색 소재를 그대로 준다 (미리보기는 소재 속 이미지가 있을 때만).
 function naverSaCreatives_(payload) {
   var when = naverDates_(payload);
+  var all = !!(payload && payload.all);   // 꺼진 소재도 볼지 (naverSaReport_ 와 같은 뜻)
   var got = saGather_(when.since, when.until, !!payload.refresh);
   var wantGroup = String((payload && payload.adset) || '');
   var wantCampaign = String((payload && payload.campaign) || '');
@@ -6244,7 +6252,7 @@ function naverSaCreatives_(payload) {
   var money = saApplyCost_(groupRows, rows, 'adsetId', when.since, when.until);
 
   rows = saSort_(rows.filter(function (row) {
-    if (!saAlive_(row)) return false;   // 몇 해 전에 멈춘 소재는 빼고 본다
+    if (!all && !saAlive_(row)) return false;   // 몇 해 전에 멈춘 소재는 빼고 본다
     // 매체별 성과에서 넘어올 때는 광고그룹(= 그쪽 화면의 캠페인) 번호로 걸러 준다
     if (wantGroup) return row.adsetId === wantGroup;
     if (wantCampaign) return row.adsetId === wantCampaign || row.campaignId === wantCampaign;

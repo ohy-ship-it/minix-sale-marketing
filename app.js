@@ -9024,6 +9024,10 @@ if (mediaPerformance) {
       return Promise.all(use.map((one) => ask({
         action: `${key}Report`, account: one.accountId, since: since, until: until,
         refresh: fresh || undefined,
+        /* 브랜드검색만 **꺼진 광고그룹 · 소재까지** 달라고 한다. 행사가 끝나면 곧 꺼지는데,
+           전매체는 지나간 행사를 찾는 자리라 꺼졌다고 빼면 찾을 수가 없다.
+           어차피 아래 crossHit 이 검색어로 거르므로 빈 줄이 쏟아지지 않는다. */
+        all: key === 'naverSa' ? true : undefined,
       })
         .then((body) => {
           const named = {};
