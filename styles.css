@@ -1140,10 +1140,14 @@ span.bg-kind{cursor:default}
    전환 자리에 CPA 금액이 있는 것처럼 읽혔다. */
 .kol-sub .perf-num{text-align:right}
 .kol-sub .kol-part td{background:#f7f7f3;font-weight:700}
-/* 단계(사전 · 당일 · 사후 · 합계)와 매체 이름은 짧다. 줄바꿈을 막아 가로로 적는다.
-   .perf-name 이 깔아 두는 min-width:290px 도 여기서는 뗀다 — 이 표의 첫 칸은
-   '사전' 넉 자면 되고, 290px 을 깔면 남은 칸이 그만큼 눌린다. */
-.kol-sub td.perf-name{min-width:0;white-space:nowrap}
+/* 단계(사전 · 당일 · 사후) · Phase · 매체 이름이 한 자씩 세로로 서던 까닭.
+   .perf-name 은 display:flex 다. td 를 flex 상자로 만들면 표가 칸 너비를 셀 때
+   그 안의 글자를 못 잰다 — 칸을 가장 좁게 주고, 상자는 그 좁은 칸에 맞춰 글자를
+   줄바꿈한다. 그래서 '사전' 이 '사 / 전' 으로, '네이버 브랜드검색' 이 여덟 줄로 섰다.
+   min-width:290px 을 깔아 두었는데도 안 먹힌 것이 그 증거다 (표가 그 값을 못 본다).
+   이 두 표의 이름 칸에는 아이콘도 작은 글씨도 없어 flex 가 필요 없다.
+   보통 칸으로 되돌리면 표가 글자를 재어 칸을 그만큼 준다. */
+.kol-sub td.perf-name{display:table-cell;min-width:0;white-space:nowrap}
 .kol-sub .perf-name span{font-weight:700;color:#3d3d39;white-space:nowrap}
 /* 적는 칸. 셈한 칸(CPS · CPA)과 눈으로 갈리게 테두리를 준다. */
 .kol-in{width:92px;padding:5px 7px;border:1px solid #dcdbd4;border-radius:7px;background:#fff;
