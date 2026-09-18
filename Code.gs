@@ -1631,7 +1631,11 @@ var GRAPH_URL = 'https://graph.facebook.com/v21.0';
 // 결과로 세는 행동 (구매 · 장바구니 · 리드).
 // 한 묶음에서는 먼저 잡히는 것 하나만 센다. omni_* 와 픽셀 이벤트가 겹쳐 두 번 세지 않게 한다.
 var RESULT_GROUPS = [
-  { key: 'purchase', types: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_web_purchase', 'purchase'] },
+  /* 구매는 **'공유 항목이 포함된 구매'(purchase)** 를 맨 앞에 둔다 — 메타 관리자 화면에서
+     보는 그 칸이다. 광고 게시물이 공유돼 일어난 구매까지 든다.
+     omni_purchase 를 먼저 보면 그 몫이 빠져 화면보다 적게 나온다.
+     purchaseValue_ 도 이 차례를 그대로 쓰므로 전환값(구매매출)도 같은 자리에서 온다. */
+  { key: 'purchase', types: ['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_web_purchase'] },
   { key: 'addToCart', types: ['omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart', 'add_to_cart'] },
   { key: 'lead', types: ['lead', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.lead_grouped'] },
   /* 커스텀 이벤트 (맞춤 이벤트). 광고세트가 promoted_object 의 custom_event_str 로
