@@ -1021,6 +1021,15 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .bg-sku{margin-bottom:13px;padding:15px 16px}
 .bg-sku-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:11px}
 .bg-sku-name{padding:4px 12px;border-radius:20px;background:#2a2a27;font-size:12.5px;font-weight:700;color:#fff}
+/* SKU 판의 차례를 바꾸는 단추. 이름 바로 옆에 붙여 어느 판을 옮기는지 헷갈리지 않게 한다.
+   맨 위 · 맨 아래 판은 눌러도 갈 곳이 없어 흐리게 꺼 둔다. */
+.bg-sku-move{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.bg-sku-move button{display:flex;align-items:center;justify-content:center;width:26px;height:24px;
+  padding:0;border:none;background:#fff;color:#8c8c85;cursor:pointer}
+.bg-sku-move button+button{border-left:1px solid var(--line)}
+.bg-sku-move button:hover:not(:disabled){background:#f2f1ed;color:#3d3d39}
+.bg-sku-move button:disabled{color:#d6d5d0;cursor:default}
+.bg-sku-move svg{width:13px;height:13px}
 .bg-drop-sku{margin-left:auto;padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;
   font-family:inherit;font-size:11px;color:#8c8c85;cursor:pointer}
 .bg-drop-sku:hover{border-color:#e0b4b1;color:#c9302c}

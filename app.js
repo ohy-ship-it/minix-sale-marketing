@@ -12514,7 +12514,7 @@ if (budgetPlanView) {
     </tr>`;
   };
 
-  const skuPanel = (sku) => {
+  const skuPanel = (sku, at) => {
     const sum = skuSum(sku.name);
     const used = skuUsed(sku.name);
     const all = budgetAll();
@@ -12527,6 +12527,12 @@ if (budgetPlanView) {
       <div class="bg-sku-head">
         <span class="bg-sku-name">${name}</span>
         <small class="bg-sku-cat">${escape(catOf(sku))}</small>
+        ${editing && plan.skus.length > 1 ? `<span class="bg-sku-move">
+          <button type="button" data-bg="skuUp" data-sku="${name}"${at === 0 ? ' disabled' : ''}
+            title="위로 올립니다"><i data-lucide="chevron-up"></i></button>
+          <button type="button" data-bg="skuDown" data-sku="${name}"${at === plan.skus.length - 1 ? ' disabled' : ''}
+            title="아래로 내립니다"><i data-lucide="chevron-down"></i></button>
+        </span>` : ''}
         ${editing ? `<label class="bg-sku-budget">예산
           <input type="text" inputmode="numeric" data-bg="skuBudget" data-sku="${name}"
             value="${escape(sum.budget ? commaNum(sum.budget) : '')}"
@@ -12594,7 +12600,8 @@ if (budgetPlanView) {
             ${left.map(([name, list]) => `<optgroup label="${escape(name)}">${list
     .map((one) => `<option>${escape(one)}</option>`).join('')}</optgroup>`).join('')}
           </select></label>
-        <small>여기서 고른 SKU 만 이 달 예산에 들어갑니다. 카테고리와 상관없이 한 판에 폅니다.</small>`
+        <small>여기서 고른 SKU 만 이 달 예산에 들어갑니다. 카테고리와 상관없이 한 판에 폅니다.
+          보이는 차례는 판 이름 옆의 <b>∧ ∨</b> 로 바꿉니다.</small>`
     : `<small>넣어 둔 SKU 를 카테고리 구분 없이 한 판에 폅니다. 값을 고치려면 위 <b>수정하기</b> 를 누르시면 됩니다.</small>`}
       </div>
     </div>
@@ -12902,7 +12909,7 @@ if (budgetPlanView) {
   };
 
   const repaint = () => {
-    plan.skus.forEach((sku) => {
+    plan.skus.forEach((sku, at) => {
       const sum = skuSum(sku.name);
       rowsOf(sku.name).forEach((row) => {
         const cost = rowShown(row);
@@ -12916,7 +12923,7 @@ if (budgetPlanView) {
       const panel = budgetPlanView.querySelector(`.bg-sku[data-sku="${CSS.escape(sku.name)}"]`);
       if (!panel) return;
       const box = document.createElement('div');
-      box.innerHTML = skuPanel(sku);
+      box.innerHTML = skuPanel(sku, at);
       swap(panel.querySelector('.bg-stats'), box.querySelector('.bg-stats').outerHTML);
       swap(panel.querySelector('.bg-weight'), box.querySelector('.bg-weight').outerHTML);
       swap(panel.querySelector('.bg-line'), box.querySelector('.bg-line').outerHTML);
@@ -13130,6 +13137,23 @@ if (budgetPlanView) {
     if (what === 'drop') {
       plan.rows = plan.rows.filter((row) => row.id !== hit.dataset.row);
       render();
+      save();
+      return;
+    }
+    /* SKU 판의 차례. plan.skus 에 담긴 차례가 곧 보이는 차례이고, 그대로 시트에 담긴다.
+       끌어 옮기기로 하지 않은 까닭: 판 하나가 표를 통째로 안고 있어 화면보다 길다 —
+       끌고 가는 동안 스스로 스크롤을 해야 해서 오히려 손이 더 간다. */
+    if (what === 'skuUp' || what === 'skuDown') {
+      const name = hit.dataset.sku;
+      const from = plan.skus.findIndex((one) => one.name === name);
+      const to = from + (what === 'skuUp' ? -1 : 1);
+      if (from < 0 || to < 0 || to >= plan.skus.length) return;
+      const [one] = plan.skus.splice(from, 1);
+      plan.skus.splice(to, 0, one);
+      render();
+      // 옮긴 판을 눈에 두고 온다 (판이 길어 그냥 그리면 어디로 갔는지 놓친다)
+      const moved = budgetPlanView.querySelector(`.bg-sku[data-sku="${CSS.escape(name)}"]`);
+      if (moved) moved.scrollIntoView({ block: 'nearest' });
       save();
       return;
     }
