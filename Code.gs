@@ -6749,8 +6749,14 @@ function monthBudgetParse_(text, fallback) {
    시트를 열어도 사람은 못 읽는다. 그래서 저장할 때마다 그 판을 **펴서** 옮겨 적는다.
 
    옮겨 적는 곳은 적재 시트가 아니라 **따로 만든 월별 예산 문서**다.
-   팀이 달마다 탭을 만들어 두고 보는 곳이라, 앱의 적재 시트를 열지 않아도 되게 갈라 두었다.
+   앱의 적재 시트를 열지 않아도 되게 갈라 두었다.
    주소가 바뀌면 스크립트 속성 BUDGET_TABLE_SHEET_ID 에 새 주소(또는 ID)만 넣으면 된다.
+
+   **탭 하나에 달을 쌓는다.** 예전에는 달마다 탭을 따로 만들었는데, 그러면 달이 늘수록
+   탭이 늘고 여러 달을 한눈에 견주거나 피벗을 돌릴 수가 없다. 년 · 월 칸이 있으니
+   한 판에 쌓아 두고 거르는 편이 낫다 — 다음 달이 생기면 아래에 이어 붙고,
+   지난달 줄은 그 자리에 그대로 남는다.
+   (예전에 만들어 둔 달별 탭은 **건드리지 않는다.** 지우지도 않고 더 만들지도 않는다)
 
    읽기 전용 거울이다 — 앱은 이 문서를 **절대 읽지 않는다.**
    여기서 고쳐도 앱에는 안 돌아가고, 다음 저장 때 덮인다.
@@ -6765,6 +6771,8 @@ var MONTH_TABLE_HEADERS = ['년', '월', '구분', '카테고리', '상세 SKU',
 // 돈 · 개수 칸 (위 차례에서 1부터 센다). 이 칸만 천 단위로 끊어 준다.
 // 년 · 월은 여기 없다 — 끊어 주면 2026 이 '2,026' 으로 보인다.
 var MONTH_TABLE_NUMS = [11, 12, 13, 14, 15, 16];
+// 달을 쌓아 두는 탭. 없으면 맨 앞에 만든다 (늘 여는 탭이라 앞에 있어야 찾기 쉽다).
+var MONTH_TABLE_TAB = '전체';
 
 function monthTableBookId_() {
   var found = cleanToken_(PropertiesService.getScriptProperties().getProperty('BUDGET_TABLE_SHEET_ID'));
@@ -6777,18 +6785,19 @@ function monthTableUrl_() {
   return 'https://docs.google.com/spreadsheets/d/' + monthTableBookId_() + '/edit';
 }
 
-/* 탭 이름을 달로 읽는다. 사람이 붙이는 이름이 제각각이라 넓게 받는다.
-     2026-09 · 2026.09 · 2026/09 · 202609 · 2026년 9월  → '2026-09'
-     9월 · 09 · 9                                      → '#09'  (해가 없는 이름)
-   해가 없는 이름은 어느 해인지 알 수 없다. 그래서 따로 표시해 두고,
-   해까지 맞는 탭이 없을 때만 이른 달부터 하나씩 가져다 쓴다.                        */
-function monthTabKey_(name) {
-  var text = String(name || '').trim();
-  var full = text.match(/(20\d{2})\s*[-.\/년]?\s*(1[0-2]|0?[1-9])(?!\d)/);
-  if (full) return full[1] + '-' + ('0' + full[2]).slice(-2);
-  var only = text.match(/^(1[0-2]|0?[1-9])\s*월?$/);
-  if (only) return '#' + ('0' + only[1]).slice(-2);
-  return '';
+/* 쌓아 두는 탭. 없으면 맨 앞에 만든다. */
+function budgetTableSheet_(book) {
+  var sheet = book.getSheetByName(MONTH_TABLE_TAB);
+  if (sheet) return { sheet: sheet, made: false };
+  return { sheet: book.insertSheet(MONTH_TABLE_TAB, 0), made: true };
+}
+
+// 쌓여 있는 줄에서 그 줄이 어느 달인지 읽는다 (년 · 월 칸이 곧 열쇠다).
+function budgetTableMonth_(line) {
+  var year = Number(line[0]) || 0;
+  var mon = Number(line[1]) || 0;
+  if (!year || mon < 1 || mon > 12) return '';
+  return year + '-' + ('0' + mon).slice(-2);
 }
 
 // 판 하나를 사람이 읽는 줄로 편다. 고정비를 먼저, 프로모션을 뒤에 둔다 (화면 차례와 같다).
@@ -6830,7 +6839,7 @@ function budgetTableRows_(month, plan, stamp) {
   return out;
 }
 
-/* 탭 하나를 그린다. 머리글 그대로 (년 · 월까지) 넣는다.
+/* 쌓아 두는 탭을 그린다. 머리글 그대로 (년 · 월까지) 넣는다.
    **우리가 쓰는 칸만** 지운다 — 오른쪽에 사람이 적어 둔 메모가 있으면 살려 둔다. */
 function budgetTableDraw_(sheet, rows) {
   var head = MONTH_TABLE_HEADERS;
@@ -6858,55 +6867,62 @@ function budgetTableDraw_(sheet, rows) {
   return grid.length;
 }
 
-/* 월별예산 탭 전체를 거울 문서에 다시 그린다 — **달마다 탭 하나**.
-   사람이 미리 만들어 둔 탭이 있으면 그 탭에 그대로 올리고, 없으면 'YYYY-MM' 으로 만든다.
-   onlyMonth 를 주면 **그 달 탭만** 그린다. 저장은 늘 한 달만 고치므로 나머지 열한 달을
-   다시 그릴 이유가 없다 — 그게 저장이 느린 가장 큰 까닭이었다.
-   안 주면 통째로 다시 그린다 (아침 자동 올리기 · [지금 한 번 올리기] 가 그 길로 온다). */
+/* 월별예산 탭을 거울 문서의 **탭 하나**에 쌓는다.
+   onlyMonth 를 주면 그 달 줄만 새로 펴고, 나머지 달은 **시트에 있던 줄을 그대로** 옮겨 적는다.
+   저장은 늘 한 달만 고치므로 나머지 달을 다시 펼 이유가 없다 — 그게 저장이 느린 까닭이었다.
+   안 주면 보낸 달을 모두 다시 편다 (아침 자동 올리기 · [지금 한 번 올리기] 가 그 길로 온다).
+
+   줄은 년 · 월 오름차순으로 놓는다. 그래서 다음 달이 생기면 맨 아래에 이어 붙고,
+   지난달 줄은 있던 자리에 그대로 남는다.
+
+   앱에서 지운 달은 여기서 지워지지 않는다 — 보낸 목록에 없으면 '이번에 안 고친 달' 로 보고
+   시트에 있던 줄을 살려 둔다. 지나간 달을 기록으로 남겨 두는 것이 이 문서의 쓸모라서다. */
 function budgetTableSync_(lines, onlyMonth) {
   var want = monthBudgetKey_(onlyMonth || '');
   var book = SpreadsheetApp.openById(monthTableBookId_());
+  var found = budgetTableSheet_(book);
+  var sheet = found.sheet;
+  var width = MONTH_TABLE_HEADERS.length;
 
-  var packs = [];
+  // ① 이번에 새로 펼 달
+  var fresh = {};
   lines.forEach(function (line) {
     var month = monthBudgetKey_(line[0]);
     if (!month) return;
-    if (want && month !== want) return;   // 한 달만 고쳤으면 그 탭만 그린다
+    if (want && month !== want) return;
     var plan = monthBudgetParse_(line[2], null);
     if (!plan) return;
     var when = line[5] instanceof Date
       ? Utilities.formatDate(line[5], 'Asia/Seoul', 'yyyy-MM-dd HH:mm') : String(line[5] || '');
-    packs.push({ month: month, rows: budgetTableRows_(month, plan, when) });
-  });
-  packs.sort(function (a, b) { return a.month < b.month ? -1 : (a.month > b.month ? 1 : 0); });
-
-  // 이미 있는 탭을 달로 훑어 둔다
-  var byMonth = {};
-  var loose = {};
-  book.getSheets().forEach(function (sheet) {
-    var key = monthTabKey_(sheet.getName());
-    if (!key) return;
-    if (key.charAt(0) === '#') { if (!loose[key]) loose[key] = sheet; return; }
-    if (!byMonth[key]) byMonth[key] = sheet;
+    fresh[month] = budgetTableRows_(month, plan, when);
   });
 
-  var made = [];
-  var total = 0;
-  packs.forEach(function (pack) {
-    var sheet = byMonth[pack.month];
-    if (!sheet) {
-      // 해가 안 적힌 탭('9월')은 이른 달부터 하나씩 가져다 쓴다
-      var mark = '#' + pack.month.slice(5, 7);
-      if (loose[mark]) { sheet = loose[mark]; delete loose[mark]; }
-    }
-    if (!sheet) {
-      sheet = book.insertSheet(pack.month, book.getNumSheets());
-      made.push(pack.month);
-    }
-    total += budgetTableDraw_(sheet, pack.rows);
+  // ② 시트에 쌓여 있던 줄 — 이번에 새로 펴는 달이 아니면 그대로 살린다
+  var kept = {};
+  var last = sheet.getLastRow();
+  if (last > 1) {
+    sheet.getRange(2, 1, last - 1, width).getValues().forEach(function (line) {
+      var month = budgetTableMonth_(line);
+      if (!month || fresh[month]) return;   // 달을 못 읽는 줄은 버린다 (빈 줄 · 메모 같은 것)
+      if (!kept[month]) kept[month] = [];
+      kept[month].push(line);
+    });
+  }
+
+  // ③ 달 오름차순으로 이어 붙인다
+  var months = [];
+  Object.keys(fresh).forEach(function (month) { months.push(month); });
+  Object.keys(kept).forEach(function (month) { if (!fresh[month]) months.push(month); });
+  months.sort();
+
+  var grid = [];
+  months.forEach(function (month) {
+    (fresh[month] || kept[month] || []).forEach(function (line) { grid.push(line); });
   });
 
-  return { rows: total, tabs: packs.length, made: made, url: monthTableUrl_() };
+  var total = budgetTableDraw_(sheet, grid);
+  return { rows: total, tabs: 1, months: months.length,
+    made: found.made ? [MONTH_TABLE_TAB] : [], url: monthTableUrl_() };
 }
 
 function monthBudgetRow_(line) {
@@ -7205,7 +7221,7 @@ function budgetPut_(payload) {
        거울이 안 되더라도 저장은 성공이다 — 앱이 읽는 자리는 위의 '월별예산' 탭이고,
        거울은 시트를 열어 보는 사람을 위한 것이라서다. */
     var tableNote = '';
-    var table = { rows: 0, tabs: 0, made: [], url: monthTableUrl_() };
+    var table = { rows: 0, tabs: 0, months: 0, made: [], url: monthTableUrl_() };
     try {
       table = budgetTableSync_([line], month);
     } catch (error) {
@@ -7214,8 +7230,8 @@ function budgetPut_(payload) {
 
     budgetStamp_(true);            // 예산이 바뀌었으니 담아 둔 추이를 버린다
     return { ok: true, month: month, savedAt: new Date().toISOString(),
-      tableRows: table.rows, tableTabs: table.tabs, tableMade: table.made,
-      tableUrl: table.url, tableNote: tableNote };
+      tableRows: table.rows, tableTabs: table.tabs, tableMonths: table.months,
+      tableMade: table.made, tableUrl: table.url, tableNote: tableNote };
   } finally {
     lock.releaseLock();
   }

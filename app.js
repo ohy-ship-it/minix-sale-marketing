@@ -12174,7 +12174,7 @@ if (budgetPlanView) {
   let error = '';
   let note = '';                 // 저장 · 불러오기 알림 한 줄
   let sheetUrl = '';             // 앱이 담아 두는 적재 시트
-  let tableUrl = '';             // 사람이 보는 월별 예산 문서 (달마다 탭 하나)
+  let tableUrl = '';             // 사람이 보는 월별 예산 문서 (탭 하나에 달을 쌓는다)
   let auto = null;               // 아침 자동 올리기 { on, hour, last }
 
   const uid = () => `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -12983,11 +12983,13 @@ if (budgetPlanView) {
         keepBudget(month, { plan, updatedAt: saved.at, updatedBy: saved.by });
         /* 두 곳에 담긴다 —
              적재 시트의 월별예산 탭   앱이 읽는 자리 (한 달이 한 줄, 내용은 JSON 한 칸)
-             월별 예산 문서            사람이 읽는 거울 (달마다 탭 하나, 한 줄이 한 항목)
+             월별 예산 문서            사람이 읽는 거울 (탭 하나에 달을 쌓는다, 한 줄이 한 항목)
            거울이 안 그려져도 저장은 된 것이라 그 까닭만 덧붙인다. */
         if (body.tableUrl) tableUrl = body.tableUrl;
-        note = body.tableTabs
-          ? `구글시트에 올렸습니다 — 월별 탭 ${num(body.tableTabs)}개 · ${num(body.tableRows)}줄`
+        // 옛 배포에는 tableMonths 가 없다. 그때는 줄 수만 적는다.
+        note = body.tableRows
+          ? `구글시트에 올렸습니다 — ${body.tableMonths
+    ? `달 ${num(body.tableMonths)}개 · ` : ''}${num(body.tableRows)}줄이 쌓였습니다`
           : '적재 시트에 담았습니다';
         if (body.tableMade && body.tableMade.length) {
           note += ` (탭 ${body.tableMade.join(' · ')} 는 새로 만들었습니다)`;
