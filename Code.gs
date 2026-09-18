@@ -6843,27 +6843,35 @@ function budgetTableDraw_(sheet, rows) {
   var need = grid.length + 1;
   if (sheet.getMaxRows() < need) sheet.insertRowsAfter(sheet.getMaxRows(), need - sheet.getMaxRows());
 
-  sheet.getRange(1, 1, sheet.getMaxRows(), width).clearContent();
+  /* **쓰던 만큼만 지운다.** getMaxRows() 는 손 안 댄 탭도 1000줄이라, 그만큼을
+     지우는 것이 탭마다 한 번씩 그대로 기다리는 시간이 됐다. */
+  var used = Math.max(sheet.getLastRow(), grid.length + 1);
+  sheet.getRange(1, 1, used, width).clearContent();
   sheet.getRange(1, 1, 1, width).setValues([head]).setFontWeight('bold');
   if (grid.length) sheet.getRange(2, 1, grid.length, width).setValues(grid);
   sheet.setFrozenRows(1);
-  MONTH_TABLE_NUMS.forEach(function (at) {
-    sheet.getRange(2, at, Math.max(grid.length, 1), 1).setNumberFormat('#,##0');
-  });
+  /* 돈 · 개수 칸은 붙어 있다. 한 칸씩 여섯 번 부르던 것을 한 번에 건다
+     (서식 걸기는 부를 때마다 시트를 한 번 다녀오는 일이다). */
+  var from = MONTH_TABLE_NUMS[0];
+  var span = MONTH_TABLE_NUMS[MONTH_TABLE_NUMS.length - 1] - from + 1;
+  sheet.getRange(2, from, Math.max(grid.length, 1), span).setNumberFormat('#,##0');
   return grid.length;
 }
 
 /* 월별예산 탭 전체를 거울 문서에 다시 그린다 — **달마다 탭 하나**.
    사람이 미리 만들어 둔 탭이 있으면 그 탭에 그대로 올리고, 없으면 'YYYY-MM' 으로 만든다.
-   한 달만 골라 올리지 않고 통째로 다시 쓰는 까닭: 어느 달이 언제 고쳐졌는지 앱이 따로
-   기억하지 않아서다. 달이 열두 개라도 탭 열둘에 몇 백 줄이라 한 번에 끝난다.           */
-function budgetTableSync_(lines) {
+   onlyMonth 를 주면 **그 달 탭만** 그린다. 저장은 늘 한 달만 고치므로 나머지 열한 달을
+   다시 그릴 이유가 없다 — 그게 저장이 느린 가장 큰 까닭이었다.
+   안 주면 통째로 다시 그린다 (아침 자동 올리기 · [지금 한 번 올리기] 가 그 길로 온다). */
+function budgetTableSync_(lines, onlyMonth) {
+  var want = monthBudgetKey_(onlyMonth || '');
   var book = SpreadsheetApp.openById(monthTableBookId_());
 
   var packs = [];
   lines.forEach(function (line) {
     var month = monthBudgetKey_(line[0]);
     if (!month) return;
+    if (want && month !== want) return;   // 한 달만 고쳤으면 그 탭만 그린다
     var plan = monthBudgetParse_(line[2], null);
     if (!plan) return;
     var when = line[5] instanceof Date
@@ -7171,12 +7179,14 @@ function budgetPut_(payload) {
     var last = sheet.getLastRow();
     var at = 0;
     var kept = null;
+    /* 자리를 찾을 때는 **월 칸만** 읽는다. 여섯 칸을 다 읽으면 달마다 수십~수백 KB인
+       내용 · 사용액 JSON 을 열두 달치 끌어오게 된다 — 찾는 데는 쓰지도 않는 값이다. */
     if (last > 1) {
-      var have = sheet.getRange(2, 1, last - 1, MONTH_BUDGET_HEADERS.length).getValues();
-      for (var i = 0; i < have.length; i++) {
-        if (monthBudgetKey_(have[i][0]) !== month) continue;
+      var months = sheet.getRange(2, 1, last - 1, 1).getValues();
+      for (var i = 0; i < months.length; i++) {
+        if (monthBudgetKey_(months[i][0]) !== month) continue;
         at = i + 2;
-        kept = monthBudgetRow_(have[i]);
+        kept = monthBudgetRow_(sheet.getRange(at, 1, 1, MONTH_BUDGET_HEADERS.length).getValues()[0]);
         break;
       }
     }
@@ -7187,19 +7197,17 @@ function budgetPut_(payload) {
     var spend = payload && payload.spend !== undefined ? payload.spend : (kept ? kept.spend : null);
 
     if (!at) at = sheet.getLastRow() + 1;
-    sheet.getRange(at, 1, 1, MONTH_BUDGET_HEADERS.length).setValues([[
-      month, total, JSON.stringify(plan), spend ? JSON.stringify(spend) : '', who, new Date()
-    ]]);
+    var line = [month, total, JSON.stringify(plan), spend ? JSON.stringify(spend) : '', who, new Date()];
+    sheet.getRange(at, 1, 1, MONTH_BUDGET_HEADERS.length).setValues([line]);
 
-    /* 사람이 읽는 거울 탭('월별예산표') 도 다시 그린다.
+    /* 사람이 읽는 거울 탭도 다시 그린다 — **방금 고친 달 하나만.**
+       시트를 다시 읽지 않고 방금 쓴 줄을 그대로 넘긴다 (막 쓴 값이라 같은 값이다).
        거울이 안 되더라도 저장은 성공이다 — 앱이 읽는 자리는 위의 '월별예산' 탭이고,
        거울은 시트를 열어 보는 사람을 위한 것이라서다. */
     var tableNote = '';
     var table = { rows: 0, tabs: 0, made: [], url: monthTableUrl_() };
     try {
-      var last2 = sheet.getLastRow();
-      table = budgetTableSync_(last2 > 1
-        ? sheet.getRange(2, 1, last2 - 1, MONTH_BUDGET_HEADERS.length).getValues() : []);
+      table = budgetTableSync_([line], month);
     } catch (error) {
       tableNote = String((error && error.message) || error);
     }
