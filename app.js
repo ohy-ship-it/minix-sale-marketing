@@ -10298,6 +10298,13 @@ if (creativePerformance) {
   const source = () => PERF_SOURCES[state.source] || ALL_SOURCE;
   // 전매체에서는 줄마다 그 줄의 매체를 본다 (구매·장바구니를 가르는 매체가 섞여 있다)
   const srcOf = (row) => PERF_SOURCES[(row && row.media) || state.source] || source();
+  /* 맞춤전환(맞춤 이벤트) 를 줄 수 있는 매체. 지금은 메타뿐이다 —
+     구글애즈는 보고서가 전환 카테고리를 구매 · 장바구니 · 리드로만 갈라 주어
+     Code.gs 에서 custom 을 0 으로 두고 있다 (adsMetrics_). 구글이 열리면 여기에 더한다.
+     칸을 늘 보이게 두면 카카오 · 네이버 탭에서 '—' 만 늘어서니, 줄 수 있는 매체와
+     여러 매체를 같이 보는 전매체에서만 보인다. */
+  const CUSTOM_MEDIA = ['meta'];
+  const showCustom = () => isAll() || CUSTOM_MEDIA.indexOf(state.source) >= 0;
   const account = () => state.accounts[state.source] || '';
   const setAccount = (id) => { state.accounts[state.source] = id; };
 
@@ -10517,6 +10524,8 @@ if (creativePerformance) {
           ${metricRow('광고비', money(row.spend))}
           ${split ? `${metricRow('구매', perfCount(row.purchase))}${metricRow('장바구니', perfCount(row.addToCart))}`
     : metricRow('결과', perfCount(row.results))}
+          ${showCustom()
+    ? metricRow('맞춤전환', row.custom ? perfCount(row.custom) : '<span class="tool-blank">—</span>') : ''}
           ${metricRow('노출', perfCount(row.impressions))}
           ${metricRow(source().clicks, perfCount(row.linkClicks))}
           ${metricRow('CTR', blank(ctr, perfPercent))}
@@ -10566,7 +10575,9 @@ if (creativePerformance) {
     : ''}</small></p>
       <div class="perf-stats">
         ${card('총광고비', money(total.spend), `소재 ${perfCount(rows.length)}개`)}
-        ${card('총결과', perfCount(total.results), `구매 ${perfCount(total.purchase)} · 장바구니 ${perfCount(total.addToCart)} · 리드 ${perfCount(total.lead)}${total.custom ? ` · 커스텀 ${perfCount(total.custom)}` : ''} · 결과는 목표 전환만 셉니다`)}
+        ${card('총결과', perfCount(total.results), `구매 ${perfCount(total.purchase)} · 장바구니 ${perfCount(total.addToCart)} · 리드 ${perfCount(total.lead)} · 결과는 목표 전환만 셉니다`)}
+        ${showCustom() ? card('맞춤전환', perfCount(total.custom),
+    '메타 맞춤 이벤트 · 총결과에 이미 들어 있습니다 (구매와는 별개)') : ''}
         ${card('CPC', blank(perfRatio(total.spend, total.linkClicks), money), `${source().clicks} ${perfCount(total.linkClicks)}회`)}
         ${card('CTR', blank(perfRatio(total.linkClicks, total.impressions), perfPercent), `${source().clicks} ÷ 노출`)}
         ${card('CPM', blank(perfRatio(total.spend * 1000, total.impressions), money), `노출 ${perfCount(total.impressions)}회`)}
@@ -11034,11 +11045,13 @@ if (creativePerformance) {
 
   // 엑셀 · 시트에 그대로 붙일 수 있게 탭으로 나눈다
   const copyText = () => {
+    // 맞춤전환은 구매 · 결과 바로 옆에 둔다. 화면 카드와 칸 차례가 같아야 대조가 된다.
+    const mine = showCustom() ? ['맞춤전환'] : [];
     const head = (isAll() ? ['매체'] : []).concat(['소재', '유형', '캠페인', '광고그룹', '문구', '짧은문구',
       '광고비', '노출', source().clicks, 'CTR', 'CPC', 'CPM'])
       .concat(source().splitResults
-        ? ['구매', '장바구니', 'CVR(구매)', 'CPS', 'CPB', '구매매출']
-        : ['결과', 'CVR(구매)', 'CPA', '구매전환값'])
+        ? ['구매', '장바구니'].concat(mine).concat(['CVR(구매)', 'CPS', 'CPB', '구매매출'])
+        : ['결과'].concat(mine).concat(['CVR(구매)', 'CPA', '구매전환값']))
       .concat(['ROAS']);
     const lines = [head.join('\t')];
     shown().forEach((row) => {
@@ -11055,12 +11068,13 @@ if (creativePerformance) {
         cpc === null ? '' : Math.round(cpc),
         cpm === null ? '' : Math.round(cpm),
       ]).concat(source().splitResults
-        ? [row.purchase, row.addToCart,
+        ? [row.purchase, row.addToCart].concat(showCustom() ? [row.custom || 0] : []).concat([
           cvr === null ? '' : perfPercent(cvr),
           perfRatio(row.spend, row.purchase) === null ? '' : Math.round(perfRatio(row.spend, row.purchase)),
-          perfRatio(row.spend, row.addToCart) === null ? '' : Math.round(perfRatio(row.spend, row.addToCart))]
-        : [row.results, cvr === null ? '' : perfPercent(cvr),
-          cpa === null ? '' : Math.round(cpa)])
+          perfRatio(row.spend, row.addToCart) === null ? '' : Math.round(perfRatio(row.spend, row.addToCart))])
+        : [row.results].concat(showCustom() ? [row.custom || 0] : []).concat([
+          cvr === null ? '' : perfPercent(cvr),
+          cpa === null ? '' : Math.round(cpa)]))
         .concat([Math.round(row.revenue || 0),
           perfRatio(row.revenue, row.spend) === null ? '' : perfRoas(perfRatio(row.revenue, row.spend))])
         .join('\t'));
