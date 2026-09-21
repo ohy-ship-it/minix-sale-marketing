@@ -1155,6 +1155,13 @@ span.bg-kind{cursor:default}
 .kol-in:focus{outline:none;border-color:#2a78d6;box-shadow:0 0 0 3px rgba(42,120,214,.12)}
 /* 못 센 수식. 값을 되돌리지 않고 칸만 빨갛게 둔다 — 적다 만 것일 수 있어서다. */
 .kol-in.is-bad{border-color:#d9534f;background:#fdf4f3}
+/* 올린 파일에서 저절로 들어온 칸(광고비 · 클릭수). 적는 칸이 아니라는 것이
+   한눈에 보여야 한다 — 테두리를 주지 않고, 셈한 칸(CPS · CPA)과 같은 결로 둔다.
+   다만 셈한 값과도 갈리게 바탕을 아주 옅게 깔고 글자를 진하게 준다. */
+.kol-auto{background:#faf9f5;font-weight:600;color:#3d3d39;cursor:default}
+/* 파일에는 있는데 단계별 표에 얹을 자리가 없던 줄(대개 '상시') 을 알리는 줄 */
+.kol-left{color:#8a6d3b}
+.kol-left b{color:#6f5629}
 /* 프로모션명 — 목록 줄에서 바로 적는다. 숫자 칸과 달리 왼쪽 맞춤이다. */
 /* 머리글도 값과 같은 이름표를 달고 있다. 이 한 줄이 없으면 머리글만
    .perf-table th:not(:first-child) 규칙에 걸려 오른쪽 끝으로 가, 200px 떨어진 자리에

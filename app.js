@@ -13493,7 +13493,9 @@ if (promotionView) {
 // 이제는 여기서 적는다. 적은 값은 적재 시트의 KOL라이브 탭에 담겨 팀이 같이 본다.
 //
 //   한 줄이 한 달이다. 줄을 펼치면 그 달의 **단계별(사전 · 당일 · 사후)** 표가 열린다.
-//   손으로 적는 칸은 단계마다 다섯이다 — 광고비 · 매출 · 주문수 · 알림수 · 세션수.
+//   손으로 적는 칸은 단계마다 넷이다 — 매출 · 주문수 · 알림수 · 세션수.
+//   광고비 · 클릭수는 밑의 **매체별 결과**에 올린 파일에서 단계별로 더해 저절로 들어온다
+//   (매체가 이미 세어 둔 값을 사람이 또 적으면 반드시 어긋난다).
 //   나머지(CPS · ROAS · CPA · 사전알림구매률 · 사전알림신청률)는 모두 셈한 값이다.
 //   셈하는 자리를 여기 한 곳에만 두었다 — 담아 두면 고칠 때마다 두 곳이 어긋난다.
 const kolLiveView = document.querySelector('#kol-live');
@@ -13506,16 +13508,22 @@ if (kolLiveView) {
   // 단계 — 시트에 담기는 열쇠와 사람이 보는 이름
   const PHASES = [['pre', '사전'], ['day', '당일'], ['post', '사후']];
   /* 한 단계에 적는 칸. 여기 적은 차례가 곧 표의 차례다.
-     '수기' 라고 적어 둔 칸은 매체에서 못 받아 오는 값이다 — 주문수 · 알림수는 사람이 세고,
+     '자동' 칸은 밑의 **매체별 결과**에 올린 파일에서 저절로 들어온다 — 광고비 · 클릭수가 그렇다.
+     매체가 이미 세어 둔 값이라 사람이 또 적을 까닭이 없고, 두 군데 적으면 반드시 어긋난다.
+     '수기' 칸은 매체에서 못 받아 오는 값이다 — 매출 · 주문수 · 알림수는 사람이 세고,
      세션수는 나중에 GA 에서 받아 채운다 (그때까지는 손으로 적는다). */
   const FIELDS = [
-    ['spend', '광고비', 'won', ''],
-    ['revenue', '매출', 'won', ''],
+    ['spend', '광고비', 'won', '자동'],
+    ['revenue', '매출', 'won', '수기'],
     ['orders', '주문수', 'num', '수기'],
     ['alerts', '알림수', 'num', '수기'],
     ['sessions', '세션수', 'num', '수기'],
-    ['clicks', '클릭수', 'num', '수기'],
+    ['clicks', '클릭수', 'num', '자동'],
   ];
+  /* 저절로 채우는 칸 — 담아 두는 이름(왼쪽)과 매체별 줄에서 읽어 오는 이름(오른쪽).
+     매체별 줄은 clk 로 담고 단계별 표는 clicks 로 담는다. 이름이 다른 곳은 여기뿐이다. */
+  const AUTO_FROM = { spend: 'spend', clicks: 'clk' };
+  const isAuto = (name) => Object.prototype.hasOwnProperty.call(AUTO_FROM, name);
 
   let months = [];          // [{ month, phases, updatedBy, updatedAt }] — 새 달이 위
   let status = 'loading';
@@ -13609,17 +13617,26 @@ if (kolLiveView) {
     </div>`;
   };
 
-  // 단계별 결과 — 손으로 적는 칸 다섯 + 셈한 칸 둘
+  // 단계별 결과 — 파일에서 오는 칸 둘 + 손으로 적는 칸 넷 + 셈한 칸 셋
   const stepTable = (row) => {
     const at = escape(row.month);
+    const auto = hasMedia(row);
+    const left = auto ? autoLeft(row) : null;
     const inputCell = (key, name, value) => `<td class="perf-num"><input type="text" class="kol-in"
       inputmode="numeric" data-kol-in="1" data-month="${at}" data-phase="${key}" data-field="${name}"
       value="${value ? escape(commaNum(value)) : ''}" placeholder="0"></td>`;
+    /* 파일에서 온 칸은 적지 못하게 둔다 — 적어 봐야 다음 파일에 덮여 사라진다.
+       적는 칸과 눈으로 갈리게 테두리 없이 글자로만 보여 준다. */
+    const autoCell = (key, name, kind, value) => `<td class="perf-num kol-auto"
+      data-kol-out="${key}:${name}" title="매체별 결과에 올린 파일에서 옵니다">${kind === 'won'
+    ? money(value) : count(value)}</td>`;
     const line = ([key, label]) => {
       const one = row.phases[key];
       return `<tr>
         <td class="perf-name"><span>${escape(label)}</span></td>
-        ${FIELDS.map(([name]) => inputCell(key, name, one[name])).join('')}
+        ${FIELDS.map(([name, , kind]) => (auto && isAuto(name)
+    ? autoCell(key, name, kind, one[name])
+    : inputCell(key, name, one[name]))).join('')}
         <td class="perf-num" data-kol-out="${key}:cps">${money(cps(one))}</td>
         <td class="perf-num" data-kol-out="${key}:cpa">${money(cpa(one))}</td>
         <td class="perf-num" data-kol-out="${key}:cvr">${rate(cvr(one))}</td>
@@ -13629,8 +13646,11 @@ if (kolLiveView) {
     return `<div class="kol-block">
       <h5>단계별 결과 <small>사전 · 당일 · 사후</small></h5>
       <div class="tool-table-wrap"><table class="tool-table kol-sub">
-        <thead><tr><th>단계</th>${FIELDS.map(([, label, , mark]) => `<th class="perf-num">${escape(label)}${mark
-    ? `<small>${escape(mark)}</small>` : ''}</th>`).join('')}
+        <thead><tr><th>단계</th>${FIELDS.map(([name, label, , mark]) => {
+    // 파일을 아직 안 올렸으면 광고비 · 클릭수도 손으로 적는 칸이다 — 그때는 '수기' 로 적는다
+    const tag = isAuto(name) && !auto ? '수기' : mark;
+    return `<th class="perf-num">${escape(label)}${tag ? `<small>${escape(tag)}</small>` : ''}</th>`;
+  }).join('')}
           <th class="perf-num">CPS</th><th class="perf-num">CPA<small>사전알림</small></th>
           <th class="perf-num">CVR<small>알림 ÷ 클릭</small></th></tr></thead>
         <tbody>${PHASES.map(line).join('')}
@@ -13642,6 +13662,12 @@ if (kolLiveView) {
             <td class="perf-num" data-kol-out="sum:cvr">${rate(cvr(one))}</td></tr>
         </tbody>
       </table></div>
+      <p class="perf-note">${auto
+    ? '<b>광고비 · 클릭수</b>는 밑의 매체별 결과에 올린 파일에서 단계별로 더해 저절로 들어옵니다 (적지 않습니다). 손으로 적는 칸은 <b>매출 · 주문수 · 알림수 · 세션수</b> 입니다.'
+    : '<b>광고비 · 클릭수</b>는 밑의 매체별 결과에 파일을 올리면 단계별로 저절로 채워집니다. 아직 올린 파일이 없어 손으로 적습니다.'}</p>
+      ${left && (left.spend || left.clicks) ? `<p class="perf-note kol-left">올린 파일의
+        <b>${escape(left.names.join(' · '))}</b> 는 단계가 사전 · 당일 · 사후 가 아니라 이 표에 담기지 않았습니다 —
+        광고비 ${money(left.spend)} · 클릭수 ${count(left.clicks)}. 매체별 결과의 total 에는 들어 있습니다.</p>` : ''}
       <p class="perf-note">CPS = 광고비 ÷ 주문수 · CPA = 광고비 ÷ 알림수 · CVR = 알림수 ÷ 클릭수 ·
         사전알림구매률 = 주문수 ÷ 알림수 · 사전알림신청률 = 알림수 ÷ 세션수.
         세션수는 나중에 GA 에서 받아 채웁니다 — 그때까지는 손으로 적습니다.</p>
@@ -13650,7 +13676,7 @@ if (kolLiveView) {
 
 
   /* ── 매체별 결과 ────────────────────────────────────────────────
-     단계별 표는 사람이 적지만, 매체마다의 숫자는 적을 것이 너무 많다. 그래서
+     매체마다의 숫자는 적을 것이 너무 많다. 그래서
      매체별 성과 → 전매체 검색 → [행사별 결과로 보내기] 로 받은 .json 파일을 올린다
      (판매채널 추이가 읽는 그 파일이다 — kind 가 'minix-cross-result' 인 것).
 
@@ -13677,6 +13703,39 @@ if (kolLiveView) {
 
   const mediaRows = (row) => (Array.isArray(row.media) ? row.media : []);
   const mediaBlank = () => ({ spend: 0, imp: 0, clk: 0, conv: 0 });
+
+  /* ── 단계별 표의 광고비 · 클릭수는 여기서 만든다 ──────────────────
+     사람이 적지 않는다. 매체별 결과에 올린 파일의 **단계별 합**을 그대로 얹는다 —
+     같은 숫자를 두 군데 적으면 반드시 어긋나고, 어느 쪽이 맞는지 알 길이 없다.
+     파일을 아직 안 올린 달은 예전처럼 손으로 적는다 (적어 둔 값을 잃지 않는다). */
+  const hasMedia = (row) => mediaRows(row).length > 0;
+  const autoBlank = () => Object.keys(AUTO_FROM).reduce((into, name) => { into[name] = 0; return into; }, {});
+  const autoOf = (row, label) => mediaRows(row).reduce((into, one) => {
+    if (one.phase !== label) return into;
+    Object.keys(AUTO_FROM).forEach((name) => { into[name] += Number(one[AUTO_FROM[name]]) || 0; });
+    return into;
+  }, autoBlank());
+
+  // 올린 값을 단계별 칸에 얹는다. 파일이 없으면 적어 둔 값을 그대로 둔다.
+  const syncAuto = (row) => {
+    if (!row || !hasMedia(row)) return row;
+    PHASES.forEach(([key, label]) => {
+      const one = autoOf(row, label);
+      Object.keys(AUTO_FROM).forEach((name) => { row.phases[key][name] = one[name]; });
+    });
+    return row;
+  };
+
+  /* 파일에는 있는데 단계별 표에 얹을 자리가 없는 줄 — 대개 '상시' 다.
+     말없이 빼면 단계별 광고비와 매체별 total 이 안 맞는데 까닭을 알 수 없다.
+     그래서 표 밑에 얼마가 빠졌는지 그대로 적어 둔다. */
+  const autoLeft = (row) => mediaRows(row).reduce((into, one) => {
+    if (PHASES.some(([, label]) => label === one.phase)) return into;
+    into.spend += Number(one.spend) || 0;
+    into.clicks += Number(one.clk) || 0;
+    if (into.names.indexOf(one.phase) < 0) into.names.push(one.phase);
+    return into;
+  }, { spend: 0, clicks: 0, names: [] });
   const mediaSum = (list) => list.reduce((into, one) => {
     MEDIA_FIELDS.forEach(([name]) => { into[name] += Number(one[name]) || 0; });
     return into;
@@ -13932,8 +13991,10 @@ if (kolLiveView) {
     const next = months.length ? `${monthStep(months[0].month, 1)}-01` : today;
     kolLiveView.innerHTML = `<div class="tool-head">
         <h2>KOL 라이브</h2>
-        <p>이 화면에서 <b>직접 적습니다</b>. 달을 펼쳐 <b>사전 · 당일 · 사후</b> 로 광고비 · 매출 ·
-          주문수 · 알림수 · 세션수를 적으면 CPS · ROAS · CPA · 사전알림 구매률 · 신청률은 저절로 셉니다.
+        <p>이 화면에서 <b>직접 적습니다</b>. 달을 펼쳐 <b>사전 · 당일 · 사후</b> 로
+          <b>매출 · 주문수 · 알림수 · 세션수</b>만 적으면 됩니다 — <b>광고비 · 클릭수</b>는
+          매체별 결과에 올린 파일에서 단계별로 저절로 들어오고, CPS · ROAS · CPA ·
+          사전알림 구매률 · 신청률은 저절로 셉니다.
           적은 값은 적재 시트의 <b>KOL라이브</b> 탭에 담겨 팀이 같이 봅니다.</p>
       </div>
       <div class="tool-card">
@@ -13966,6 +14027,12 @@ if (kolLiveView) {
       if (at) at.innerHTML = html;
     };
     PHASES.forEach(([key]) => {
+      // 파일에서 온 칸은 적는 칸이 아니라 글자다 — 여기서 같이 갈아 끼운다
+      FIELDS.forEach(([name, , kind]) => {
+        if (!isAuto(name)) return;
+        const value = row.phases[key][name];
+        put(`${key}:${name}`, kind === 'won' ? money(value) : count(value));
+      });
       put(`${key}:cps`, money(cps(row.phases[key])));
       put(`${key}:cpa`, money(cpa(row.phases[key])));
       put(`${key}:cvr`, rate(cvr(row.phases[key])));
@@ -14084,7 +14151,7 @@ if (kolLiveView) {
           mediaFrom: row.mediaFrom || null,
           updatedBy: row.updatedBy || '',
           updatedAt: row.updatedAt || '',
-        })).filter((row) => row.month);
+        })).filter((row) => row.month).map(syncAuto);   // 담긴 값과 올린 파일이 어긋나 있으면 파일을 따른다
         sortMonths();
         sheetUrl = body.url || sheetUrl;
         status = 'ready';
@@ -14226,6 +14293,7 @@ if (kolLiveView) {
             row.media = mediaPack(good, more ? mediaRows(row) : null);
             row.mediaFrom = { files: already.concat(good.map((one) => one.name)),
               at: new Date().toISOString() };
+            syncAuto(row);              // 단계별 표의 광고비 · 클릭수를 올린 값으로 맞춘다
             note = more
               ? `${monthLabel(row.month)} 매체별 결과에 파일 ${good.length}개를 더했습니다`
               : `${monthLabel(row.month)} 매체별 결과를 파일 ${good.length}개에서 읽었습니다`;
