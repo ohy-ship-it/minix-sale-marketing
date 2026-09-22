@@ -3170,6 +3170,49 @@ function checkGoogleAds() {
 // 소재를 몇 개까지 돌려줄지. 광고비 순으로 자른다.
 var CREATIVE_LIMIT = 120;
 
+/* 동영상 평균 재생시간(초). 메타는 action_type 별로 나눠 주는데 우리가 볼 것은
+   video_view 하나다. 이미지 소재는 이 칸이 아예 안 와서 0 이 된다. */
+function metaWatch_(row) {
+  var list = (row && row.video_avg_time_watched_actions) || [];
+  for (var i = 0; i < list.length; i += 1) {
+    if (String(list[i].action_type || '') === 'video_view') return Number(list[i].value || 0);
+  }
+  return list.length ? Number(list[0].value || 0) : 0;
+}
+
+/* 소재마다 **어디에 · 누구에게** 나갔는지.
+   쪼개기(breakdowns)는 줄을 나눠 주므로 광고 id 로 다시 모아,
+   노출이 가장 큰 것 하나와 그 몫을 고른다 (instagram · stream 62% 처럼).
+   한 소재가 여러 지면 · 연령대에 걸쳐 나가므로 하나만 적고 몇 갈래였는지도 함께 준다. */
+function metaAdTop_(scope, range, breakdowns, nameOf) {
+  var seen = {};
+  graphAll_('/' + scope + '/insights', {
+    level: 'ad', breakdowns: breakdowns, fields: 'ad_id,impressions',
+    time_range: range, limit: 500
+  }, 8).forEach(function (row) {
+    var id = String(row.ad_id || '');
+    var name = nameOf(row);
+    if (!id || !name) return;
+    if (!seen[id]) seen[id] = { all: 0, by: {} };
+    var imp = Number(row.impressions || 0);
+    seen[id].all += imp;
+    seen[id].by[name] = (seen[id].by[name] || 0) + imp;
+  });
+
+  var top = {};
+  Object.keys(seen).forEach(function (id) {
+    var one = seen[id];
+    var best = '';
+    Object.keys(one.by).forEach(function (name) {
+      if (!best || one.by[name] > one.by[best]) best = name;
+    });
+    if (!best) return;
+    top[id] = { name: best, share: one.all ? one.by[best] / one.all : 0,
+      many: Object.keys(one.by).length };
+  });
+  return top;
+}
+
 function metaCreatives_(payload) {
   var account = String(payload.account || '').trim();
   if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
@@ -3200,7 +3243,8 @@ function metaCreatives_(payload) {
   var rows = graphAll_('/' + scope + '/insights', {
     level: 'ad',
     fields: 'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,'
-      + 'inline_link_clicks,actions,catalog_segment_actions,action_values,catalog_segment_value',
+      + 'inline_link_clicks,actions,catalog_segment_actions,action_values,catalog_segment_value,'
+      + 'video_avg_time_watched_actions',
     time_range: range,
     limit: 200,
     use_unified_attribution_setting: 'true', action_attribution_windows: META_WINDOWS.join(',')
@@ -3214,7 +3258,9 @@ function metaCreatives_(payload) {
       campaignName: row.campaign_name || '',
       adsetId: row.adset_id || '',
       adsetName: row.adset_name || '',
-      objective: '', active: false, status: '', thumbnail: '', video: ''
+      objective: '', active: false, status: '', thumbnail: '', video: '',
+      // 동영상 평균 재생시간(초) · 소재노출위치 · 연령. 뒤의 둘은 아래에서 채운다.
+      watch: metaWatch_(row), place: null, age: null
     }, window);
   }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
 
@@ -3268,6 +3314,21 @@ function metaCreatives_(payload) {
     } catch (error) { /* 이 묶음은 볼 수 없다 — 구매로 둔다 */ }
   }
   creatives.forEach(function (row) { metaPick_(row, slotOf[String(row.adsetId || '')]); });
+
+  /* 소재노출위치 · 연령. 쪼개기는 줄을 나눠 주므로 따로 물어 광고마다 하나씩 붙인다.
+     **거들기다** — 못 받아도 소재별 결과는 그대로 보여 준다 (그 칸만 빈다).
+     조회가 두 번 늘어 그만큼 느려지는데, 이 둘이 소재를 고르는 데 가장 자주 쓰는 값이다. */
+  try {
+    var place = metaAdTop_(scope, range, 'publisher_platform,platform_position', function (row) {
+      return [row.publisher_platform, row.platform_position]
+        .filter(function (part) { return !!part; }).join(' · ');
+    });
+    creatives.forEach(function (row) { if (place[row.id]) row.place = place[row.id]; });
+  } catch (error) { /* 이 칸만 빈다 */ }
+  try {
+    var ages = metaAdTop_(scope, range, 'age', function (row) { return String(row.age || ''); });
+    creatives.forEach(function (row) { if (ages[row.id]) row.age = ages[row.id]; });
+  } catch (error) { /* 이 칸만 빈다 */ }
 
   fillBigPictures_(creatives, instagram, 'media_url');
   fillBigPictures_(creatives, videos, 'picture');

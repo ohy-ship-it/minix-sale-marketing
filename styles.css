@@ -825,6 +825,10 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .creative-metrics{display:grid;grid-template-columns:1fr 1fr;gap:5px 8px}
 .creative-metrics small{display:block;color:#a4a39a;font-size:9px}
 .creative-metrics b{font:700 12px 'DM Sans','Noto Sans KR'}
+/* 노출위치 · 연령은 이름이라 숫자보다 길다. 칸을 넘치면 줄여 적는다. */
+.creative-metrics b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 한 소재가 여러 지면 · 연령대에 걸쳐 나간다. 맨 위 하나를 적고 그 몫을 옆에 붙인다. */
+.creative-share{margin-left:3px;font-size:10px;font-weight:600;color:#a4a39a}
 @media(max-width:900px){.creative-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
 
 /* 페이지 결과 (Clarity 연동 예정) */

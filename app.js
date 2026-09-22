@@ -10274,7 +10274,11 @@ const creativePerformance = document.querySelector('#creative-performance');
 if (creativePerformance) {
   const STORAGE_KEY = 'minix-creative-performance-v1';
 
-  const defaults = { source: 'meta', accounts: {}, campaign: '', adset: '', preset: '7d', since: '', until: '' };
+  /* prod — 체크해 둔 제품. 빈 목록이면 전 제품이다.
+     매체별 성과 · 전매체 검색이 쓰는 CROSS_PRODUCTS 표를 그대로 쓴다 —
+     세 화면이 같은 낱말로 걸러야 숫자를 견줄 수 있다. */
+  const defaults = { source: 'meta', accounts: {}, campaign: '', adset: '', preset: '7d',
+    since: '', until: '', prod: [] };
   let state = { ...defaults };
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
@@ -10394,8 +10398,11 @@ if (creativePerformance) {
   };
 
   const shown = () => {
+    // 한 줄마다 다시 펴지 않게 찾을 말을 미리 만들어 둔다
+    const words = crossProdWords(state.prod);
     const rows = creatives.filter((row) => {
       if (onlyMedia && row.media !== onlyMedia) return false;
+      if (!crossProdHit(row.media || state.source, row, words)) return false;
       if (kind && kindOf(row) !== kind) return false;
       if (picked.length && picked.indexOf(objectiveOf(row)) < 0) return false;
       // 소재 이름에는 대괄호가 없다 (6108_20260827_flender-mini_price-66_image_ljm).
@@ -10492,6 +10499,17 @@ if (creativePerformance) {
 
   const metricRow = (label, value) => `<div><small>${label}</small><b>${value}</b></div>`;
 
+  // 동영상 평균 재생시간. 초로 온다 (이미지 소재는 아예 안 온다)
+  const secs = (value) => `${(Number(value) || 0).toFixed(1)}초`;
+
+  /* 소재노출위치 · 연령. 한 소재가 여러 지면 · 연령대에 걸쳐 나가므로
+     **노출이 가장 큰 것 하나**를 적고, 갈래가 여럿이면 그 몫을 함께 적는다.
+     메타만 준다 — 다른 매체는 소재 단위로 쪼개 주지 않아 칸 자체를 안 그린다. */
+  const topRow = (label, one) => (one && one.name
+    ? metricRow(label, `${perfEscape(one.name)}${one.many > 1
+      ? ` <span class="creative-share">${perfRoas(one.share)}</span>` : ''}`)
+    : '');
+
   const card = (row) => {
     const ctr = perfRatio(row.linkClicks, row.impressions);
     const cpc = perfRatio(row.spend, row.linkClicks);
@@ -10537,6 +10555,9 @@ if (creativePerformance) {
     : metricRow('CPA', blank(cpa, money))}
           ${metricRow(split ? '구매매출' : '전환값', row.revenue ? money(row.revenue) : '<span class="tool-blank">—</span>')}
           ${metricRow('ROAS', blank(roas, perfRoas))}
+          ${topRow('노출위치', row.place)}
+          ${topRow('연령', row.age)}
+          ${row.watch ? metricRow('평균재생', secs(row.watch)) : ''}
         </div>
       </div>
     </article>`;
@@ -10620,6 +10641,10 @@ if (creativePerformance) {
         </div>
         <label class="perf-check" title="[cj-260901]_none_cj 에서 대괄호 안의 cj-260901 만 봅니다">
           <input type="checkbox" data-creative="group-bracket"${groupBracket ? ' checked' : ''}>대괄호 안만</label>
+        ${CROSS_PRODUCTS.map((one) => `<label class="perf-check"
+          title="캠페인 이름에 '${perfEscape(one.words.join(' · '))}' 가 든 소재만 봅니다">
+          <input type="checkbox" data-creative="prod" data-prod="${perfEscape(one.id)}"${state.prod
+    .indexOf(one.id) >= 0 ? ' checked' : ''}>${perfEscape(one.name)}</label>`).join('')}
         ${isAll() ? `<div class="perf-chips">
           ${Object.keys(PERF_SOURCES).map((key) => {
     const many = creatives.filter((row) => row.media === key).length;
@@ -10932,6 +10957,14 @@ if (creativePerformance) {
       render();
       return;
     }
+    if (event.target.dataset.creative === 'prod') {
+      const id = event.target.dataset.prod;
+      const at = state.prod.indexOf(id);
+      if (at >= 0) state.prod.splice(at, 1); else state.prod.push(id);
+      save();
+      render();
+      return;
+    }
     const field = event.target.dataset.creative;
     if (!field) return;
     if (field === 'account') {
@@ -11052,7 +11085,7 @@ if (creativePerformance) {
       .concat(source().splitResults
         ? ['구매', '장바구니'].concat(mine).concat(['CVR(구매)', 'CPS', 'CPB', '구매매출'])
         : ['결과'].concat(mine).concat(['CVR(구매)', 'CPA', '구매전환값']))
-      .concat(['ROAS']);
+      .concat(['ROAS', '노출위치', '연령', '평균재생(초)']);
     const lines = [head.join('\t')];
     shown().forEach((row) => {
       const ctr = perfRatio(row.linkClicks, row.impressions);
@@ -11076,7 +11109,9 @@ if (creativePerformance) {
           cvr === null ? '' : perfPercent(cvr),
           cpa === null ? '' : Math.round(cpa)]))
         .concat([Math.round(row.revenue || 0),
-          perfRatio(row.revenue, row.spend) === null ? '' : perfRoas(perfRatio(row.revenue, row.spend))])
+          perfRatio(row.revenue, row.spend) === null ? '' : perfRoas(perfRatio(row.revenue, row.spend)),
+          (row.place && row.place.name) || '', (row.age && row.age.name) || '',
+          row.watch ? (Number(row.watch) || 0).toFixed(1) : ''])
         .join('\t'));
     });
     return lines.join('\n');
@@ -14250,6 +14285,7 @@ if (kolLiveView) {
         row.media.push({ phase: tail || MEDIA_PHASES[0], name: '',
           spend: 0, imp: 0, clk: 0, conv: 0, hand: 1 });
         row.media = mediaSort(row.media);
+        syncAuto(row);             // 단계별 광고비 · 클릭수는 이 목록에서 나온다
         note = `${monthLabel(row.month)} 매체별 결과에 빈 줄을 넣었습니다 — 매체 이름과 숫자를 적어 주세요`;
         error = '';
         render();
@@ -14264,6 +14300,7 @@ if (kolLiveView) {
         const row = rowOf(hit.dataset.month);
         if (!row || !row.media) return;
         row.media.splice(Number(hit.dataset.at), 1);
+        syncAuto(row);
         note = `${monthLabel(row.month)} 매체별 결과에서 한 줄을 뺐습니다`;
         error = '';
         render();
@@ -14364,6 +14401,7 @@ if (kolLiveView) {
       if (!one) return;
       one.phase = phase.value;
       row.media = mediaSort(row.media);   // 단계가 바뀌었으니 자리를 다시 잡는다
+      syncAuto(row);                       // 줄이 옮겨 갔으니 단계별 표도 따라간다
       render();
       save(row.month);
       return;
@@ -14371,7 +14409,11 @@ if (kolLiveView) {
     const typed = event.target.closest('[data-kol-mn],[data-kol-mv]');
     if (typed) {
       // 손을 뗐다. 셈한 칸 · 단계 종합 · total 을 다시 그린다 (값은 이미 담겨 있다)
-      if (rowOf(typed.dataset.month)) render();
+      const row = rowOf(typed.dataset.month);
+      if (!row) return;
+      syncAuto(row);             // 단계별 광고비 · 클릭수도 이 줄을 더해 다시 낸다
+      render();
+      save(row.month);
       return;
     }
     const file = event.target.closest('[data-kol="mediaFile"]');
