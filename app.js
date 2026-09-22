@@ -2014,10 +2014,23 @@ const vizColumns = (rows, format, label) => {
 };
 
 // 가로 막대 — 게재지면 · 위치처럼 이름이 길고 개수가 많은 것
+/* 글자 하나가 대략 몇 칸인가. 한글은 한 칸, 로마자 · 숫자는 그 절반쯤이다.
+   vizFit 이 자를지 말지 재는 자와 같은 자를 쓴다. */
+const vizWide = (text) => {
+  let used = 0;
+  for (const letter of String(text)) used += /[ㄱ-힝가-힣]/.test(letter) ? 1 : 0.56;
+  return used;
+};
+
 const vizBars = (rows, format, label) => {
   if (!rows.length) return '';
   const shown = rows.slice(0, 12);
-  const name = 132;
+  /* 이름 칸은 **가장 긴 이름에 맞춘다.** 132px 로 못 박아 두니
+     'instagram · instagram_reels' 가 'instagram · instagra…' 로 잘렸다.
+     vizFit 은 줄임표 자리로 한 글자를 남기므로 그만큼(+1.2) 더 잡는다.
+     너무 길어지면 막대가 눌리므로 위아래로 끝을 둔다. */
+  const widest = shown.reduce((big, row) => Math.max(big, vizWide(row.name)), 0);
+  const name = Math.round(Math.min(Math.max((widest + 1.2) * 10 + 8, 96), 280));
   const gap = 10;
   const bar = 16;
   const plot = 300;
@@ -10349,6 +10362,14 @@ if (creativePerformance) {
   let caret = null;
   let caretAt = 'search';   // 커서를 돌려놓을 검색창 (소재 이름 · 광고그룹)
   let fetchedAt = '';
+
+  /* 소재 하나의 상세 보기 (게재지면 · 연령 …). 매체별 성과의 상세와 같은 짜임새다 —
+     쪼갤 것을 고르고, 볼 지표를 고르고, 그림 또는 표로 본다.
+     **메타만 연다.** 다른 매체는 소재 단위로 쪼개 주지 않아 물어 봐야 빈 답이 온다. */
+  const noAdDetail = () => ({ id: '', picked: [], data: {}, status: {}, error: {},
+    metric: 'linkClicks', table: false });
+  let adDetail = noAdDetail();
+  const canDetail = (row) => String(row.media || state.source) === 'meta';
   let notice = '';       // 매체가 알려 준 사정 (미리보기를 못 받은 이유 등)
   let loadStart = 0;     // 소재를 부르기 시작한 시각
   let loadTick = null;   // 흐른 시간을 고쳐 쓰는 타이머
@@ -10499,6 +10520,108 @@ if (creativePerformance) {
 
   const metricRow = (label, value) => `<div><small>${label}</small><b>${value}</b></div>`;
 
+  // ── 소재 하나의 상세 ────────────────────────────────────────
+  // 한 번에 지표 하나만 그린다 (축이 다른 둘을 한 그림에 겹치지 않는다)
+  const adMetricName = () => (adDetail.metric === 'linkClicks' ? source().clicks
+    : (PERF_METRICS.find(([key]) => key === adDetail.metric) || ['', ''])[1]);
+  const adMetricOf = (row) => Number(row[adDetail.metric] || 0);
+  const adMetricText = (value) => (adDetail.metric === 'spend' || adDetail.metric === 'revenue'
+    ? money(value) : perfCount(value));
+  // 연령대는 광고비 순이 아니라 나이 순으로 봐야 읽힌다
+  const adOrder = (key, rows) => (key === 'age' || key === 'ageGender'
+    ? rows.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    : rows);
+
+  const adChart = (key, rows) => {
+    const title = `${PERF_BREAKDOWNS[key]}별 ${adMetricName()}`;
+    if (key === 'ageGender') {
+      const names = [];
+      rows.forEach((row) => { const one = perfLabel(row.series); if (names.indexOf(one) < 0) names.push(one); });
+      names.sort((a, b) => a.localeCompare(b));
+      const groups = [];
+      rows.forEach((row) => {
+        let group = groups.find((one) => one.name === perfLabel(row.name));
+        if (!group) { group = { name: perfLabel(row.name), values: {}, total: 0 }; groups.push(group); }
+        const value = adMetricOf(row);
+        group.values[perfLabel(row.series)] = (group.values[perfLabel(row.series)] || 0) + value;
+        group.total += value;
+      });
+      return vizLegend(names)
+        + vizStacks(groups.filter((group) => group.total > 0), names, adMetricText, title);
+    }
+    const parts = rows.map((row) => ({ name: perfLabel(row.name), value: adMetricOf(row) }))
+      .filter((row) => row.value > 0);
+    if (!parts.length) return '';
+    if (key === 'gender') {
+      const fixed = parts.slice().sort((a, b) => a.name.localeCompare(b.name));
+      return vizLegend(fixed.map((part) => part.name)) + vizShare(fixed, adMetricText, title);
+    }
+    if (key === 'age') return vizColumns(parts, adMetricText, title);
+    return vizBars(parts, adMetricText, title);
+  };
+
+  const adCell = (row, mk) => (mk === 'spend' || mk === 'revenue'
+    ? money(row[mk] || 0) : perfCount(row[mk] || 0));
+
+  const adTable = (key, rows) => `<div class="tool-table-wrap"><table class="tool-table perf-table perf-sub">
+    <thead><tr><th>${PERF_BREAKDOWNS[key]}</th>${PERF_METRICS.map(([mk, name]) =>
+    `<th class="perf-num">${mk === 'linkClicks' ? perfEscape(source().clicks) : name}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map((row) => `<tr>
+      <td class="perf-name"><span>${perfEscape(perfLabel(row.name))}${row.series
+    ? ` · ${perfEscape(perfLabel(row.series))}` : ''}</span></td>
+      ${PERF_METRICS.map(([mk]) => `<td class="perf-num">${adCell(row, mk)}</td>`).join('')}
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+
+  const adBreakCard = (key) => {
+    if (adDetail.status[key] === 'loading') return `<p class="perf-detail-note">${PERF_BREAKDOWNS[key]} 불러오는 중…</p>`;
+    if (adDetail.status[key] === 'error') {
+      return `<p class="perf-detail-note is-error">${PERF_BREAKDOWNS[key]} — ${perfEscape(adDetail.error[key] || '')}</p>`;
+    }
+    const rows = adOrder(key, adDetail.data[key] || []);
+    if (!rows.length) return `<p class="perf-detail-note">${PERF_BREAKDOWNS[key]} — 나온 값이 없습니다.</p>`;
+    return `<div class="viz-card">
+      <h4>${PERF_BREAKDOWNS[key]}<small>${perfEscape(adMetricName())}</small></h4>
+      ${adDetail.table ? adTable(key, rows) : adChart(key, rows)}
+    </div>`;
+  };
+
+  /* 동영상 재생 유지. 25 · 50 · 75 · 100% 지점까지 본 수를 그대로 그린다 —
+     평균 재생시간 하나로는 어디서 떨어져 나가는지 알 수 없다.
+     이 값은 소재를 받을 때 함께 와서 따로 물어보지 않는다. */
+  const PLAYS = [['p25', '25%'], ['p50', '50%'], ['p75', '75%'], ['p100', '100%']];
+  const playsCard = (row) => {
+    if (!row.plays && !row.watch) return '';
+    const parts = row.plays
+      ? PLAYS.map(([key, name]) => ({ name: name, value: Number(row.plays[key]) || 0 }))
+        .filter((one) => one.value > 0)
+      : [];
+    return `<div class="viz-card">
+      <h4>동영상 재생 유지<small>평균 ${row.watch ? perfEscape(secs(row.watch)) : '—'}</small></h4>
+      ${parts.length ? vizColumns(parts, perfCount, '재생 지점별 도달 수')
+    : '<p class="perf-detail-note">지점별 재생 수가 오지 않았습니다 (이미지 소재이거나 아직 집계 전입니다).</p>'}
+    </div>`;
+  };
+
+  const adPanel = (row) => {
+    const keys = srcOf(row).breakdowns || [];
+    return `<div class="creative-detail">
+      <div class="perf-detail-picks">
+        ${keys.map((key) => `<label class="perf-check"><input type="checkbox" data-creative="ad-breakdown"
+    data-breakdown="${key}"${adDetail.picked.indexOf(key) >= 0 ? ' checked' : ''}>${PERF_BREAKDOWNS[key]}</label>`).join('')}
+        <small>${perfEscape(row.name)} 안을 쪼개서 봅니다.</small>
+      </div>
+      ${adDetail.picked.length ? `<div class="perf-detail-picks">
+        <span class="perf-chips">${PERF_METRICS.map(([key, name]) => `<button type="button"
+    class="perf-chip${adDetail.metric === key ? ' is-on' : ''}" data-creative="ad-metric"
+    data-metric="${key}">${key === 'linkClicks' ? perfEscape(source().clicks) : name}</button>`).join('')}</span>
+        <label class="perf-check"><input type="checkbox" data-creative="ad-table"${adDetail.table ? ' checked' : ''}>표로 보기</label>
+      </div>` : ''}
+      ${adDetail.picked.map((key) => adBreakCard(key)).join('')}
+      ${playsCard(row)}
+    </div>`;
+  };
+
   // 동영상 평균 재생시간. 초로 온다 (이미지 소재는 아예 안 온다)
   const secs = (value) => `${(Number(value) || 0).toFixed(1)}초`;
 
@@ -10559,6 +10682,9 @@ if (creativePerformance) {
           ${topRow('연령', row.age)}
           ${row.watch ? metricRow('평균재생', secs(row.watch)) : ''}
         </div>
+        ${canDetail(row) ? `<button type="button"
+    class="creative-detail-btn${adDetail.id === row.id ? ' is-on' : ''}"
+    data-creative="detail" data-id="${perfEscape(row.id)}">상세</button>` : ''}
       </div>
     </article>`;
   };
@@ -10671,7 +10797,8 @@ if (creativePerformance) {
         </label>
       </div>
       ${rows.length
-    ? `<div class="creative-grid">${rows.map(card).join('')}</div>`
+    ? `<div class="creative-grid">${rows.map((row) => card(row)
+    + (adDetail.id === row.id ? adPanel(row) : '')).join('')}</div>`
     : `<p class="tool-empty">${query ? '찾는 소재가 없습니다.' : '이 기간에 집행된 소재가 없습니다.'}</p>`}
     </div>`;
   };
@@ -10957,6 +11084,22 @@ if (creativePerformance) {
       render();
       return;
     }
+    if (event.target.dataset.creative === 'ad-table') {
+      adDetail.table = event.target.checked;
+      render();
+      return;
+    }
+    if (event.target.dataset.creative === 'ad-breakdown') {
+      const key = event.target.dataset.breakdown;
+      const at = adDetail.picked.indexOf(key);
+      if (at >= 0) adDetail.picked.splice(at, 1);
+      else {
+        adDetail.picked.push(key);
+        if (!adDetail.data[key]) { loadAdBreakdown(adDetail.id, key); return; }
+      }
+      render();
+      return;
+    }
     if (event.target.dataset.creative === 'prod') {
       const id = event.target.dataset.prod;
       const at = state.prod.indexOf(id);
@@ -11020,6 +11163,7 @@ if (creativePerformance) {
       report = null;
       creatives = [];
       mix = {};
+      adDetail = noAdDetail();   // 매체가 바뀌면 열어 둔 상세는 남의 소재 번호다
       save();
       if (isAll()) loadAll(false);
       else loadAccounts();
@@ -11034,6 +11178,27 @@ if (creativePerformance) {
     }
     if (event.target.closest('[data-creative="clear"]')) { query = ''; caretAt = 'search'; caret = 0; render(); return; }
     if (event.target.closest('[data-creative="group-clear"]')) { groupQuery = ''; caretAt = 'group'; caret = 0; render(); return; }
+    const more = event.target.closest('[data-creative="detail"]');
+    if (more) {
+      const id = more.dataset.id;
+      if (adDetail.id === id) { adDetail = noAdDetail(); render(); return; }
+      // 고른 쪼개기 · 지표는 소재를 옮겨도 그대로 둔다 (같은 눈으로 이어 보게)
+      const keep = { picked: adDetail.picked.slice(), metric: adDetail.metric, table: adDetail.table };
+      adDetail = noAdDetail();
+      adDetail.id = id;
+      adDetail.picked = keep.picked;
+      adDetail.metric = keep.metric;
+      adDetail.table = keep.table;
+      render();
+      adDetail.picked.forEach((key) => loadAdBreakdown(id, key));
+      return;
+    }
+    const pick = event.target.closest('[data-creative="ad-metric"]');
+    if (pick) {
+      adDetail.metric = pick.dataset.metric;
+      render();
+      return;
+    }
     const chip = event.target.closest('[data-creative="kind"]');
     if (chip) {
       kind = kind === chip.dataset.kind ? '' : chip.dataset.kind;
@@ -11077,6 +11242,32 @@ if (creativePerformance) {
   });
 
   // 엑셀 · 시트에 그대로 붙일 수 있게 탭으로 나눈다
+  /* 상세 한 칸을 받아 온다. 소재 번호를 adset 자리에 실어 보낸다 —
+     메타는 /insights 를 광고에도 열어 두어, 광고그룹에 물을 때와 같은 길로 쪼개진다.
+     (그래서 Code.gs 에 새 창구를 내지 않았다) */
+  const loadAdBreakdown = (id, key) => {
+    const range = currentRange();
+    adDetail.status[key] = 'loading';
+    render();
+    ask({
+      action: 'metaBreakdown', account: account(), adset: id,
+      since: range.since, until: range.until, breakdown: key,
+      attribution: state.attribution,
+    })
+      .then((body) => {
+        if (adDetail.id !== id) return;   // 그 사이 다른 소재를 열었다
+        adDetail.data[key] = body.rows || [];
+        adDetail.status[key] = 'ready';
+        render();
+      })
+      .catch((reason) => {
+        if (adDetail.id !== id) return;
+        adDetail.status[key] = 'error';
+        adDetail.error[key] = reason.message;
+        render();
+      });
+  };
+
   const copyText = () => {
     // 맞춤전환은 구매 · 결과 바로 옆에 둔다. 화면 카드와 칸 차례가 같아야 대조가 된다.
     const mine = showCustom() ? ['맞춤전환'] : [];

@@ -829,6 +829,16 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .creative-metrics b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 한 소재가 여러 지면 · 연령대에 걸쳐 나간다. 맨 위 하나를 적고 그 몫을 옆에 붙인다. */
 .creative-share{margin-left:3px;font-size:10px;font-weight:600;color:#a4a39a}
+/* [상세] — 카드 맨 아래. 누르면 그 소재 하나를 쪼개 보는 판이 열린다. */
+.creative-detail-btn{display:block;width:100%;margin-top:9px;padding:5px 0;
+  border:1px solid #dcdbd4;border-radius:8px;background:#fff;
+  font-family:inherit;font-size:11px;font-weight:700;color:#6f6f68;cursor:pointer}
+.creative-detail-btn:hover{border-color:#b9c9de;background:#f5f8fc;color:#2a78d6}
+.creative-detail-btn.is-on{border-color:#2a78d6;background:#2a78d6;color:#fff}
+/* 쪼개 보는 판. 카드 격자를 가로로 가로질러 그 소재 바로 밑에 편다 —
+   카드 안에 넣으면 그림이 카드 너비(150~200px)에 갇혀 읽을 수가 없다. */
+.creative-detail{grid-column:1/-1;margin:-2px 0 4px;padding:13px 15px 4px;
+  border:1px solid #e2e1da;border-radius:12px;background:#fbfbf8}
 @media(max-width:900px){.creative-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
 
 /* 페이지 결과 (Clarity 연동 예정) */

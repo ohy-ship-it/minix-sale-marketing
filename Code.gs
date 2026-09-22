@@ -3172,6 +3172,30 @@ var CREATIVE_LIMIT = 120;
 
 /* 동영상 평균 재생시간(초). 메타는 action_type 별로 나눠 주는데 우리가 볼 것은
    video_view 하나다. 이미지 소재는 이 칸이 아예 안 와서 0 이 된다. */
+/* 동영상 재생 유지. 25 · 50 · 75 · 100% 지점까지 본 수를 그대로 담는다.
+   평균 재생시간 하나로는 "어디서 떨어져 나가는지" 를 알 수 없다 —
+   3초 평균이 앞에서 다 나간 것인지 고르게 본 것인지 가려야 소재를 고칠 수 있다.
+   같은 조회에 함께 오는 칸이라 부르는 횟수는 늘지 않는다. */
+var META_PLAY_FIELDS = [['p25', 'video_p25_watched_actions'],
+  ['p50', 'video_p50_watched_actions'], ['p75', 'video_p75_watched_actions'],
+  ['p100', 'video_p100_watched_actions']];
+
+function metaPlays_(row) {
+  var out = null;
+  META_PLAY_FIELDS.forEach(function (pair) {
+    var list = (row && row[pair[1]]) || [];
+    var value = 0;
+    for (var i = 0; i < list.length; i += 1) {
+      if (String(list[i].action_type || '') === 'video_view') { value = Number(list[i].value || 0); break; }
+    }
+    if (!value && list.length) value = Number(list[0].value || 0);
+    if (!value) return;
+    if (!out) out = { p25: 0, p50: 0, p75: 0, p100: 0 };
+    out[pair[0]] = value;
+  });
+  return out;   // 이미지 소재는 null 이다 (칸 자체를 안 그린다)
+}
+
 function metaWatch_(row) {
   var list = (row && row.video_avg_time_watched_actions) || [];
   for (var i = 0; i < list.length; i += 1) {
@@ -3244,7 +3268,8 @@ function metaCreatives_(payload) {
     level: 'ad',
     fields: 'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,'
       + 'inline_link_clicks,actions,catalog_segment_actions,action_values,catalog_segment_value,'
-      + 'video_avg_time_watched_actions',
+      + 'video_avg_time_watched_actions,video_p25_watched_actions,'
+      + 'video_p50_watched_actions,video_p75_watched_actions,video_p100_watched_actions',
     time_range: range,
     limit: 200,
     use_unified_attribution_setting: 'true', action_attribution_windows: META_WINDOWS.join(',')
@@ -3260,7 +3285,7 @@ function metaCreatives_(payload) {
       adsetName: row.adset_name || '',
       objective: '', active: false, status: '', thumbnail: '', video: '',
       // 동영상 평균 재생시간(초) · 소재노출위치 · 연령. 뒤의 둘은 아래에서 채운다.
-      watch: metaWatch_(row), place: null, age: null
+      watch: metaWatch_(row), plays: metaPlays_(row), place: null, age: null
     }, window);
   }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
 
