@@ -7916,6 +7916,9 @@ function kolMedia_(found) {
       var value = one ? Number(one[name]) : 0;
       out[name] = isFinite(value) ? value : 0;
     });
+    /* 손으로 적은 줄이라는 표. 이걸 안 담으면 다시 읽을 때 파일에서 온 줄과
+       구별할 수가 없어, 적는 칸이 닫히고 [파일 다시 올리기] 에 조용히 지워진다. */
+    if (one && one.hand) out.hand = 1;
     return out;
   });
 }

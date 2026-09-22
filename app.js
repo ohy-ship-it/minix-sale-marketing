@@ -13772,6 +13772,7 @@ if (kolLiveView) {
       const key = `${one.phase}|${one.name}`;
       if (!box[key]) box[key] = Object.assign({ phase: one.phase, name: one.name }, mediaBlank());
       MEDIA_FIELDS.forEach(([field]) => { box[key][field] += Number(one[field]) || 0; });
+      if (one.hand) box[key].hand = 1;   // 손으로 적은 줄은 파일을 더해도 그 표를 지킨다
     });
     packs.forEach((pack) => {
       ((pack.body && pack.body.phases) || []).forEach((phase) => {
@@ -13792,19 +13793,22 @@ if (kolLiveView) {
   };
 
   // 단계는 사전 · 당일 · 사후 차례로, 그 안에서는 광고비가 큰 매체가 위로
-  const mediaSort = (box) => {
+  const mediaSort = (list) => {
     const at = (one) => {
       const found = MEDIA_PHASES.indexOf(one.phase);
       return found < 0 ? MEDIA_PHASES.length : found;
     };
-    return Object.keys(box).map((key) => box[key]).sort((one, two) => {
+    return list.slice().sort((one, two) => {
       if (at(one) !== at(two)) return at(one) - at(two);
       if (one.phase !== two.phase) return one.phase.localeCompare(two.phase);
       return two.spend - one.spend;
     }).slice(0, MEDIA_MAX);
   };
 
-  const mediaPack = (packs, seed) => mediaSort(mediaBox(packs, seed));
+  const mediaPack = (packs, seed) => {
+    const box = mediaBox(packs, seed);
+    return mediaSort(Object.keys(box).map((key) => box[key]));
+  };
 
   // 올린 파일이 그 파일이 맞는지 본다. 아니면 까닭을 그대로 알려 준다.
   const mediaRead = (picked) => picked.text().then((text) => {
@@ -13829,9 +13833,12 @@ if (kolLiveView) {
           data-kol="mediaFile" data-month="${at}">
         ${list.length ? `<button type="button" class="tool-copy-all" data-kol="mediaMore"
           data-month="${at}" title="이미 올린 값 위에 더합니다 (브랜드검색처럼 파일이 따로 나오는 매체)">
-          <i data-lucide="plus"></i>파일 더하기</button>
+          <i data-lucide="file-plus"></i>파일 더하기</button>
         <button type="button" class="tool-copy-all" data-kol="mediaClear"
           data-month="${at}"><i data-lucide="trash-2"></i>지우기</button>` : ''}
+        <button type="button" class="tool-copy-all" data-kol="mediaAdd" data-month="${at}"
+          title="파일에 없는 매체를 손으로 적습니다 (협찬 · 오프라인처럼 전매체에 안 잡히는 것)">
+          <i data-lucide="plus"></i>줄 추가</button>
         ${from ? `<small>${escape((from.files || []).join(' · '))}${from.at
     ? ` · ${escape(new Date(from.at).toLocaleString('ko-KR'))}` : ''}</small>` : ''}
       </div>`;
@@ -13840,16 +13847,27 @@ if (kolLiveView) {
       return `${head}<p class="tool-empty">매체별 성과 → <b>전매체 검색</b> → 
         <b>행사별 결과로 보내기</b> 로 받은 .json 파일을 올리면
         Phase × 매체로 펼쳐 보여 드립니다. <b>여러 개를 한 번에 골라</b> 올리면 합칩니다
-        (브랜드검색은 파일이 따로 나옵니다 — 같이 고르세요). 나중에 <b>파일 더하기</b> 로도 얹을 수 있습니다.</p></div>`;
+        (브랜드검색은 파일이 따로 나옵니다 — 같이 고르세요). 나중에 <b>파일 더하기</b> 로도 얹을 수 있고,
+        <b>줄 추가</b> 로 파일에 없는 매체를 손으로 적을 수도 있습니다.</p></div>`;
     }
 
-    const cell = (one) => MEDIA_FIELDS.map(([name, , kind]) => `<td class="perf-num">${kind === 'won'
-      ? money(one[name]) : count(one[name])}</td>`).join('')
-      + `<td class="perf-num">${money(mCpa(one))}</td>
+    // 셈한 칸 다섯. 파일에서 온 줄이든 손으로 적은 줄이든 같은 셈이다.
+    const done = (one) => `<td class="perf-num">${money(mCpa(one))}</td>
         <td class="perf-num">${rate(mCvr(one))}</td>
         <td class="perf-num">${money(mCpm(one))}</td>
         <td class="perf-num">${money(mCpc(one))}</td>
         <td class="perf-num">${rate(mCtr(one))}</td>`;
+
+    const cell = (one) => MEDIA_FIELDS.map(([name, , kind]) => `<td class="perf-num">${kind === 'won'
+      ? money(one[name]) : count(one[name])}</td>`).join('') + done(one);
+
+    /* 손으로 적는 줄 — 네 칸이 적는 칸이 된다.
+       전매체 파일에 안 잡히는 것(협찬 · 오프라인 · 다른 계정)을 여기에 적어 두면
+       단계 종합과 total 에 그대로 더해진다. */
+    const handCell = (one, i) => MEDIA_FIELDS.map(([name]) => `<td class="perf-num"><input type="text"
+      class="kol-in kol-in-s" inputmode="numeric" data-kol-mv="1" data-month="${at}"
+      data-at="${i}" data-field="${name}"
+      value="${one[name] ? escape(commaNum(one[name])) : ''}" placeholder="0"></td>`).join('') + done(one);
 
     /* Phase 는 그 묶음의 첫 줄에만 적는다. 줄마다 되풀이하면 정작 봐야 할
        매체 이름이 뒤로 밀린다 (시트에서도 병합해 둔 칸이다). */
@@ -13862,9 +13880,19 @@ if (kolLiveView) {
         body.push(`<tr class="kol-part"><td class="perf-name"><span></span></td>
           <td class="perf-name"><span>종합</span></td>${cell(part)}</tr>`);
       }
-      body.push(`<tr class="${fresh ? 'kol-fresh' : ''}">
-        <td class="perf-name"><span>${fresh ? escape(one.phase) : ''}</span></td>
-        <td class="perf-name"><span>${escape(one.name)}</span></td>${cell(one)}</tr>`);
+      body.push(one.hand
+        ? `<tr class="${fresh ? 'kol-fresh ' : ''}kol-hand">
+            <td class="perf-name"><span>${fresh ? escape(one.phase) : ''}</span></td>
+            <td class="perf-name"><span class="kol-hand-in">
+              <select data-kol-mp="1" data-month="${at}" data-at="${i}" title="단계를 고릅니다">${MEDIA_PHASES
+    .map((name) => `<option value="${escape(name)}"${name === one.phase ? ' selected' : ''}>${escape(name)}</option>`).join('')}</select>
+              <input type="text" data-kol-mn="1" data-month="${at}" data-at="${i}"
+                value="${escape(one.name)}" placeholder="매체 이름" autocomplete="off" spellcheck="false">
+              <button type="button" data-kol="mediaDrop" data-month="${at}" data-at="${i}"
+                title="이 줄을 지웁니다"><i data-lucide="x"></i></button></span></td>${handCell(one, i)}</tr>`
+        : `<tr class="${fresh ? 'kol-fresh' : ''}">
+            <td class="perf-name"><span>${fresh ? escape(one.phase) : ''}</span></td>
+            <td class="perf-name"><span>${escape(one.name)}</span></td>${cell(one)}</tr>`);
       last = one.phase;
       if (i === list.length - 1) {
         const part = mediaSum(list.filter((each) => each.phase === last));
@@ -14212,6 +14240,36 @@ if (kolLiveView) {
         box.click();
         return;
       }
+      if (what === 'mediaAdd') {
+        const row = rowOf(hit.dataset.month);
+        if (!row) return;
+        if (!row.media) row.media = [];
+        /* 빈 줄 하나를 넣는다. 단계는 마지막 줄의 것을 이어받는다 —
+           대개 같은 단계에 여러 매체를 이어 적기 때문이다. */
+        const tail = row.media.length ? row.media[row.media.length - 1].phase : '';
+        row.media.push({ phase: tail || MEDIA_PHASES[0], name: '',
+          spend: 0, imp: 0, clk: 0, conv: 0, hand: 1 });
+        row.media = mediaSort(row.media);
+        note = `${monthLabel(row.month)} 매체별 결과에 빈 줄을 넣었습니다 — 매체 이름과 숫자를 적어 주세요`;
+        error = '';
+        render();
+        // 막 만든 칸에 커서를 둔다 (이름이 비어 있는 줄이 그것이다)
+        const empty = Array.from(kolLiveView.querySelectorAll('.kol-hand input[data-kol-mn]'))
+          .filter((box) => !box.value)[0];
+        if (empty) empty.focus();
+        save(row.month);
+        return;
+      }
+      if (what === 'mediaDrop') {
+        const row = rowOf(hit.dataset.month);
+        if (!row || !row.media) return;
+        row.media.splice(Number(hit.dataset.at), 1);
+        note = `${monthLabel(row.month)} 매체별 결과에서 한 줄을 뺐습니다`;
+        error = '';
+        render();
+        save(row.month);
+        return;
+      }
       if (what === 'mediaClear') {
         const row = rowOf(hit.dataset.month);
         if (!row) return;
@@ -14262,6 +14320,26 @@ if (kolLiveView) {
   };
 
   kolLiveView.addEventListener('input', (event) => {
+    /* 손으로 적는 매체 줄. 적는 동안에는 담기만 하고 다시 그리지 않는다 —
+       한 글자마다 표를 다시 그리면 커서가 칸 밖으로 튀어 적을 수가 없다.
+       셈한 칸 · 종합은 손을 뗄 때(change) 다시 그린다. */
+    const hand = event.target.closest('[data-kol-mn],[data-kol-mv]');
+    if (hand) {
+      const row = rowOf(hand.dataset.month);
+      const one = row && (row.media || [])[Number(hand.dataset.at)];
+      if (!one) return;
+      if (hand.hasAttribute('data-kol-mn')) {
+        one.name = hand.value;
+        save(row.month);
+        return;
+      }
+      const value = numValue(hand.value);
+      hand.classList.toggle('is-bad', value === null);
+      if (value === null) return;      // 못 센 수식은 그대로 두고 빨간 칸만 남긴다
+      one[hand.dataset.field] = value;
+      save(row.month);
+      return;
+    }
     const named = event.target.closest('[data-kol-promo]');
     if (named) {
       const row = rowOf(named.dataset.month);
@@ -14279,6 +14357,23 @@ if (kolLiveView) {
   });
 
   kolLiveView.addEventListener('change', (event) => {
+    const phase = event.target.closest('[data-kol-mp]');
+    if (phase) {
+      const row = rowOf(phase.dataset.month);
+      const one = row && (row.media || [])[Number(phase.dataset.at)];
+      if (!one) return;
+      one.phase = phase.value;
+      row.media = mediaSort(row.media);   // 단계가 바뀌었으니 자리를 다시 잡는다
+      render();
+      save(row.month);
+      return;
+    }
+    const typed = event.target.closest('[data-kol-mn],[data-kol-mv]');
+    if (typed) {
+      // 손을 뗐다. 셈한 칸 · 단계 종합 · total 을 다시 그린다 (값은 이미 담겨 있다)
+      if (rowOf(typed.dataset.month)) render();
+      return;
+    }
     const file = event.target.closest('[data-kol="mediaFile"]');
     if (file) {
       const row = rowOf(file.dataset.month);

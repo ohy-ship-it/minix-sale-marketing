@@ -1163,10 +1163,13 @@ span.bg-kind{cursor:default}
 .kol-left{color:#8a6d3b}
 .kol-left b{color:#6f5629}
 /* 프로모션명 — 목록 줄에서 바로 적는다. 숫자 칸과 달리 왼쪽 맞춤이다. */
-/* 머리글도 값과 같은 이름표를 달고 있다. 이 한 줄이 없으면 머리글만
-   .perf-table th:not(:first-child) 규칙에 걸려 오른쪽 끝으로 가, 200px 떨어진 자리에
-   '프로모션' 이 앉고 값은 왼쪽에 앉는다 — 서로 다른 칸처럼 보인다. */
-.kol-promo{width:200px;padding-left:4px!important;text-align:left}
+/* 머리글도 값과 같은 이름표를 달고 있다. 이 규칙이 없으면 머리글만
+   .perf-table th:not(:first-child) 에 걸려 오른쪽 끝으로 가, 200px 떨어진 자리에
+   '프로모션' 이 앉고 값은 왼쪽에 앉는다 — 서로 다른 칸처럼 보인다.
+   **.kol-promo 한 낱말로는 못 이긴다** — 저쪽은 (클래스1+요소1+:not 안의 클래스1) 이라
+   이쪽보다 세다. 그래서 표 이름표까지 붙여 같은 힘으로 맞추고, 뒤에 적어 이긴다. */
+.kol-promo{width:200px;padding-left:4px!important}
+.kol-table th.kol-promo,.kol-table td.kol-promo{text-align:left}
 /* 적어 둔 값 — 칸을 닫고 글자로 보여 준다. 누르면 다시 열린다. */
 .kol-pick{cursor:pointer;border-radius:5px;padding:1px 3px;margin-left:-3px}
 .kol-pick:hover{background:#f0f0eb;color:#2a78d6}
@@ -1179,6 +1182,13 @@ span.bg-kind{cursor:default}
   font-family:inherit;font-size:12px;color:#3d3d39}
 .kol-promo-in::placeholder{color:#c9c8c3}
 .kol-promo-in:focus{outline:none;border-color:#2a78d6;box-shadow:0 0 0 3px rgba(42,120,214,.12)}
+/* 총계 상자. 흰 바탕에 '—' 만 있으면 빈 칸처럼 보여 아직 안 적은 달이 휑하다.
+   옅은 파랑을 깔아 '여기가 그 달의 총계' 라는 것이 한눈에 보이게 한다. */
+.kol-hero .bg-stat{background:#f3f7fd;border-color:#d3e2f4}
+.kol-hero .bg-stat small{color:#5c7ea6}
+.kol-hero .bg-stat b{color:#1f5da3}
+.kol-hero .bg-stat em{color:#8ba6c4}
+
 /* 매체별 결과 — 올린 파일로 그린다. 표가 넓어 따로 가로 폭을 준다. */
 .kol-file{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 9px}
 .kol-file small{font-size:11px;color:#a5a49f}
@@ -1186,6 +1196,21 @@ span.bg-kind{cursor:default}
 .kol-media-table .budget-total td{border-top:1px solid #ddddd6;background:#fafaf8;font-weight:700}
 .kol-media-table .kol-fresh td{border-top:1px solid #e2e1da}
 .kol-media-table td:nth-child(2) span{font-weight:600;color:#6f6f68}
+/* 손으로 적은 줄. 파일에서 온 줄과 눈으로 갈리게 왼쪽에 줄을 긋는다. */
+.kol-media-table .kol-hand td:first-child{box-shadow:inset 3px 0 0 #2a78d6}
+.kol-hand-in{display:inline-flex;align-items:center;gap:5px}
+.kol-hand-in select,.kol-hand-in input{padding:4px 6px;border:1px solid #dcdbd4;border-radius:6px;
+  background:#fff;font-family:inherit;font-size:11.5px;font-weight:600;color:#3d3d39}
+.kol-hand-in select{width:62px}
+.kol-hand-in input{width:126px}
+.kol-hand-in select:focus,.kol-hand-in input:focus{outline:none;border-color:#2a78d6;
+  box-shadow:0 0 0 3px rgba(42,120,214,.12)}
+.kol-hand-in button{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+  padding:0;border:none;border-radius:6px;background:none;color:#c2c1bb;cursor:pointer}
+.kol-hand-in button:hover{background:#faeceb;color:#c9302c}
+.kol-hand-in button i{width:13px;height:13px}
+/* 매체별 결과 칸은 단계별 표보다 좁다 (칸이 아홉이라 92px 씩 주면 넘친다) */
+.kol-in-s{width:78px;padding:4px 6px;font-size:11.5px}
 
 /* ── 사이드바 스크롤 ────────────────────────────────────────── */
 /* 사이드바는 화면에 붙어 있어(position:fixed) 창이 낮으면 아래 메뉴가 잘려 못 눌렀다.
