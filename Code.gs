@@ -2011,6 +2011,30 @@ var META_OBJECTIVES = ['OUTCOME_SALES', 'OUTCOME_TRAFFIC', 'OUTCOME_AWARENESS',
 var META_OPT_GOALS = ['OFFSITE_CONVERSIONS', 'LINK_CLICKS', 'REACH', 'IMPRESSIONS',
   'LANDING_PAGE_VIEWS', 'POST_ENGAGEMENT'];
 var META_BILL_EVENTS = ['IMPRESSIONS', 'LINK_CLICKS', 'POST_ENGAGEMENT'];
+
+/* 물려받은 promoted_object 에서 **카탈로그 자리**를 턴다.
+   자동세팅이 만드는 것은 픽셀 전환 광고세트다. 그런데 같은 캠페인에 어드밴티지+
+   카탈로그 광고세트가 하나라도 있으면 그 promoted_object 에 product_set_id 가 들어 있고,
+   그대로 베껴 보내면 메타가 '선택된 제품 세트가 유효하지 않습니다' 로 되돌려준다 —
+   제품 세트는 그 광고세트의 것이라 새 광고세트가 아무렇게나 쓸 수 있는 물건이 아니다.
+   그래서 **베낄 것만 골라 담는다** (모르는 자리가 생겨도 새어 나가지 않게 고르는 쪽으로 둔다). */
+var META_PROMOTED_KEEP = ['pixel_id', 'custom_event_type', 'custom_event_str',
+  'page_id', 'application_id', 'object_store_url', 'offline_conversion_data_set_id'];
+function metaPromotedClean_(one) {
+  if (!one || typeof one !== 'object') return null;
+  var out = {};
+  var has = false;
+  META_PROMOTED_KEEP.forEach(function (key) {
+    if (one[key] === undefined || one[key] === null || one[key] === '') return;
+    out[key] = String(one[key]);
+    has = true;
+  });
+  return has ? out : null;
+}
+// 카탈로그 광고세트인가 (제품 세트 · 카탈로그 번호가 붙어 있으면)
+function metaHasCatalog_(one) {
+  return !!(one && typeof one === 'object' && (one.product_set_id || one.product_catalog_id));
+}
 var META_CTAS = ['SHOP_NOW', 'APPLY_NOW', 'LEARN_MORE', 'SIGN_UP', 'GET_OFFER',
   'ORDER_NOW', 'SUBSCRIBE', 'CONTACT_US'];
 
@@ -2177,12 +2201,29 @@ function metaMake_(payload) {
 
   // ① 캠페인 — 이름이 같은 것이 있으면 그것을 쓴다
   var campaignId = '';
+  var campaignCatalog = false;
+  /* promoted_object 를 못 읽는 계정이 있어도 **이름 찾기까지 같이 넘어가면 안 된다** —
+     그러면 이미 있는 캠페인을 못 보고 같은 이름으로 하나 더 만들게 된다.
+     그래서 자리를 못 읽으면 이름만 다시 읽는다. */
+  var already = [];
   try {
-    var already = graphAll_('/' + account + '/campaigns', { fields: 'id,name', limit: 200 }, 3);
-    for (var i = 0; i < already.length && !campaignId; i += 1) {
-      if (String(already[i].name || '') === campaignName) campaignId = String(already[i].id);
-    }
-  } catch (error) { /* 못 읽으면 새로 만든다 */ }
+    already = graphAll_('/' + account + '/campaigns',
+      { fields: 'id,name,promoted_object', limit: 200 }, 3);
+  } catch (error) {
+    try { already = graphAll_('/' + account + '/campaigns', { fields: 'id,name', limit: 200 }, 3); }
+    catch (again) { already = []; }   /* 그래도 못 읽으면 새로 만든다 */
+  }
+  for (var i = 0; i < already.length && !campaignId; i += 1) {
+    if (String(already[i].name || '') !== campaignName) continue;
+    campaignId = String(already[i].id);
+    campaignCatalog = metaHasCatalog_(already[i].promoted_object);
+  }
+  /* 카탈로그 판매 캠페인은 광고세트마다 제품 세트를 골라야 한다. 자동세팅은 그것을
+     고를 줄 모르니, 엉뚱한 제품 세트를 붙여 놓고 실패하기 전에 여기서 멈춘다. */
+  if (campaignCatalog) {
+    throw new Error('이름이 같은 캠페인 ' + campaignId + ' 은 카탈로그(어드밴티지+ 카탈로그) 캠페인입니다. '
+      + '자동세팅은 픽셀 전환 캠페인만 만듭니다 — 캠페인명을 다르게 적어 새로 만들어 주세요.');
+  }
 
   if (campaignId) {
     log.push('캠페인은 이미 있는 것을 씁니다 (' + campaignId + ')');
@@ -2210,17 +2251,30 @@ function metaMake_(payload) {
     log.push('광고세트는 이미 있는 것을 씁니다 (' + adsetId + ')');
   } else {
     var promoted = '';
+    var sawCatalog = false;
     try {
+      /* 하나만 보지 않는다 — 먼저 잡히는 광고세트가 카탈로그 것이면 베낄 픽셀이 없다.
+         여럿을 보고 **픽셀이 붙은 광고세트**를 고른다. */
       var sample = graphAll_('/' + campaignId + '/adsets',
-        { fields: 'promoted_object,optimization_goal,billing_event', limit: 1 }, 1);
-      if (sample.length) {
-        if (sample[0].promoted_object) promoted = JSON.stringify(sample[0].promoted_object);
-        if (sample[0].optimization_goal) optGoal = sample[0].optimization_goal;
-        if (sample[0].billing_event) billEvent = sample[0].billing_event;
+        { fields: 'promoted_object,optimization_goal,billing_event', limit: 25 }, 1);
+      var pick = null;
+      for (var s = 0; s < sample.length; s += 1) {
+        if (metaHasCatalog_(sample[s].promoted_object)) sawCatalog = true;
+        var clean = metaPromotedClean_(sample[s].promoted_object);
+        if (clean && clean.pixel_id) { pick = { row: sample[s], promoted: clean }; break; }
+        if (!pick) pick = { row: sample[s], promoted: clean };
+      }
+      if (pick) {
+        if (pick.promoted) promoted = JSON.stringify(pick.promoted);
+        if (pick.row.optimization_goal) optGoal = pick.row.optimization_goal;
+        if (pick.row.billing_event) billEvent = pick.row.billing_event;
         log.push('기존 광고세트 설정을 물려받았습니다 (최적화 ' + optGoal
           + ' · 픽셀 ' + (promoted ? '있음' : '없음') + ')');
       }
     } catch (error) { /* 물려받을 것이 없으면 아래에서 픽셀을 찾는다 */ }
+    if (sawCatalog) {
+      log.push('카탈로그 광고세트의 제품 세트는 물려받지 않았습니다 (픽셀 전환으로 만듭니다)');
+    }
 
     if (!promoted && optGoal === 'OFFSITE_CONVERSIONS') {
       try {
