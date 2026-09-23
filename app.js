@@ -5289,8 +5289,12 @@ if (adSetup) {
   };
 
   // 실행 전에 T&D 시트의 제목/문구를 미리 확인한다 (비어 있으면 광고 문구가 빈 채로 올라간다)
-  // T&D 시트에서 찾을 이름 — 조회해 온 줄의 행사명, 없으면 적어 둔 세팅명
-  const tndKey = () => tr((rows[selectedIdx] || rows[0] || {}).event) || tr(state.setup);
+  /* T&D 시트에서 찾을 이름 — **세팅명**이다.
+     한 행사에 세팅이 여럿 붙으면 행사명으로는 갈라지지 않아 파트 탭 조회(lookupSheet)를
+     이미 세팅명으로 옮겨 두었다. T&D 도 같은 열쇠로 찾아야 두 조회가 어긋나지 않는다.
+     세팅명이 비는 일은 없지만(조회 자체가 세팅명으로 돈다) 만약을 위해
+     조회해 온 줄의 행사명으로 물러선다. */
+  const tndKey = () => tr(state.setup) || tr((rows[selectedIdx] || rows[0] || {}).event);
 
   const loadTnd = async () => {
     const sheetId = (tr(state.sheetUrl).match(/\/d\/([^/]+)/) || [])[1];
@@ -5302,25 +5306,29 @@ if (adSetup) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const raw = await response.text();
       const json = JSON.parse((raw.match(/\{[\s\S]*\}/) || [''])[0]);
-      /* T&D 시트의 덩어리 이름은 **행사명**이다 (세팅명이 아니다).
-         조회로 찾아 온 줄에 행사명이 적혀 있으니 그것으로 찾는다. */
+      /* 덩어리 이름과 세팅명을 견준다.
+         딱 맞는 것을 먼저 찾고, 없으면 **한쪽이 다른 쪽을 품고 있는** 것을 쓴다 —
+         덩어리 이름을 세팅명 그대로('음쓰해방위크-1차') 적기도 하고 행사명까지만
+         ('음쓰해방위크') 적기도 해서, 한 방향만 보면 못 찾는다.
+         너무 짧은 이름이 아무 데나 걸리지 않게 두 글자부터 본다. */
       const key = tndKey().replace(/\s/g, '').toLowerCase();
       let hit = null;
+      let loose = null;
       for (const row of json.table.rows || []) {
         const cells = row.c || [];
         if (cells.length < 5) continue;
         const b = cells[1] && cells[1].v ? String(cells[1].v) : '';
         if (!b) continue;
         const bKey = b.replace(/\s/g, '').toLowerCase();
-        if (bKey === key || (key && bKey.includes(key))) {
-          hit = {
-            headline: cells[3] && cells[3].v ? String(cells[3].v) : '',
-            body: cells[4] && cells[4].v ? String(cells[4].v) : '',
-          };
-          break;
-        }
+        const found = {
+          headline: cells[3] && cells[3].v ? String(cells[3].v) : '',
+          body: cells[4] && cells[4].v ? String(cells[4].v) : '',
+        };
+        if (key && bKey === key) { hit = found; break; }
+        if (!loose && key && bKey.length >= 2
+          && (bKey.includes(key) || key.includes(bKey))) loose = found;
       }
-      tnd = hit || { empty: true };
+      tnd = hit || loose || { empty: true };
     } catch (error) {
       tnd = { error: error.message };
     }
@@ -5607,8 +5615,11 @@ if (adSetup) {
   const tndBox = () => {
     if (!tnd) return '';
     if (tnd.loading) return '<div class="setup-tnd">T&amp;D 확인 중…</div>';
-    if (tnd.error) return `<div class="setup-tnd is-warn">T&amp;D 미리보기 실패 (${escapeHtml(tnd.error)}) — 스크립트는 실행할 때 직접 다시 읽으므로 그대로 진행해도 됩니다.</div>`;
-    if (tnd.empty) return `<div class="setup-tnd is-warn">시트 <b>${escapeHtml(TND_SHEET_NAME)}</b> 에서 <b>${escapeHtml(tndKey())}</b> 를 찾지 못했습니다. 이대로 실행하면 제목·문구가 빈 채로 올라갑니다.</div>`;
+    /* 예전에는 '스크립트가 실행할 때 다시 읽는다' 고 적어 두었는데, 지금은 여기서 읽은
+       값이 그대로 광고에 올라간다 (make 가 tnd.headline · tnd.body 를 그대로 보낸다).
+       못 읽었으면 빈 채로 올라가므로 그렇다고 말해 준다. */
+    if (tnd.error) return `<div class="setup-tnd is-warn">T&amp;D 미리보기 실패 (${escapeHtml(tnd.error)}) — 이대로 실행하면 제목·문구가 빈 채로 올라갑니다. 시트 URL·공유 설정을 확인해 주세요.</div>`;
+    if (tnd.empty) return `<div class="setup-tnd is-warn">시트 <b>${escapeHtml(TND_SHEET_NAME)}</b> 에서 세팅명 <b>${escapeHtml(tndKey())}</b> 를 찾지 못했습니다. 이대로 실행하면 제목·문구가 빈 채로 올라갑니다.</div>`;
     return `<div class="setup-tnd">
       <div><b>제목</b><span>${escapeHtml(tnd.headline) || '<i>비어 있음</i>'}</span></div>
       <div><b>문구</b><span>${escapeHtml(tnd.body.slice(0, 160)) || '<i>비어 있음</i>'}${tnd.body.length > 160 ? '…' : ''}</span></div>
