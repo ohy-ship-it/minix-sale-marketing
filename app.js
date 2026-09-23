@@ -5319,15 +5319,26 @@ if (adSetup) {
        소재문구-메타   세팅명 · 행사명 · 매체 · 파일명 · 광고문구
      한 칸씩 밀려 있어 자리로 읽으면 세팅명 자리에 행사명이 잡힌다.
      머리글을 못 찾으면 예전 자리(행사명 B · 파일명 D · 광고문구 E)로 물러선다. */
-  const TND_COLS = { setup: '세팅명', event: '행사명', head: '제목', file: '파일명', body: '광고문구' };
+  /* 머리글은 탭마다 조금씩 다르게 적혀 있다 —
+       '광고문구 (피드65) (쇼핑57)' · '문구' · '광고 문구'
+     그래서 이름을 여러 개 두고, **빈칸을 턴 뒤 앞머리로** 견준다. */
+  const TND_COLS = {
+    setup: ['세팅명'],
+    event: ['행사명'],
+    head: ['제목', '헤드라인', '타이틀'],
+    file: ['파일명', '소재명'],
+    body: ['광고문구', '소재문구', '문구', '카피', '본문'],
+  };
+  const tndFlat = (text) => String(text === undefined || text === null ? '' : text).replace(/\s/g, '');
+  // 0 → A · 4 → E. 화면에 '문구는 E열에서 읽었습니다' 라고 적어 주려고 둔다.
+  const tndAt = (at) => (at >= 0 ? String.fromCharCode(65 + at) + '열' : '(못 찾음)');
   const tndHead = (table) => {
     for (const row of table) {
-      const cells = (row.c || []).map((one) => (one && one.v ? String(one.v).trim() : ''));
-      /* 머리글은 **앞머리로** 견준다. [DA] 메타 의 문구 칸은
-         '광고문구 (피드65) (쇼핑57)' 처럼 뒤에 글자 수가 붙어 있어 딱 맞지 않는다. */
+      const cells = (row.c || []).map((one) => tndFlat(one && one.v ? one.v : ''));
       const at = {};
       Object.keys(TND_COLS).forEach((name) => {
-        at[name] = cells.findIndex((one) => one.indexOf(TND_COLS[name]) === 0);
+        at[name] = cells.findIndex((one) => one
+          && TND_COLS[name].some((want) => one.indexOf(tndFlat(want)) === 0));
       });
       if (at.setup >= 0 || at.event >= 0) return at;
     }
@@ -5348,9 +5359,14 @@ if (adSetup) {
       const head = tndHead(table);
       // 열쇠는 세팅명 칸. 그 칸이 없는 탭이면 행사명 칸으로 견준다.
       const keyAt = head ? (head.setup >= 0 ? head.setup : head.event) : 1;
-      const label = head && head.setup >= 0 ? TND_COLS.setup : TND_COLS.event;
-      const headAt = head ? (head.head >= 0 ? head.head : head.file) : 3;
-      const bodyAt = head ? head.body : 4;
+      const keyNames = head && head.setup >= 0 ? TND_COLS.setup : TND_COLS.event;
+      /* 제목 · 문구 칸을 이름으로 못 찾으면 **파일명 바로 다음 칸**을 문구로 본다 —
+         아는 탭이 둘 다 그 차례다 (… 파일명 · 광고문구 …). 머리글을 조금 다르게
+         적어 두었다고 문구가 빈 채로 올라가면 안 된다. */
+      const headAt = head && head.head >= 0 ? head.head
+        : (head && head.file >= 0 ? head.file : 3);
+      const bodyAt = head && head.body >= 0 ? head.body
+        : (head && head.file >= 0 ? head.file + 1 : 4);
       /* 덩어리 이름과 세팅명을 견준다.
          딱 맞는 것을 먼저 찾고, 없으면 **한쪽이 다른 쪽을 품고 있는** 것을 쓴다 —
          덩어리 이름을 세팅명 그대로('음쓰해방위크-1차') 적기도 하고 행사명까지만
@@ -5363,9 +5379,10 @@ if (adSetup) {
         const cells = row.c || [];
         const cell = (at) => (at >= 0 && cells[at] && cells[at].v ? String(cells[at].v) : '');
         const name = cell(keyAt);
-        if (!name || name.trim() === label) continue;   // 빈 줄 · 머리글 줄
+        if (!name || keyNames.some((want) => tndFlat(name) === tndFlat(want))) continue;   // 빈 줄 · 머리글 줄
         const bKey = name.replace(/\s/g, '').toLowerCase();
-        const found = { headline: cell(headAt), body: cell(bodyAt) };
+        const found = { headline: cell(headAt), body: cell(bodyAt),
+          from: { head: tndAt(headAt), body: tndAt(bodyAt) } };
         if (key && bKey === key) { hit = found; break; }
         if (!loose && key && bKey.length >= 2
           && (bKey.includes(key) || key.includes(bKey))) loose = found;
@@ -5662,9 +5679,11 @@ if (adSetup) {
        못 읽었으면 빈 채로 올라가므로 그렇다고 말해 준다. */
     if (tnd.error) return `<div class="setup-tnd is-warn">T&amp;D 미리보기 실패 (${escapeHtml(tnd.error)}) — 이대로 실행하면 제목·문구가 빈 채로 올라갑니다. 시트 URL·공유 설정을 확인해 주세요.</div>`;
     if (tnd.empty) return `<div class="setup-tnd is-warn"><b>${escapeHtml(tnd.where || TND_SHEET_NAME)}</b> 에서 세팅명 <b>${escapeHtml(tndKey())}</b> 를 찾지 못했습니다. 이대로 실행하면 제목·문구가 빈 채로 올라갑니다.</div>`;
+    const from = tnd.from || {};
+    const spot = (at) => (at ? `<small class="setup-tnd-at">${escapeHtml(at)}</small>` : '');
     return `<div class="setup-tnd">
-      <div><b>제목</b><span>${escapeHtml(tnd.headline) || '<i>비어 있음</i>'}</span></div>
-      <div><b>문구</b><span>${escapeHtml(tnd.body.slice(0, 160)) || '<i>비어 있음</i>'}${tnd.body.length > 160 ? '…' : ''}</span></div>
+      <div><b>제목</b><span>${escapeHtml(tnd.headline) || `<i>비어 있음</i>${spot(from.head)}`}</span></div>
+      <div><b>문구</b><span>${escapeHtml(tnd.body.slice(0, 160)) || `<i>비어 있음</i>${spot(from.body)}`}${tnd.body.length > 160 ? '…' : ''}</span></div>
     </div>`;
   };
 
