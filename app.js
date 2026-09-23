@@ -5360,13 +5360,14 @@ if (adSetup) {
       // 열쇠는 세팅명 칸. 그 칸이 없는 탭이면 행사명 칸으로 견준다.
       const keyAt = head ? (head.setup >= 0 ? head.setup : head.event) : 1;
       const keyNames = head && head.setup >= 0 ? TND_COLS.setup : TND_COLS.event;
-      /* 제목 · 문구 칸을 이름으로 못 찾으면 **파일명 바로 다음 칸**을 문구로 본다 —
-         아는 탭이 둘 다 그 차례다 (… 파일명 · 광고문구 …). 머리글을 조금 다르게
-         적어 두었다고 문구가 빈 채로 올라가면 안 된다. */
+      /* 문구는 **E열 고정**이다. 머리글 이름으로 찾아 봤더니 탭마다 조금씩 달라
+         엉뚱한 칸을 집었다 — 쓰는 시트가 둘 다 E열에 문구를 두고 있어 자리로 못 박는다.
+           [DA] 메타     (빈칸) · 행사명 · 구좌 · 파일명 · 광고문구
+           소재문구-메타   세팅명 · 행사명 · 매체 · 파일명 · 광고문구
+         제목은 이름으로 찾고, 못 찾으면 파일명 칸(대개 D)을 쓴다. */
       const headAt = head && head.head >= 0 ? head.head
         : (head && head.file >= 0 ? head.file : 3);
-      const bodyAt = head && head.body >= 0 ? head.body
-        : (head && head.file >= 0 ? head.file + 1 : 4);
+      const bodyAt = 4;
       /* 덩어리 이름과 세팅명을 견준다.
          ① 딱 맞으면 그것. ② 없으면 **느슨하게** 걸리는 것 —
             덩어리 이름이 세팅명을 품고 있거나(행사명 칸에 세팅명을 함께 적어 둔 경우),
