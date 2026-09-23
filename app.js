@@ -10461,7 +10461,16 @@ if (creativePerformance) {
   /* 소재 하나의 상세 보기 (게재지면 · 연령 …). 매체별 성과의 상세와 같은 짜임새다 —
      쪼갤 것을 고르고, 볼 지표를 고르고, 그림 또는 표로 본다.
      **메타만 연다.** 다른 매체는 소재 단위로 쪼개 주지 않아 물어 봐야 빈 답이 온다. */
-  const noAdDetail = () => ({ id: '', picked: [], data: {}, status: {}, error: {},
+  /* 고른 쪼개기는 **브라우저에 기억해 둔다.** 그래야 화면을 열자마자 미리 받아 둘 수
+     있다 (아래 warmAds). 안 기억하면 늘 빈 채로 시작해, 첫 체크 한 번은 꼬박 기다린다. */
+  const adPicked = () => {
+    try {
+      const kept = JSON.parse(window.localStorage.getItem('minix-creative-breakdown') || '[]');
+      if (!Array.isArray(kept)) return [];
+      return kept.filter((one) => Object.prototype.hasOwnProperty.call(PERF_BREAKDOWNS, one));
+    } catch (ignore) { return []; }
+  };
+  const noAdDetail = () => ({ id: '', picked: adPicked(), data: {}, status: {}, error: {},
     metric: 'linkClicks', table: false });
   let adDetail = noAdDetail();
   const canDetail = (row) => String(row.media || state.source) === 'meta';
@@ -10985,6 +10994,7 @@ if (creativePerformance) {
         status = 'ready';
         error = '';
         render();
+        warmAds();   // 아무도 안 기다리는 틈에 상세를 미리 받아 둔다
       })
       .catch((reason) => {
         if (mine !== epoch) return;
@@ -11178,11 +11188,13 @@ if (creativePerformance) {
       const key = event.target.dataset.breakdown;
       const at = adDetail.picked.indexOf(key);
       if (at >= 0) adDetail.picked.splice(at, 1);
-      else {
-        adDetail.picked.push(key);
-        if (!adDetail.data[key]) { loadAdBreakdown(adDetail.id, [key]); return; }
-      }
+      else adDetail.picked.push(key);
+      try {
+        window.localStorage.setItem('minix-creative-breakdown', JSON.stringify(adDetail.picked));
+      } catch (ignore) { /* 거들기다 */ }
+      if (at < 0 && !adDetail.data[key]) { loadAdBreakdown(adDetail.id, [key]); return; }
       render();
+      warmAds();
       return;
     }
     if (event.target.dataset.creative === 'prod') {
@@ -11339,6 +11351,46 @@ if (creativePerformance) {
     return [id, key, range.since, range.until, state.attribution || ''].join('|');
   };
 
+  /* 미리 받아 두기.
+     재어 보니 [상세] 의 기다림은 메타가 아니라 **Apps Script 를 한 번 다녀오는 값**이
+     절반을 넘는다 — 아무 일도 안 하는 doGet 이 1.5~4초다. 그러니 누른 뒤에 묻기
+     시작하는 한 무엇을 해도 느리다.
+     그래서 목록이 뜨면 지금 보이는 소재들의 상세를 **한 번에 미리** 받아 둔다.
+     메타 쪽은 열두 개를 한꺼번에 보내도 하나 보낼 때와 시간이 거의 같아(2.2초 對 1.8초)
+     받아 두는 값이 싸다. 그 뒤로는 누르는 즉시 그려진다 — 묻지 않으니까.
+     실패해도 조용히 둔다. 거들기일 뿐이고, 못 받은 것은 누를 때 제 길로 다시 묻는다. */
+  const AD_WARM = 12;
+  let warming = '';
+
+  const warmAds = () => {
+    if (isAll() || state.source !== 'meta') return;
+    if (!adDetail.picked.length) return;
+    const ids = shown().filter(canDetail).slice(0, AD_WARM).map((row) => String(row.id));
+    const need = ids.filter((id) => adDetail.picked.some((key) => !adKept.has(adSlot(id, key))));
+    if (!need.length) return;
+    const range = currentRange();
+    const mark = [need.join(','), adDetail.picked.join(','), range.since, range.until].join('|');
+    if (warming === mark) return;   // 같은 것을 두 번 받지 않는다
+    warming = mark;
+    askSheetOnce({
+      action: 'metaBreakdown', account: account(), adset: need[0], ads: need.join(','),
+      since: range.since, until: range.until,
+      breakdown: adDetail.picked[0], breakdowns: adDetail.picked.join(','),
+      attribution: state.attribution,
+    })
+      .then((body) => {
+        const many = (body && body.ok && body.many) || {};
+        Object.keys(many).forEach((id) => {
+          Object.keys(many[id] || {}).forEach((key) => {
+            adKept.set(adSlot(id, key), many[id][key]);
+          });
+        });
+        // 그 사이 열어 둔 상세가 있으면 받아 둔 것으로 채워 그린다
+        if (adDetail.id) loadAdBreakdown(adDetail.id, adDetail.picked);
+      })
+      .catch(() => { warming = ''; });
+  };
+
   const loadAdBreakdown = (id, keys) => {
     const want = (Array.isArray(keys) ? keys : [keys]).filter(Boolean);
     const need = [];
@@ -11377,6 +11429,10 @@ if (creativePerformance) {
           need.filter((key) => adDetail.status[key] === 'loading')
             .forEach((key) => loadAdBreakdown(id, [key]));
         }
+        /* 사람이 기다리던 것은 받았다. 이제 옆 소재들을 미리 받아 둔다.
+           **끝난 뒤에** 부른다 — Apps Script 는 같은 사람의 실행을 줄 세워서,
+           같이 보내면 지금 보고 있는 것까지 뒤로 밀린다. */
+        warmAds();
       })
       .catch((reason) => {
         if (adDetail.id !== id) return;

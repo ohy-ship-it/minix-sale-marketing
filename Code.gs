@@ -5062,6 +5062,15 @@ function metaBreakdownRows_(rows, name, window) {
 var META_BREAKDOWN_FIELDS = 'spend,impressions,clicks,inline_link_clicks,'
   + 'actions,catalog_segment_actions,action_values,catalog_segment_value';
 
+/* 상세는 **여러 소재를 한꺼번에** 받는다 (ads=번호,번호,…).
+   재어 보니 기다림의 절반 넘게가 메타가 아니라 Apps Script 를 한 번 다녀오는 값이다 —
+   아무 일도 안 하는 doGet 이 1.5~4초 걸린다. 메타 쪽은 소재 하나가 1.2~1.8초인데,
+   열두 개를 한꺼번에 보내도 2.2초밖에 안 걸렸다 (fetchAll 이라 같이 간다).
+   그래서 화면은 지금 보이는 소재들을 **미리** 한 번에 받아 두고, [상세] 를 누르면
+   메타에 묻지 않고 그 자리에서 그린다.
+   담아 두는 열쇠는 소재마다 따로라, 예전처럼 하나씩 물어 담아 둔 값도 그대로 맞는다. */
+var META_BREAKDOWN_JOBS = 24;   // 한 번에 보낼 (소재 × 쪼개기) 수
+
 function metaBreakdown_(payload) {
   var account = String(payload.account || '').trim();
   if (account && account.indexOf('act_') !== 0) account = 'act_' + account;
@@ -5078,31 +5087,42 @@ function metaBreakdown_(payload) {
     ? String(payload.attribution) : '';
   var cache = CacheService.getScriptCache();
   var wanted = metaWant_(payload);
-  var slot = function (name) {
-    return ['metaBd', scope, name, since, until, window || 'default'].join('|');
+
+  /* 받아 올 소재들. **맨 앞은 늘 지금 누른 것**이다 — 개수가 넘치면 뒤가 잘리는데,
+     사람이 기다리는 것은 맨 앞 하나뿐이라 그것만은 꼭 받아야 한다. */
+  var scopes = [scope];
+  String(payload.ads || '').split(',').forEach(function (one) {
+    var id = String(one || '').trim();
+    if (id && scopes.indexOf(id) < 0) scopes.push(id);
+  });
+
+  var slot = function (who, name) {
+    return ['metaBd', who, name, since, until, window || 'default'].join('|');
   };
 
-  /* 담아 둔 것은 그대로 쓰고, 남은 것만 **한꺼번에** 메타에 묻는다.
-     열쇠는 예전과 같아, 하나씩 물어 담아 둔 값도 그대로 맞는다. */
-  var out = {};
+  /* 담아 둔 것은 그대로 쓰고, 남은 것만 **한꺼번에** 메타에 묻는다. */
+  var many = {};
   var jobs = [];
-  wanted.forEach(function (name) {
-    if (!payload.refresh) {
-      var hit = cacheGet_(cache, slot(name));
-      if (hit) {
-        try { out[name] = JSON.parse(hit).rows; return; } catch (ignore) { /* 깨졌으면 다시 읽는다 */ }
+  scopes.forEach(function (who) {
+    many[who] = {};
+    wanted.forEach(function (name) {
+      if (!payload.refresh) {
+        var hit = cacheGet_(cache, slot(who, name));
+        if (hit) {
+          try { many[who][name] = JSON.parse(hit).rows; return; } catch (ignore) { /* 깨졌으면 다시 읽는다 */ }
+        }
       }
-    }
-    jobs.push({
-      key: name, path: '/' + scope + '/insights',
-      params: {
-        breakdowns: META_BREAKDOWNS[name],
-        fields: META_BREAKDOWN_FIELDS,
-        time_range: JSON.stringify({ since: since, until: until }),
-        limit: 300,
-        use_unified_attribution_setting: 'true',
-        action_attribution_windows: META_WINDOWS.join(',')
-      }
+      if (jobs.length >= META_BREAKDOWN_JOBS) return;   // 너무 많이는 받지 않는다
+      jobs.push({ key: who + '|' + name, who: who, name: name,
+        path: '/' + who + '/insights',
+        params: {
+          breakdowns: META_BREAKDOWNS[name],
+          fields: META_BREAKDOWN_FIELDS,
+          time_range: JSON.stringify({ since: since, until: until }),
+          limit: 300,
+          use_unified_attribution_setting: 'true',
+          action_attribution_windows: META_WINDOWS.join(',')
+        } });
     });
   });
 
@@ -5110,19 +5130,28 @@ function metaBreakdown_(payload) {
     var packs = graphMany_(jobs);
     jobs.forEach(function (job) {
       var body = packs[job.key];
-      /* 한꺼번에 보내기는 한 쪽만 받는다. 소재 하나를 쪼개면 줄이 스무 개 안팎이라
-         한 쪽으로 끝나지만, 쪽이 더 있거나 못 받았으면 제대로 다시 받는다. */
-      var rows = (body && body.data && !(body.paging && body.paging.next))
-        ? body.data : graphAll_(job.path, job.params, 5);
-      out[job.key] = metaBreakdownRows_(rows, job.key, window);
-      breakdownCache_(cache, slot(job.key),
-        { ok: true, source: 'meta', breakdown: job.key, rows: out[job.key] });
+      var rows = null;
+      if (body && body.data && !(body.paging && body.paging.next)) {
+        rows = body.data;
+      } else if (job.who === scope) {
+        /* 한꺼번에 보내기는 한 쪽만 받는다. 소재 하나를 쪼개면 줄이 스무 개 안팎이라
+           한 쪽으로 끝나지만, 쪽이 더 있거나 못 받았으면 제대로 다시 받는다.
+           **지금 누른 소재만** 그렇게 한다 — 미리 받아 두는 것까지 하나씩 다시 받으면
+           빨라지자고 한 일이 도로 느려진다. */
+        rows = graphAll_(job.path, job.params, 5);
+      } else {
+        return;   // 미리 받는 것은 못 받으면 조용히 건너뛴다 (누를 때 다시 묻는다)
+      }
+      many[job.who][job.name] = metaBreakdownRows_(rows, job.name, window);
+      breakdownCache_(cache, slot(job.who, job.name),
+        { ok: true, source: 'meta', breakdown: job.name, rows: many[job.who][job.name] });
     });
   }
 
-  // rows 는 옛 화면을 위한 자리다 (고른 것 중 첫 하나). 새 화면은 sets 를 본다.
+  // rows 는 옛 화면을 위한 자리다 (고른 것 중 첫 하나). 새 화면은 sets · many 를 본다.
+  var out = many[scope] || {};
   return { ok: true, source: 'meta', breakdown: wanted[0],
-    rows: out[wanted[0]] || [], sets: out };
+    rows: out[wanted[0]] || [], sets: out, many: many };
 }
 
 // ── 카카오 ──────────────────────────────────────────────────────
