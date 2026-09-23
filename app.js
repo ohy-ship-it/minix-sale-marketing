@@ -11159,7 +11159,7 @@ if (creativePerformance) {
       if (at >= 0) adDetail.picked.splice(at, 1);
       else {
         adDetail.picked.push(key);
-        if (!adDetail.data[key]) { loadAdBreakdown(adDetail.id, key); return; }
+        if (!adDetail.data[key]) { loadAdBreakdown(adDetail.id, [key]); return; }
       }
       render();
       return;
@@ -11254,7 +11254,7 @@ if (creativePerformance) {
       adDetail.metric = keep.metric;
       adDetail.table = keep.table;
       render();
-      adDetail.picked.forEach((key) => loadAdBreakdown(id, key));
+      loadAdBreakdown(id, adDetail.picked);
       return;
     }
     const pick = event.target.closest('[data-creative="ad-metric"]');
@@ -11309,25 +11309,60 @@ if (creativePerformance) {
   /* 상세 한 칸을 받아 온다. 소재 번호를 adset 자리에 실어 보낸다 —
      메타는 /insights 를 광고에도 열어 두어, 광고그룹에 물을 때와 같은 길로 쪼개진다.
      (그래서 Code.gs 에 새 창구를 내지 않았다) */
-  const loadAdBreakdown = (id, key) => {
+  /* 한 번 받아 온 상세는 **브라우저에도** 담아 둔다. 소재를 옮겼다 돌아오면 그 자리에서
+     다시 그린다 — 서버가 10분 담아 두어도 Apps Script 를 한 번 다녀오는 것만으로
+     몇 초가 걸리기 때문이다. 기간 · 어트리뷰션이 바뀌면 열쇠가 달라져 새로 받는다. */
+  const adKept = new Map();
+  const adSlot = (id, key) => {
     const range = currentRange();
-    adDetail.status[key] = 'loading';
+    return [id, key, range.since, range.until, state.attribution || ''].join('|');
+  };
+
+  const loadAdBreakdown = (id, keys) => {
+    const want = (Array.isArray(keys) ? keys : [keys]).filter(Boolean);
+    const need = [];
+    want.forEach((key) => {
+      const kept = adKept.get(adSlot(id, key));
+      if (kept) { adDetail.data[key] = kept; adDetail.status[key] = 'ready'; return; }
+      adDetail.status[key] = 'loading';
+      need.push(key);
+    });
     render();
+    if (!need.length) return;
+
+    const range = currentRange();
+    /* 고른 것을 **한 번에** 묻는다 — 하나씩 부르면 Apps Script 를 그 수만큼 다녀오고,
+       그 왕복이 그대로 기다림이 된다 (서버는 메타 쪽도 한꺼번에 보낸다).
+       breakdown(하나) 도 같이 보낸다: 아직 새 스크립트를 배포하지 않은 동안에도
+       적어도 첫 하나는 와서 화면이 빈 채로 멈추지 않게. */
     ask({
       action: 'metaBreakdown', account: account(), adset: id,
-      since: range.since, until: range.until, breakdown: key,
+      since: range.since, until: range.until,
+      breakdown: need[0], breakdowns: need.join(','),
       attribution: state.attribution,
     })
       .then((body) => {
         if (adDetail.id !== id) return;   // 그 사이 다른 소재를 열었다
-        adDetail.data[key] = body.rows || [];
-        adDetail.status[key] = 'ready';
+        const sets = body.sets || { [need[0]]: body.rows || [] };
+        need.forEach((key) => {
+          if (!sets[key]) return;   // 옛 스크립트라 하나만 왔다
+          adDetail.data[key] = sets[key];
+          adDetail.status[key] = 'ready';
+          adKept.set(adSlot(id, key), sets[key]);
+        });
         render();
+        // 옛 스크립트가 하나만 줬으면 나머지를 하나씩 이어 부른다
+        if (need.length > 1) {
+          need.filter((key) => adDetail.status[key] === 'loading')
+            .forEach((key) => loadAdBreakdown(id, [key]));
+        }
       })
       .catch((reason) => {
         if (adDetail.id !== id) return;
-        adDetail.status[key] = 'error';
-        adDetail.error[key] = reason.message;
+        need.forEach((key) => {
+          adDetail.status[key] = 'error';
+          adDetail.error[key] = reason.message;
+        });
         render();
       });
   };

@@ -4979,10 +4979,46 @@ function breakdownSort_(rows) {
 }
 
 // ── 메타 ────────────────────────────────────────────────────────
-function metaBreakdown_(payload) {
-  var breakdown = META_BREAKDOWNS[payload.breakdown];
-  if (!breakdown) throw new Error('모르는 상세 항목입니다: ' + payload.breakdown);
+/* 쪼갤 것을 **여러 개** 받는다 (breakdowns=placement,age).
+   소재별 결과의 [상세] 는 게재지면 · 연령을 같이 보는데, 하나씩 부르면 Apps Script 를
+   그 수만큼 다녀온다 — 그 왕복 하나하나가 그대로 사람이 기다리는 시간이다.
+   옛 화면이 보내는 breakdown(하나) 도 그대로 받는다. */
+function metaWant_(payload) {
+  var raw = payload.breakdowns;
+  var list = [];
+  if (Object.prototype.toString.call(raw) === '[object Array]') list = raw;
+  else if (raw) list = String(raw).split(',');
+  if (!list.length && payload.breakdown) list = [payload.breakdown];
+  var out = [];
+  list.forEach(function (one) {
+    var name = String(one || '').trim();
+    if (!name || out.indexOf(name) >= 0) return;
+    if (!META_BREAKDOWNS[name]) throw new Error('모르는 상세 항목입니다: ' + name);
+    out.push(name);
+  });
+  if (!out.length) throw new Error('쪼갤 것을 고르지 않았습니다.');
+  return out;
+}
 
+// 받아 온 줄을 화면이 쓰는 모양으로 (쪼갠 종류마다 이름 자리가 다르다)
+function metaBreakdownRows_(rows, name, window) {
+  return breakdownSort_(rows.map(function (row) {
+    if (name === 'placement') {
+      var place = [row.publisher_platform, row.platform_position]
+        .filter(function (part) { return !!part; }).join(' · ');
+      return breakdownRow_(place, metrics_(row, {}, window));
+    }
+    if (name === 'ageGender') {
+      return breakdownRow_(row.age || '', metrics_(row, {}, window), row.gender || '');
+    }
+    return breakdownRow_(row[name] || '', metrics_(row, {}, window));
+  }));
+}
+
+var META_BREAKDOWN_FIELDS = 'spend,impressions,clicks,inline_link_clicks,'
+  + 'actions,catalog_segment_actions,action_values,catalog_segment_value';
+
+function metaBreakdown_(payload) {
   var account = String(payload.account || '').trim();
   if (account && account.indexOf('act_') !== 0) account = 'act_' + account;
   var scope = String(payload.adset || payload.campaign || account).trim();
@@ -4997,34 +5033,52 @@ function metaBreakdown_(payload) {
   var window = META_WINDOWS.indexOf(String(payload.attribution || '')) >= 0
     ? String(payload.attribution) : '';
   var cache = CacheService.getScriptCache();
-  var key = ['metaBd', scope, payload.breakdown, since, until, window || 'default'].join('|');
-  if (!payload.refresh) {
-    var hit = cacheGet_(cache, key);
-    if (hit) return JSON.parse(hit);
-  }
+  var wanted = metaWant_(payload);
+  var slot = function (name) {
+    return ['metaBd', scope, name, since, until, window || 'default'].join('|');
+  };
 
-  var rows = graphAll_('/' + scope + '/insights', {
-    breakdowns: breakdown,
-    fields: 'spend,impressions,clicks,inline_link_clicks,'
-      + 'actions,catalog_segment_actions,action_values,catalog_segment_value',
-    time_range: JSON.stringify({ since: since, until: until }),
-    limit: 300,
-    use_unified_attribution_setting: 'true', action_attribution_windows: META_WINDOWS.join(',')
-  }, 5);
-
-  var out = rows.map(function (row) {
-    if (payload.breakdown === 'placement') {
-      var place = [row.publisher_platform, row.platform_position]
-        .filter(function (part) { return !!part; }).join(' · ');
-      return breakdownRow_(place, metrics_(row, {}, window));
+  /* 담아 둔 것은 그대로 쓰고, 남은 것만 **한꺼번에** 메타에 묻는다.
+     열쇠는 예전과 같아, 하나씩 물어 담아 둔 값도 그대로 맞는다. */
+  var out = {};
+  var jobs = [];
+  wanted.forEach(function (name) {
+    if (!payload.refresh) {
+      var hit = cacheGet_(cache, slot(name));
+      if (hit) {
+        try { out[name] = JSON.parse(hit).rows; return; } catch (ignore) { /* 깨졌으면 다시 읽는다 */ }
+      }
     }
-    if (payload.breakdown === 'ageGender') {
-      return breakdownRow_(row.age || '', metrics_(row, {}, window), row.gender || '');
-    }
-    return breakdownRow_(row[payload.breakdown] || '', metrics_(row, {}, window));
+    jobs.push({
+      key: name, path: '/' + scope + '/insights',
+      params: {
+        breakdowns: META_BREAKDOWNS[name],
+        fields: META_BREAKDOWN_FIELDS,
+        time_range: JSON.stringify({ since: since, until: until }),
+        limit: 300,
+        use_unified_attribution_setting: 'true',
+        action_attribution_windows: META_WINDOWS.join(',')
+      }
+    });
   });
 
-  return breakdownCache_(cache, key, { ok: true, source: 'meta', breakdown: payload.breakdown, rows: breakdownSort_(out) });
+  if (jobs.length) {
+    var packs = graphMany_(jobs);
+    jobs.forEach(function (job) {
+      var body = packs[job.key];
+      /* 한꺼번에 보내기는 한 쪽만 받는다. 소재 하나를 쪼개면 줄이 스무 개 안팎이라
+         한 쪽으로 끝나지만, 쪽이 더 있거나 못 받았으면 제대로 다시 받는다. */
+      var rows = (body && body.data && !(body.paging && body.paging.next))
+        ? body.data : graphAll_(job.path, job.params, 5);
+      out[job.key] = metaBreakdownRows_(rows, job.key, window);
+      breakdownCache_(cache, slot(job.key),
+        { ok: true, source: 'meta', breakdown: job.key, rows: out[job.key] });
+    });
+  }
+
+  // rows 는 옛 화면을 위한 자리다 (고른 것 중 첫 하나). 새 화면은 sets 를 본다.
+  return { ok: true, source: 'meta', breakdown: wanted[0],
+    rows: out[wanted[0]] || [], sets: out };
 }
 
 // ── 카카오 ──────────────────────────────────────────────────────
