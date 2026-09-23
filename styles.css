@@ -824,11 +824,7 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 .creative-body p{margin:0 0 9px;font-size:10px;color:#a5a49f;overflow-wrap:anywhere}
 .creative-metrics{display:grid;grid-template-columns:1fr 1fr;gap:5px 8px}
 .creative-metrics small{display:block;color:#a4a39a;font-size:9px}
-.creative-metrics b{font:700 12px 'DM Sans','Noto Sans KR'}
-/* 노출위치 · 연령은 이름이라 숫자보다 길다. 칸을 넘치면 줄여 적는다. */
-.creative-metrics b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* 한 소재가 여러 지면 · 연령대에 걸쳐 나간다. 맨 위 하나를 적고 그 몫을 옆에 붙인다. */
-.creative-share{margin-left:3px;font-size:10px;font-weight:600;color:#a4a39a}
+.creative-metrics b{font:700 12px 'DM Sans','Noto Sans KR';overflow-wrap:anywhere}
 /* [상세] — 카드 맨 아래. 누르면 그 소재 하나를 쪼개 보는 판이 열린다. */
 .creative-detail-btn{display:block;width:100%;margin-top:9px;padding:5px 0;
   border:1px solid #dcdbd4;border-radius:8px;background:#fff;

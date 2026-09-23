@@ -1843,6 +1843,69 @@ function graphAll_(path, params, maxPages) {
   return rows;
 }
 
+/* 여러 길을 **한꺼번에** 묻는다.
+   UrlFetchApp 은 하나씩 부르면 그때마다 메타를 한 번 다녀온다. 소재별 결과는 광고 번호를
+   50개씩 끊어 네댓 번, 미리보기까지 치면 열 번 가까이 다녀오는데 그 기다림이 그대로 쌓인다.
+   fetchAll 은 한 번에 보내고 한 번에 받는다 (카카오 쪽 kakaoMany_ 와 같은 길이다).
+   실패한 것은 조용히 빠진다 — 부르는 쪽에서 없으면 없는 대로 그린다. */
+function graphMany_(jobs) {
+  var out = {};
+  if (!jobs || !jobs.length) return out;
+  var token = metaToken_();
+  for (var at = 0; at < jobs.length; at += 20) {
+    var chunk = jobs.slice(at, at + 20);
+    var answers = [];
+    try {
+      answers = UrlFetchApp.fetchAll(chunk.map(function (job) {
+        var query = ['access_token=' + encodeURIComponent(token)];
+        Object.keys(job.params || {}).forEach(function (key) {
+          var value = job.params[key];
+          if (value === undefined || value === null || value === '') return;
+          query.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+        });
+        return { url: GRAPH_URL + job.path + '?' + query.join('&'),
+          method: 'get', muteHttpExceptions: true };
+      }));
+    } catch (error) {
+      answers = [];   /* 이 묶음은 통째로 못 보냈다 */
+    }
+    chunk.forEach(function (job, i) {
+      var response = answers[i];
+      if (!response || response.getResponseCode() >= 400) return;
+      var body = null;
+      try { body = JSON.parse(response.getContentText() || 'null'); } catch (ignore) { body = null; }
+      if (body && !body.error) out[job.key] = body;
+    });
+  }
+  return out;
+}
+
+/* 번호 여러 개를 50개씩 끊어 묻고 한 덩이로 합친다.
+   한꺼번에 보내기가 통째로 실패하면 예전처럼 하나씩 다녀온다 — 그래야 토큰 · 권한처럼
+   진짜 막힌 까닭이 조용히 묻히지 않고 화면까지 올라간다. */
+function graphIds_(ids, fields) {
+  var jobs = [];
+  for (var at = 0; at < ids.length; at += 50) {
+    jobs.push({ key: 'k' + at, path: '/',
+      params: { ids: ids.slice(at, at + 50).join(','), fields: fields } });
+  }
+  var out = {};
+  if (!jobs.length) return out;
+  var packs = graphMany_(jobs);
+  var got = 0;
+  Object.keys(packs).forEach(function (key) {
+    got += 1;
+    var body = packs[key];
+    Object.keys(body).forEach(function (id) { out[id] = body[id]; });
+  });
+  if (got) return out;
+  jobs.forEach(function (job) {
+    var body = graph_('/', job.params);
+    Object.keys(body).forEach(function (id) { out[id] = body[id]; });
+  });
+  return out;
+}
+
 // 계정 목록을 못 읽는 토큰일 때 쓰는 목록 (메타 광고 세팅 화면과 같은 8개).
 // 페이지 토큰은 /me 가 페이지라 adaccounts 를 못 준다. 그때는 이 id 로 하나씩 물어본다.
 // 스크립트 속성 META_AD_ACCOUNTS 에 쉼표로 적어 두면 그 목록이 우선한다.
@@ -3258,39 +3321,6 @@ function metaWatch_(row) {
   return list.length ? Number(list[0].value || 0) : 0;
 }
 
-/* 소재마다 **어디에 · 누구에게** 나갔는지.
-   쪼개기(breakdowns)는 줄을 나눠 주므로 광고 id 로 다시 모아,
-   노출이 가장 큰 것 하나와 그 몫을 고른다 (instagram · stream 62% 처럼).
-   한 소재가 여러 지면 · 연령대에 걸쳐 나가므로 하나만 적고 몇 갈래였는지도 함께 준다. */
-function metaAdTop_(scope, range, breakdowns, nameOf) {
-  var seen = {};
-  graphAll_('/' + scope + '/insights', {
-    level: 'ad', breakdowns: breakdowns, fields: 'ad_id,impressions',
-    time_range: range, limit: 500
-  }, 8).forEach(function (row) {
-    var id = String(row.ad_id || '');
-    var name = nameOf(row);
-    if (!id || !name) return;
-    if (!seen[id]) seen[id] = { all: 0, by: {} };
-    var imp = Number(row.impressions || 0);
-    seen[id].all += imp;
-    seen[id].by[name] = (seen[id].by[name] || 0) + imp;
-  });
-
-  var top = {};
-  Object.keys(seen).forEach(function (id) {
-    var one = seen[id];
-    var best = '';
-    Object.keys(one.by).forEach(function (name) {
-      if (!best || one.by[name] > one.by[best]) best = name;
-    });
-    if (!best) return;
-    top[id] = { name: best, share: one.all ? one.by[best] / one.all : 0,
-      many: Object.keys(one.by).length };
-  });
-  return top;
-}
-
 function metaCreatives_(payload) {
   var account = String(payload.account || '').trim();
   if (!account) throw new Error('광고 계정을 고르지 않았습니다.');
@@ -3339,7 +3369,7 @@ function metaCreatives_(payload) {
       adsetName: row.adset_name || '',
       objective: '', active: false, status: '', thumbnail: '', video: '',
       // 동영상 평균 재생시간(초) · 소재노출위치 · 연령. 뒤의 둘은 아래에서 채운다.
-      watch: metaWatch_(row), plays: metaPlays_(row), place: null, age: null
+      watch: metaWatch_(row), plays: metaPlays_(row)
     }, window);
   }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
 
@@ -3352,28 +3382,22 @@ function metaCreatives_(payload) {
   var instagram = {};   // 광고 id → 인스타 미디어 id
   var videos = {};      // 광고 id → 동영상 id
   var stories = {};     // 광고 id → 게시물 id
-  for (var at = 0; at < ids.length; at += 50) {
-    var chunk = ids.slice(at, at + 50);
-    var body = graph_('/', {
-      ids: chunk.join(','),
-      fields: 'name,effective_status,creative{thumbnail_url,image_url,object_type,video_id,'
-        + 'effective_instagram_media_id,effective_object_story_id}'
-    });
-    creatives.forEach(function (row) {
-      var found = body[row.id];
-      if (!found) return;
-      var creative = found.creative || {};
-      row.thumbnail = creative.image_url || '';
-      row.small = creative.thumbnail_url || '';
-      row.video = creative.video_id || '';
-      row.status = found.effective_status || '';
-      row.active = found.effective_status === 'ACTIVE';
-      if (found.name) row.name = found.name;
-      if (creative.effective_instagram_media_id) instagram[row.id] = creative.effective_instagram_media_id;
-      if (creative.video_id) videos[row.id] = creative.video_id;
-      if (creative.effective_object_story_id) stories[row.id] = creative.effective_object_story_id;
-    });
-  }
+  var made = graphIds_(ids, 'name,effective_status,creative{thumbnail_url,image_url,'
+    + 'object_type,video_id,effective_instagram_media_id,effective_object_story_id}');
+  creatives.forEach(function (row) {
+    var found = made[row.id];
+    if (!found) return;
+    var creative = found.creative || {};
+    row.thumbnail = creative.image_url || '';
+    row.small = creative.thumbnail_url || '';
+    row.video = creative.video_id || '';
+    row.status = found.effective_status || '';
+    row.active = found.effective_status === 'ACTIVE';
+    if (found.name) row.name = found.name;
+    if (creative.effective_instagram_media_id) instagram[row.id] = creative.effective_instagram_media_id;
+    if (creative.video_id) videos[row.id] = creative.video_id;
+    if (creative.effective_object_story_id) stories[row.id] = creative.effective_object_story_id;
+  });
 
   /* 소재 줄의 결과도 **그 광고세트의 목표**를 따른다 (매체별 성과와 같은 규칙).
      소재에는 promoted_object 가 없어 광고세트에 물어 물려받는다. */
@@ -3383,31 +3407,13 @@ function metaCreatives_(payload) {
     if (one && wantSets.indexOf(one) < 0) wantSets.push(one);
   });
   var slotOf = {};
-  for (var st = 0; st < wantSets.length; st += 50) {
-    var pack = wantSets.slice(st, st + 50);
-    try {
-      var goals = graph_('/', { ids: pack.join(','), fields: 'promoted_object' });
-      pack.forEach(function (one) {
-        if (goals[one]) slotOf[one] = metaSlotOf_(goals[one].promoted_object);
-      });
-    } catch (error) { /* 이 묶음은 볼 수 없다 — 구매로 둔다 */ }
-  }
-  creatives.forEach(function (row) { metaPick_(row, slotOf[String(row.adsetId || '')]); });
-
-  /* 소재노출위치 · 연령. 쪼개기는 줄을 나눠 주므로 따로 물어 광고마다 하나씩 붙인다.
-     **거들기다** — 못 받아도 소재별 결과는 그대로 보여 준다 (그 칸만 빈다).
-     조회가 두 번 늘어 그만큼 느려지는데, 이 둘이 소재를 고르는 데 가장 자주 쓰는 값이다. */
   try {
-    var place = metaAdTop_(scope, range, 'publisher_platform,platform_position', function (row) {
-      return [row.publisher_platform, row.platform_position]
-        .filter(function (part) { return !!part; }).join(' · ');
+    var goals = graphIds_(wantSets, 'promoted_object');
+    wantSets.forEach(function (one) {
+      if (goals[one]) slotOf[one] = metaSlotOf_(goals[one].promoted_object);
     });
-    creatives.forEach(function (row) { if (place[row.id]) row.place = place[row.id]; });
-  } catch (error) { /* 이 칸만 빈다 */ }
-  try {
-    var ages = metaAdTop_(scope, range, 'age', function (row) { return String(row.age || ''); });
-    creatives.forEach(function (row) { if (ages[row.id]) row.age = ages[row.id]; });
-  } catch (error) { /* 이 칸만 빈다 */ }
+  } catch (error) { /* 못 읽으면 구매로 둔다 */ }
+  creatives.forEach(function (row) { metaPick_(row, slotOf[String(row.adsetId || '')]); });
 
   fillBigPictures_(creatives, instagram, 'media_url');
   fillBigPictures_(creatives, videos, 'picture');
@@ -3448,23 +3454,35 @@ function fillBigPictures_(creatives, map, field) {
   if (!ids.length) return;
 
   var pictures = {};
+  var packs = [];
+  var jobs = [];
   for (var at = 0; at < ids.length; at += 50) {
-    var chunk = ids.slice(at, at + 50);
-    try {
-      var body = graph_('/', { ids: chunk.join(','), fields: field });
-      Object.keys(body).forEach(function (id) {
-        if (body[id] && body[id][field]) pictures[id] = body[id][field];
-      });
-    } catch (error) {
-      // 볼 수 없는 게시물(다른 페이지 것)이 하나라도 섞이면 묶음이 통째로 실패한다.
-      // 그럴 때는 하나씩 되짚는다. 너무 오래 걸리지 않게 앞쪽 40개까지만 본다.
+    packs.push(ids.slice(at, at + 50));
+    jobs.push({ key: 'p' + packs.length, path: '/',
+      params: { ids: packs[packs.length - 1].join(','), fields: field } });
+  }
+  var got = graphMany_(jobs);
+  var again = [];
+  packs.forEach(function (chunk, i) {
+    var body = got['p' + (i + 1)];
+    if (!body) {
+      /* 볼 수 없는 게시물(다른 페이지 것)이 하나라도 섞이면 묶음이 통째로 실패한다.
+         그럴 때는 하나씩 되짚되 이것도 한꺼번에 보낸다 — 하나씩 다녀오면 40번이다.
+         너무 커지지 않게 앞쪽 40개까지만 본다. */
       chunk.slice(0, 40).forEach(function (id) {
-        try {
-          var one = graph_('/' + id, { fields: field });
-          if (one && one[field]) pictures[id] = one[field];
-        } catch (ignore) { /* 이 게시물은 볼 수 없다 */ }
+        again.push({ key: id, path: '/' + id, params: { fields: field } });
       });
+      return;
     }
+    Object.keys(body).forEach(function (id) {
+      if (body[id] && body[id][field]) pictures[id] = body[id][field];
+    });
+  });
+  if (again.length) {
+    var one = graphMany_(again);
+    Object.keys(one).forEach(function (id) {
+      if (one[id] && one[id][field]) pictures[id] = one[id][field];
+    });
   }
 
   creatives.forEach(function (row) {

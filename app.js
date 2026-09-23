@@ -10625,14 +10625,6 @@ if (creativePerformance) {
   // 동영상 평균 재생시간. 초로 온다 (이미지 소재는 아예 안 온다)
   const secs = (value) => `${(Number(value) || 0).toFixed(1)}초`;
 
-  /* 소재노출위치 · 연령. 한 소재가 여러 지면 · 연령대에 걸쳐 나가므로
-     **노출이 가장 큰 것 하나**를 적고, 갈래가 여럿이면 그 몫을 함께 적는다.
-     메타만 준다 — 다른 매체는 소재 단위로 쪼개 주지 않아 칸 자체를 안 그린다. */
-  const topRow = (label, one) => (one && one.name
-    ? metricRow(label, `${perfEscape(one.name)}${one.many > 1
-      ? ` <span class="creative-share">${perfRoas(one.share)}</span>` : ''}`)
-    : '');
-
   const card = (row) => {
     const ctr = perfRatio(row.linkClicks, row.impressions);
     const cpc = perfRatio(row.spend, row.linkClicks);
@@ -10678,8 +10670,6 @@ if (creativePerformance) {
     : metricRow('CPA', blank(cpa, money))}
           ${metricRow(split ? '구매매출' : '전환값', row.revenue ? money(row.revenue) : '<span class="tool-blank">—</span>')}
           ${metricRow('ROAS', blank(roas, perfRoas))}
-          ${topRow('노출위치', row.place)}
-          ${topRow('연령', row.age)}
           ${row.watch ? metricRow('평균재생', secs(row.watch)) : ''}
         </div>
         ${canDetail(row) ? `<button type="button"
@@ -11276,7 +11266,7 @@ if (creativePerformance) {
       .concat(source().splitResults
         ? ['구매', '장바구니'].concat(mine).concat(['CVR(구매)', 'CPS', 'CPB', '구매매출'])
         : ['결과'].concat(mine).concat(['CVR(구매)', 'CPA', '구매전환값']))
-      .concat(['ROAS', '노출위치', '연령', '평균재생(초)']);
+      .concat(['ROAS', '평균재생(초)']);
     const lines = [head.join('\t')];
     shown().forEach((row) => {
       const ctr = perfRatio(row.linkClicks, row.impressions);
@@ -11301,7 +11291,6 @@ if (creativePerformance) {
           cpa === null ? '' : Math.round(cpa)]))
         .concat([Math.round(row.revenue || 0),
           perfRatio(row.revenue, row.spend) === null ? '' : perfRoas(perfRatio(row.revenue, row.spend)),
-          (row.place && row.place.name) || '', (row.age && row.age.name) || '',
           row.watch ? (Number(row.watch) || 0).toFixed(1) : ''])
         .join('\t'));
     });
