@@ -5368,26 +5368,35 @@ if (adSetup) {
       const bodyAt = head && head.body >= 0 ? head.body
         : (head && head.file >= 0 ? head.file + 1 : 4);
       /* 덩어리 이름과 세팅명을 견준다.
-         딱 맞는 것을 먼저 찾고, 없으면 **한쪽이 다른 쪽을 품고 있는** 것을 쓴다 —
-         덩어리 이름을 세팅명 그대로('음쓰해방위크-1차') 적기도 하고 행사명까지만
-         ('음쓰해방위크') 적기도 해서, 한 방향만 보면 못 찾는다.
-         너무 짧은 이름이 아무 데나 걸리지 않게 두 글자부터 본다. */
+         ① 딱 맞으면 그것. ② 없으면 **느슨하게** 걸리는 것 —
+            덩어리 이름이 세팅명을 품고 있거나(행사명 칸에 세팅명을 함께 적어 둔 경우),
+            세팅명이 덩어리 이름으로 **시작**하거나('음쓰해방위크-1차' ⊃ '음쓰해방위크').
+         '품고 있는지' 를 양쪽으로 다 보면 '1차' 같은 토막이 엉뚱한 줄에 걸린다.
+         그래서 뒤쪽은 **앞에서부터**만 보고, 네 글자부터 본다.
+         ③ 느슨하게 걸린 것이 **여럿이면 아무것도 고르지 않는다** — 어느 것이 맞는지
+            우리는 모른다. 조용히 하나를 집으면 옆 세팅의 문구가 올라간다. */
       const key = tndKey().replace(/\s/g, '').toLowerCase();
       let hit = null;
-      let loose = null;
+      const loose = [];
       for (const row of table) {
         const cells = row.c || [];
         const cell = (at) => (at >= 0 && cells[at] && cells[at].v ? String(cells[at].v) : '');
         const name = cell(keyAt);
         if (!name || keyNames.some((want) => tndFlat(name) === tndFlat(want))) continue;   // 빈 줄 · 머리글 줄
         const bKey = name.replace(/\s/g, '').toLowerCase();
-        const found = { headline: cell(headAt), body: cell(bodyAt),
+        const found = { headline: cell(headAt), body: cell(bodyAt), row: name.trim(),
           from: { head: tndAt(headAt), body: tndAt(bodyAt) } };
         if (key && bKey === key) { hit = found; break; }
-        if (!loose && key && bKey.length >= 2
-          && (bKey.includes(key) || key.includes(bKey))) loose = found;
+        if (!key) continue;
+        if (bKey.length >= 2 && bKey.includes(key)) loose.push(found);
+        else if (bKey.length >= 4 && key.indexOf(bKey) === 0) loose.push(found);
       }
-      tnd = hit || loose || { empty: true, where: source.where };
+      if (hit) tnd = hit;
+      else if (loose.length === 1) tnd = loose[0];
+      else {
+        tnd = { empty: true, where: source.where,
+          many: loose.map((one) => one.row).filter((one, at, all) => all.indexOf(one) === at) };
+      }
     } catch (error) {
       tnd = { error: error.message };
     }
@@ -5678,12 +5687,23 @@ if (adSetup) {
        값이 그대로 광고에 올라간다 (make 가 tnd.headline · tnd.body 를 그대로 보낸다).
        못 읽었으면 빈 채로 올라가므로 그렇다고 말해 준다. */
     if (tnd.error) return `<div class="setup-tnd is-warn">T&amp;D 미리보기 실패 (${escapeHtml(tnd.error)}) — 이대로 실행하면 제목·문구가 빈 채로 올라갑니다. 시트 URL·공유 설정을 확인해 주세요.</div>`;
-    if (tnd.empty) return `<div class="setup-tnd is-warn"><b>${escapeHtml(tnd.where || TND_SHEET_NAME)}</b> 에서 세팅명 <b>${escapeHtml(tndKey())}</b> 를 찾지 못했습니다. 이대로 실행하면 제목·문구가 빈 채로 올라갑니다.</div>`;
+    if (tnd.empty) {
+      /* 여럿이 비슷하게 걸리면 어느 것이 맞는지 우리는 모른다 —
+         걸린 이름을 그대로 보여 주고 사람이 시트를 맞추게 한다. */
+      const many = (tnd.many || []).slice(0, 6);
+      const why = many.length
+        ? `를 하나로 못 골랐습니다. 비슷하게 걸린 줄 — ${escapeHtml(many.join(' · '))}. 시트의 세팅명을 정확히 맞춰 주세요.`
+        : '를 찾지 못했습니다.';
+      return `<div class="setup-tnd is-warn"><b>${escapeHtml(tnd.where || TND_SHEET_NAME)}</b> 에서 세팅명 <b>${escapeHtml(tndKey())}</b> ${why} 이대로 실행하면 제목·문구가 빈 채로 올라갑니다.</div>`;
+    }
     const from = tnd.from || {};
     const spot = (at) => (at ? `<small class="setup-tnd-at">${escapeHtml(at)}</small>` : '');
+    /* 어느 줄 · 어느 칸에서 읽었는지 **늘** 적는다. 값이 이상할 때
+       엉뚱한 줄을 봤는지 엉뚱한 칸을 봤는지 화면에서 바로 가려진다. */
     return `<div class="setup-tnd">
-      <div><b>제목</b><span>${escapeHtml(tnd.headline) || `<i>비어 있음</i>${spot(from.head)}`}</span></div>
-      <div><b>문구</b><span>${escapeHtml(tnd.body.slice(0, 160)) || `<i>비어 있음</i>${spot(from.body)}`}${tnd.body.length > 160 ? '…' : ''}</span></div>
+      <div><b>제목</b><span>${escapeHtml(tnd.headline) || '<i>비어 있음</i>'}${spot(from.head)}</span></div>
+      <div><b>문구</b><span>${escapeHtml(tnd.body.slice(0, 160))}${tnd.body.length > 160 ? '…' : ''}${escapeHtml(tnd.body) ? '' : '<i>비어 있음</i>'}${spot(from.body)}</span></div>
+      ${tnd.row ? `<div><b>줄</b><span>${escapeHtml(tnd.row)}</span></div>` : ''}
     </div>`;
   };
 
