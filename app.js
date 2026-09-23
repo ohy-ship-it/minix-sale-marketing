@@ -5296,16 +5296,61 @@ if (adSetup) {
      조회해 온 줄의 행사명으로 물러선다. */
   const tndKey = () => tr(state.setup) || tr((rows[selectedIdx] || rows[0] || {}).event);
 
+  /* 어느 시트 · 어느 탭을 읽나 — **아래에 붙여 넣은 링크 그대로**다.
+     예전에는 탭 이름을 '[DA] 메타' 로 못 박아 두어, 소재문구-메타처럼 다른 탭을
+     가리키는 링크를 넣어도 늘 그 탭만 읽었다.
+     링크에 gid(탭 번호)가 붙어 있으면 그 탭을, 없으면 예전처럼 [DA] 메타 를 읽는다.
+     (gviz 는 sheet=이름 을 조용히 무시하고 첫 탭을 주기도 해서, 번호가 있으면 번호가 낫다) */
+  const tndSource = () => {
+    const url = tr(state.sheetUrl);
+    const id = (url.match(/\/d\/([^/]+)/) || [])[1] || '';
+    if (!id) return null;
+    const gid = (url.match(/[#?&]gid=(\d+)/) || [])[1] || '';
+    if (!gid) return { url: gvizUrl(id, TND_SHEET_NAME, 'json'), where: `[${TND_SHEET_NAME}] 탭` };
+    return {
+      url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&headers=0`
+        + `&gid=${encodeURIComponent(gid)}`,
+      where: `링크가 가리키는 탭 (gid ${gid})`,
+    };
+  };
+
+  /* 칸은 **머리글 이름으로** 찾는다. 탭마다 차례가 달라서다 —
+       [DA] 메타     (빈칸) · 행사명 · 구좌 · 파일명 · 광고문구
+       소재문구-메타   세팅명 · 행사명 · 매체 · 파일명 · 광고문구
+     한 칸씩 밀려 있어 자리로 읽으면 세팅명 자리에 행사명이 잡힌다.
+     머리글을 못 찾으면 예전 자리(행사명 B · 파일명 D · 광고문구 E)로 물러선다. */
+  const TND_COLS = { setup: '세팅명', event: '행사명', head: '제목', file: '파일명', body: '광고문구' };
+  const tndHead = (table) => {
+    for (const row of table) {
+      const cells = (row.c || []).map((one) => (one && one.v ? String(one.v).trim() : ''));
+      /* 머리글은 **앞머리로** 견준다. [DA] 메타 의 문구 칸은
+         '광고문구 (피드65) (쇼핑57)' 처럼 뒤에 글자 수가 붙어 있어 딱 맞지 않는다. */
+      const at = {};
+      Object.keys(TND_COLS).forEach((name) => {
+        at[name] = cells.findIndex((one) => one.indexOf(TND_COLS[name]) === 0);
+      });
+      if (at.setup >= 0 || at.event >= 0) return at;
+    }
+    return null;
+  };
+
   const loadTnd = async () => {
-    const sheetId = (tr(state.sheetUrl).match(/\/d\/([^/]+)/) || [])[1];
-    if (!sheetId) { tnd = null; return render(); }
+    const source = tndSource();
+    if (!source) { tnd = null; return render(); }
     tnd = { loading: true };
     render();
     try {
-      const response = await fetch(gvizUrl(sheetId, TND_SHEET_NAME, 'json'));
+      const response = await fetch(source.url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const raw = await response.text();
       const json = JSON.parse((raw.match(/\{[\s\S]*\}/) || [''])[0]);
+      const table = (json.table && json.table.rows) || [];
+      const head = tndHead(table);
+      // 열쇠는 세팅명 칸. 그 칸이 없는 탭이면 행사명 칸으로 견준다.
+      const keyAt = head ? (head.setup >= 0 ? head.setup : head.event) : 1;
+      const label = head && head.setup >= 0 ? TND_COLS.setup : TND_COLS.event;
+      const headAt = head ? (head.head >= 0 ? head.head : head.file) : 3;
+      const bodyAt = head ? head.body : 4;
       /* 덩어리 이름과 세팅명을 견준다.
          딱 맞는 것을 먼저 찾고, 없으면 **한쪽이 다른 쪽을 품고 있는** 것을 쓴다 —
          덩어리 이름을 세팅명 그대로('음쓰해방위크-1차') 적기도 하고 행사명까지만
@@ -5314,21 +5359,18 @@ if (adSetup) {
       const key = tndKey().replace(/\s/g, '').toLowerCase();
       let hit = null;
       let loose = null;
-      for (const row of json.table.rows || []) {
+      for (const row of table) {
         const cells = row.c || [];
-        if (cells.length < 5) continue;
-        const b = cells[1] && cells[1].v ? String(cells[1].v) : '';
-        if (!b) continue;
-        const bKey = b.replace(/\s/g, '').toLowerCase();
-        const found = {
-          headline: cells[3] && cells[3].v ? String(cells[3].v) : '',
-          body: cells[4] && cells[4].v ? String(cells[4].v) : '',
-        };
+        const cell = (at) => (at >= 0 && cells[at] && cells[at].v ? String(cells[at].v) : '');
+        const name = cell(keyAt);
+        if (!name || name.trim() === label) continue;   // 빈 줄 · 머리글 줄
+        const bKey = name.replace(/\s/g, '').toLowerCase();
+        const found = { headline: cell(headAt), body: cell(bodyAt) };
         if (key && bKey === key) { hit = found; break; }
         if (!loose && key && bKey.length >= 2
           && (bKey.includes(key) || key.includes(bKey))) loose = found;
       }
-      tnd = hit || loose || { empty: true };
+      tnd = hit || loose || { empty: true, where: source.where };
     } catch (error) {
       tnd = { error: error.message };
     }
@@ -5619,7 +5661,7 @@ if (adSetup) {
        값이 그대로 광고에 올라간다 (make 가 tnd.headline · tnd.body 를 그대로 보낸다).
        못 읽었으면 빈 채로 올라가므로 그렇다고 말해 준다. */
     if (tnd.error) return `<div class="setup-tnd is-warn">T&amp;D 미리보기 실패 (${escapeHtml(tnd.error)}) — 이대로 실행하면 제목·문구가 빈 채로 올라갑니다. 시트 URL·공유 설정을 확인해 주세요.</div>`;
-    if (tnd.empty) return `<div class="setup-tnd is-warn">시트 <b>${escapeHtml(TND_SHEET_NAME)}</b> 에서 세팅명 <b>${escapeHtml(tndKey())}</b> 를 찾지 못했습니다. 이대로 실행하면 제목·문구가 빈 채로 올라갑니다.</div>`;
+    if (tnd.empty) return `<div class="setup-tnd is-warn"><b>${escapeHtml(tnd.where || TND_SHEET_NAME)}</b> 에서 세팅명 <b>${escapeHtml(tndKey())}</b> 를 찾지 못했습니다. 이대로 실행하면 제목·문구가 빈 채로 올라갑니다.</div>`;
     return `<div class="setup-tnd">
       <div><b>제목</b><span>${escapeHtml(tnd.headline) || '<i>비어 있음</i>'}</span></div>
       <div><b>문구</b><span>${escapeHtml(tnd.body.slice(0, 160)) || '<i>비어 있음</i>'}${tnd.body.length > 160 ? '…' : ''}</span></div>
@@ -5704,7 +5746,9 @@ if (adSetup) {
         ${sheetTable()}
         ${tndBox()}
         <div class="tool-grid setup-grid">
-          ${textField('sheetUrl', '구글시트 URL (T&D)', { required: true, placeholder: 'https://docs.google.com/spreadsheets/d/…', wide: true })}
+          ${textField('sheetUrl', '구글시트 URL (T&D)', { required: true, wide: true,
+    hint: '링크가 가리키는 탭을 그대로 읽습니다 — 볼 탭을 열어 둔 채 주소창을 복사하세요',
+    placeholder: 'https://docs.google.com/spreadsheets/d/…#gid=…' })}
         </div>
       </section>
 
