@@ -2339,15 +2339,41 @@ function metaMake_(payload) {
       log.push('카탈로그 광고세트의 제품 세트는 물려받지 않았습니다 (픽셀 전환으로 만듭니다)');
     }
 
-    if (!promoted && optGoal === 'OFFSITE_CONVERSIONS') {
+    /* 붙여 볼 promoted_object 를 **여러 개** 모은다.
+       광고계정마다 쓸 수 있는 픽셀이 다르고, 목록에 보인다고 다 쓸 수 있는 것도 아니다 —
+       제휴사 계정에 남의 픽셀이 섞여 있으면 메타가 '픽셀 ID가 유효하지 않거나 픽셀 ID를
+       사용할 권한이 없습니다' 로 되돌려준다. 그래서 하나만 보고 포기하지 않는다.
+       차례는 ① 물려받은 것 ② 계정에 붙어 있는 픽셀들. */
+    var tries = [];
+    var pixelName = {};
+    if (promoted) tries.push(promoted);
+    if (optGoal === 'OFFSITE_CONVERSIONS') {
+      var want = {};
+      if (promoted) { try { want = JSON.parse(promoted); } catch (ignore) { want = {}; } }
       try {
-        var pixels = graphAll_('/' + account + '/adspixels', { fields: 'id', limit: 1 }, 1);
-        if (pixels.length && pixels[0].id) {
-          promoted = JSON.stringify({ pixel_id: String(pixels[0].id), custom_event_type: 'PURCHASE' });
-          log.push('픽셀을 붙였습니다 (' + pixels[0].id + ' · PURCHASE)');
-        }
-      } catch (error) { /* 픽셀이 없으면 그대로 만든다 */ }
+        graphAll_('/' + account + '/adspixels', { fields: 'id,name', limit: 10 }, 1)
+          .forEach(function (one) {
+            if (!one || !one.id) return;
+            pixelName[String(one.id)] = String(one.name || '');
+            var mine = { pixel_id: String(one.id),
+              custom_event_type: want.custom_event_type || 'PURCHASE' };
+            if (want.custom_event_str) mine.custom_event_str = want.custom_event_str;
+            var text = JSON.stringify(mine);
+            if (tries.indexOf(text) < 0) tries.push(text);
+          });
+      } catch (error) { /* 픽셀 목록을 못 읽으면 물려받은 것만 써 본다 */ }
     }
+    if (!tries.length) tries.push('');   // 전환 목표가 아니면 붙일 것이 없다
+
+    // 어느 픽셀을 썼는지 사람이 알아볼 수 있게 이름을 함께 적는다
+    var pixelOf = function (text) {
+      if (!text) return '(없음)';
+      var one = {};
+      try { one = JSON.parse(text); } catch (ignore) { one = {}; }
+      if (!one.pixel_id) return '(픽셀 없음)';
+      var name = pixelName[String(one.pixel_id)] || '';
+      return one.pixel_id + (name ? ' ' + name : '');
+    };
 
     var targeting = {
       geo_locations: { countries: ['KR'] },
@@ -2364,7 +2390,7 @@ function metaMake_(payload) {
       optimization_goal: optGoal, billing_event: billEvent,
       bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
       targeting: JSON.stringify(targeting), status: 'PAUSED',
-      promoted_object: promoted
+      promoted_object: tries[0]   // 아래 고리에서 차례로 바꿔 넣는다
     };
     // 시각은 **0보다 큰 수일 때만** 넣는다. 숫자가 아닌 값이 새어 나가지 않게
     // 글자로 굳혀서 넣는다 (메타는 유닉스 초를 받는다).
@@ -2372,17 +2398,35 @@ function metaMake_(payload) {
     if (end > 0) params.end_time = String(end);
     params[budgetType === 'lifetime' ? 'lifetime_budget' : 'daily_budget'] = budget;
 
-    var group;
-    try {
-      group = graphPost_('/' + account + '/adsets', params);
-    } catch (error) {
-      // 메타가 어느 값을 물고 늘어지는지 알 수 있게, 보낸 시각을 함께 적어 준다.
-      throw new Error(String((error && error.message) || error)
+    /* 픽셀 때문에 막히면 **다음 픽셀로 다시 해 본다.**
+       실패한 POST 는 아무것도 만들지 않으므로 다시 보내도 광고세트가 겹치지 않는다.
+       픽셀과 상관없는 까닭이면 더 볼 것이 없으니 그 자리에서 멈춘다. */
+    var group = null;
+    var trouble = '';
+    var usedPixel = '';
+    var tried = 0;   // 실제로 보내 본 수 (안 써 본 픽셀까지 적어 주면 헷갈린다)
+    for (var t = 0; t < tries.length && !group; t += 1) {
+      params.promoted_object = tries[t];
+      tried += 1;
+      try {
+        group = graphPost_('/' + account + '/adsets', params);
+        usedPixel = tries[t];
+      } catch (error) {
+        trouble = String((error && error.message) || error);
+        if (!/픽셀|pixel/i.test(trouble)) break;
+      }
+    }
+    if (!group) {
+      // 메타가 어느 값을 물고 늘어지는지 알 수 있게, 써 본 픽셀과 보낸 시각을 함께 적는다.
+      throw new Error(trouble
+        + (tried > 1 ? ' [써 본 픽셀 — '
+          + tries.slice(0, tried).map(pixelOf).join(' · ') + ']' : '')
         + ' [보낸 값 — 시작 ' + (params.start_time || '(없음)')
         + ' · 종료 ' + (params.end_time || '(없음)')
         + ' · 받은 값 ' + JSON.stringify(String(payload.startAt || '')) + ' ~ '
         + JSON.stringify(String(payload.endAt || '')) + ']');
     }
+    if (usedPixel) log.push('픽셀을 붙였습니다 (' + pixelOf(usedPixel) + ')');
     adsetId = String(group.id || '');
     if (!adsetId) throw new Error('광고세트를 만들었는데 번호를 못 받았습니다.');
     log.push('광고세트를 만들었습니다 (' + adsetId + ' · '
