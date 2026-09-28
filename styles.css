@@ -1107,6 +1107,8 @@ span.bg-kind{cursor:default}
 .bg-table th small{display:block;font-size:9.5px;font-weight:500;color:#c9302c}
 .bg-fixed{min-width:760px}
 .bg-fixed select{min-width:104px}
+/* 항목 칸 — 고르개에서 고르거나 없는 것은 그대로 적어 넣는다 (datalist) */
+.bg-fixed .bg-item{min-width:132px;width:100%}
 .bg-table td.is-minus{color:#c9302c;font-weight:700}
 .bg-row-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}
 .bg-row-tools small{font-size:11px;color:#a5a49f}

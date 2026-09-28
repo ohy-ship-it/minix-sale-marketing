@@ -12794,6 +12794,38 @@ if (budgetPlanView) {
      (솔루션툴처럼 제품을 안 가리는 것은 비워 두면 '공통' 이 된다). */
   const FIXED_ITEMS = ['브랜드검색', '쇼핑검색', '파워링크', '애드부스트', '솔루션툴', '소비재'];
 
+  /* 항목은 **손으로 적어 넣을 수 있다.** 고정비로 나가는 것이 자꾸 늘어나는데
+     (대행수수료 · 제작비 …) 그때마다 코드를 고쳐 배포할 수는 없다.
+     고르개(datalist) 에는 세 가지가 합쳐 뜬다:
+       ① 정해 둔 항목  ② 이 달에 이미 쓰고 있는 항목  ③ 지난번에 적어 둔 항목
+     ②는 그 달의 판에 들어 있어 **시트에 실려 가고 팀 모두가 본다**.
+     ③은 그 전까지의 사이를 메우는 자리라 이 브라우저에 담아 둔다.
+     (매체를 손으로 적어 넣는 광고소재 기획 쪽과 같은 규칙이다) */
+  const FIXED_ITEM_KEY = 'minix-budget-fixed-items';
+  const fixedItemRead = () => {
+    try {
+      const kept = JSON.parse(localStorage.getItem(FIXED_ITEM_KEY) || '[]');
+      return Array.isArray(kept) ? kept.filter((one) => typeof one === 'string' && one.trim()) : [];
+    } catch { return []; }
+  };
+  let fixedItemKept = fixedItemRead();
+  const fixedItemRemember = (name) => {
+    const text = String(name || '').trim();
+    if (!text || FIXED_ITEMS.indexOf(text) >= 0 || fixedItemKept.indexOf(text) >= 0) return;
+    fixedItemKept = [...fixedItemKept, text];
+    try { localStorage.setItem(FIXED_ITEM_KEY, JSON.stringify(fixedItemKept)); } catch { /* 거들기다 */ }
+  };
+  const fixedItemList = () => {
+    const out = FIXED_ITEMS.slice();
+    const add = (name) => {
+      const text = String(name || '').trim();
+      if (text && out.indexOf(text) < 0) out.push(text);
+    };
+    fixedRows().forEach((one) => add(one.item));
+    fixedItemKept.forEach(add);
+    return out;
+  };
+
   // 판매채널 고르개. 늘 쓰는 곳은 박아 둔다.
   /* 제휴 쪽은 이름이 **정확히** 맞아야 실사용비가 자동으로 붙는다 (서버 규칙표가
      이 글자로 광고그룹을 찾는다). 그래서 손으로 치지 말고 고르개에서 고르도록 넣어 둔다. */
@@ -13323,7 +13355,8 @@ if (budgetPlanView) {
         title="끌어서 차례를 바꿉니다"><i data-lucide="grip-vertical"></i></span></td>
       <td>${pick('fixedCat', CATEGORIES, row.category, '공통')}</td>
       <td>${pick('fixedSku', skus, row.sku, '공통')}</td>
-      <td>${pick('fixedItem', FIXED_ITEMS, row.item, '고르기')}</td>
+      <td><input type="text" class="bg-item" data-bg="fixedItem" data-row="${id}"
+        list="bg-fixed-items" value="${escape(row.item || '')}" placeholder="고르거나 적기"></td>
       <td class="perf-num"><input type="text" class="bg-num" data-bg="fixedPlan" data-row="${id}"
         value="${escape(want ? commaNum(want) : '')}" placeholder="0"></td>
       <td class="perf-num"><input type="text" class="bg-num" data-bg="fixedUsed" data-row="${id}"
@@ -13368,6 +13401,8 @@ if (budgetPlanView) {
         ${statBox('사용(%)', pct(sum.used, sum.plan), '')}
         ${statBox('잔여(%)', sum.plan ? pct(spare, sum.plan) : '—', '')}
       </div>
+      ${editing ? `<datalist id="bg-fixed-items">${fixedItemList()
+    .map((one) => `<option value="${escape(one)}">`).join('')}</datalist>` : ''}
       <div class="tool-table-wrap"><table class="tool-table bg-table bg-fixed">
         <thead><tr>
           ${editing ? '<th class="bg-grip"></th>' : ''}
@@ -13897,7 +13932,8 @@ if (budgetPlanView) {
         // SKU 를 골랐으면 카테고리는 그 SKU 것으로 맞춘다
         if (one.sku) one.category = categoryOf(one.sku);
       } else {
-        one.item = hit.value;
+        one.item = String(hit.value || '').trim().replace(/\s+/g, ' ');
+        fixedItemRemember(one.item);   // 다음 달에도 고를 수 있게 목록에 남긴다
       }
       render();
       save();
