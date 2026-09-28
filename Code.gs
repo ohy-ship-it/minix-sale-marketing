@@ -7342,7 +7342,17 @@ function monthBudgetRow_(line) {
    달마다 따로 담는다 — 같은 이름으로 다른 채널을 돌린 달이 있을 수 있어서다.
    (화면은 지난달 값을 미리 채워 보여 준다. 그대로 두면 그 달 값으로 굳는다) */
 var TREND_CHANNEL_SHEET_NAME = '추이판매채널';
-var TREND_CHANNEL_HEADERS = ['달', '프로모션명', '판매채널', '수정자', '수정시각'];
+/* 판매수 · 매출과 사전알림 칸은 **맨 뒤에** 붙인다. 수정자 · 수정시각 사이에 끼워 넣으면
+   이미 쌓인 줄이 밀려 엉뚱하게 읽힌다 (단계날짜 · 퍼포먼스일정에서 겪은 것과 같다). */
+var TREND_CHANNEL_HEADERS = ['달', '프로모션명', '판매채널', '수정자', '수정시각',
+  '총판매수', '총매출', '사전알림', '알림신청수', '알림구매수'];
+
+// 빈 칸은 '' 로 둔다 — 0 (안 팔렸다) 과 '아직 안 적었다' 는 다르다.
+function trendNum_(value) {
+  var text = String(value === null || value === undefined ? '' : value).replace(/[,\s\u20a9원]/g, '');
+  if (text === '') return '';
+  return isNaN(Number(text)) ? '' : Number(text);
+}
 
 function trendChannelSheet_(book) {
   book = book || SpreadsheetApp.openById(SHEET_ID);
@@ -7357,6 +7367,13 @@ function trendChannelSheet_(book) {
     sheet.setColumnWidth(1, 90);
     sheet.setColumnWidth(2, 280);
     sheet.setColumnWidth(3, 160);
+    return sheet;
+  }
+  // 칸이 늘어난 뒤 처음 열렸으면 머리글만 채운다 (쌓여 있던 줄은 그대로 둔다)
+  var width = sheet.getLastColumn();
+  if (width < TREND_CHANNEL_HEADERS.length) {
+    sheet.getRange(1, width + 1, 1, TREND_CHANNEL_HEADERS.length - width)
+      .setValues([TREND_CHANNEL_HEADERS.slice(width)]).setFontWeight('bold');
   }
   return sheet;
 }
@@ -7370,7 +7387,15 @@ function trendChannelRows_(book) {
     var month = monthBudgetKey_(line[0]);
     var promo = String(line[1] || '').trim();
     if (!month || !promo) return;
-    out.push({ month: month, promo: promo, channel: String(line[2] || '').trim() });
+    out.push({
+      month: month, promo: promo,
+      channel: String(line[2] || '').trim(),
+      sales: trendNum_(line[5]),        // 총 판매수 (사람이 적는다)
+      rev: trendNum_(line[6]),          // 총 매출
+      alarm: line[7] === true || String(line[7]).trim().toUpperCase() === 'TRUE',
+      ask: trendNum_(line[8]),          // 사전알림 신청수
+      buy: trendNum_(line[9])           // 사전알림 유저 구매수
+    });
   });
   return out;
 }
@@ -7378,6 +7403,10 @@ function trendChannelRows_(book) {
 /* 한 칸만 고친다. 빈 값을 보내면 그 줄을 지운다 —
    비워 두는 것과 '지난달 값을 이어받는 것' 은 다르다. 줄이 있으면 '이 달은 비었다' 는 뜻이다.
    (줄을 지우면 화면이 다시 지난달 값을 이어받아 채운다) */
+/* 화면은 그 프로모션의 **적은 값 전부**를 한 번에 보낸다 (판매채널 · 총판매수 · 총매출 ·
+   사전알림 세 칸). 칸 하나만 받으면 나머지를 읽어 와 다시 써야 하는데, 그 사이에 남이
+   고치면 그 값을 덮는다. 통째로 받으면 마지막에 보낸 사람이 이긴다 — 한 줄은 한 사람이
+   적는 값이라 그게 맞다. */
 function trendChannelPut_(payload) {
   var month = monthBudgetKey_((payload && payload.month) || '');
   var promo = String((payload && payload.promo) || '').trim();
@@ -7385,6 +7414,11 @@ function trendChannelPut_(payload) {
   if (!promo) throw new Error('프로모션명이 비어 있습니다.');
   var channel = String((payload && payload.channel) || '').trim();
   var who = String((payload && payload.by) || '');
+  var sales = trendNum_(payload && payload.sales);
+  var rev = trendNum_(payload && payload.rev);
+  var alarm = !!(payload && payload.alarm);
+  var ask = trendNum_(payload && payload.ask);
+  var buy = trendNum_(payload && payload.buy);
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -7401,16 +7435,18 @@ function trendChannelPut_(payload) {
         break;
       }
     }
-    if (!channel) {
+    // 적은 것이 하나도 없으면 줄을 지운다 (그래야 화면이 다시 지난달 값을 이어받는다)
+    if (!channel && sales === '' && rev === '' && !alarm && ask === '' && buy === '') {
       if (at) sheet.deleteRow(at);
       budgetStamp_(true);
       return { ok: true, month: month, promo: promo, removed: !!at };
     }
     if (!at) at = sheet.getLastRow() + 1;
     sheet.getRange(at, 1, 1, TREND_CHANNEL_HEADERS.length)
-      .setValues([[month, promo, channel, who, new Date()]]);
+      .setValues([[month, promo, channel, who, new Date(), sales, rev, alarm, ask, buy]]);
     budgetStamp_(true);            // 담아 둔 추이를 버린다 (다음에 열면 새로 읽는다)
     return { ok: true, month: month, promo: promo, channel: channel,
+      sales: sales, rev: rev, alarm: alarm, ask: ask, buy: buy,
       savedAt: new Date().toISOString() };
   } finally {
     lock.releaseLock();

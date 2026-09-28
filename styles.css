@@ -1729,6 +1729,19 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .tr-file{position:relative;cursor:pointer}
 .tr-more>td{background:#fbfaf7;padding:0}
 .tr-detail{padding:14px 16px 18px}
+/* 사람이 적는 칸 (총 판매수 · 총 매출 · 사전알림) — 펼치면 맨 위에 온다 */
+.tr-typed-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-bottom:10px;
+  padding:9px 11px;background:#faf9f6;border:1px solid #edece7;border-radius:8px}
+.tr-typed{display:flex;align-items:center;gap:6px;font:500 12px 'Noto Sans KR',sans-serif;color:#6f6f68}
+.tr-typed input[type=text]{width:96px;text-align:right;border:1px solid #e3e2dc;border-radius:6px;
+  padding:4px 7px;font:600 12px 'DM Sans','Noto Sans KR',sans-serif;color:#37352f;background:#fff}
+.tr-typed input[type=text]:focus{border-color:#2f86d9;outline:none}
+.tr-typed input.is-saving{background:#f7f7f4;border-color:#e6e5e0}
+.tr-typed input.is-saved{border-color:#cfe3d4}
+.tr-alarm{gap:5px;cursor:pointer;color:#37352f;font-weight:600}
+.tr-alarm input{margin:0;cursor:pointer}
+.tr-typed-note{font:400 11px 'Noto Sans KR',sans-serif;color:#8c8c85}
+.tr-typed-note b{color:#37352f}
 .tr-tabs{display:flex;gap:6px;margin-bottom:12px}
 .tr-tabs button{border:1px solid var(--line,#e6e5e0);border-radius:6px;background:#fff;padding:6px 12px;font:600 12px inherit;color:#6f6f68;cursor:pointer}
 .tr-tabs button.is-on{border-color:#2f2f2b;background:#2f2f2b;color:#fff}

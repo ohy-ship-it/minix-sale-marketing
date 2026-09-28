@@ -9012,7 +9012,7 @@ if (mediaPerformance) {
   };
 
   const detailTable = (key, rows) => `<div class="tool-table-wrap"><table class="tool-table perf-table perf-sub">
-    <thead><tr><th>${PERF_BREAKDOWNS[key]}</th>${metricHeads()}</tr></thead>
+    <thead><tr><th>${PERF_BREAKDOWNS[key]}</th>${metricHeads(alarm)}</tr></thead>
     <tbody>${rows.map((row) => `<tr>
       <td class="perf-name"><span>${escapeHtml(perfLabel(row.name))}${row.series
         ? ` · ${escapeHtml(perfLabel(row.series))}` : ''}</span></td>${metricCells(row)}
@@ -9170,7 +9170,7 @@ if (mediaPerformance) {
       </div>
       ${filters(listed, live.length, listed.length)}
       ${live.length ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
-        <thead><tr><th>캠페인 · 광고그룹</th><th>예산</th>${metricHeads()}<th></th></tr></thead>
+        <thead><tr><th>캠페인 · 광고그룹</th><th>예산</th>${metricHeads(alarm)}<th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>` : `<p class="tool-empty">${query || picked.length ? '찾는 캠페인이 없습니다.' : '지금 켜져 있는 캠페인이 없습니다.'}</p>`}
       ${resting.length ? `<p class="perf-resting">이 기간에 돌았지만 지금 꺼져 있는 캠페인 ${count(resting.length)}개
@@ -12056,7 +12056,12 @@ if (eventResult) {
      그 파일은 통째로 그 프로모션의 것이다 — 이름 규칙으로 가릴 것이 없다.
      그래서 그 파일이 있으면 줄을 **그대로** 쓴다 (이게 더 정확하다). */
   const byChannel = {};            // 프로모션명 → [{ name, body }]
-  let manual = {};                 // '달|프로모션명' → 사람이 적은 판매채널
+  /* '달|프로모션명' → 사람이 적어 둔 것.
+     예전에는 판매채널 하나였는데 총판매수 · 총매출 · 사전알림까지 늘었다.
+     { channel, sales, rev, alarm, ask, buy } — 숫자 칸은 **빈 글자로 비워 둔다**.
+     0(안 팔렸다) 과 '아직 안 적었다' 는 다르고, 0 으로 두면 CPS 가 거짓말을 한다. */
+  let manual = {};
+  const BLANK_MANUAL = { channel: '', sales: '', rev: '', alarm: false, ask: '', buy: '' };
   let fileNote = '';
   let open = '';                   // 펼친 프로모션
 
@@ -12237,11 +12242,18 @@ if (eventResult) {
     return mine.map((one) => ({
       name: one.name,
       range: rangeIn(one.body),
-      rows: own.length ? rowsIn(one.body) : pickRows(one.body, channel),
+      rows: paid(own.length ? rowsIn(one.body) : pickRows(one.body, channel)),
     })).sort((a, b) => String(a.range.since).localeCompare(String(b.range.since)));
   };
 
-  const rowsFor = (channel) => packsOf(channel).reduce((all, one) => all.concat(one.rows), []);
+  /* 광고비가 0원인 줄은 **아예 뺀다.**
+     그 기간에 안 돈 광고그룹이라, 두면 매체별 · 캠페인별 목록이 0원짜리로 덮인다.
+     안 돈 줄에는 노출 · 클릭 · 전환도 없으므로 빼도 합계가 달라지지 않는다
+     (드물게 앞선 기간의 전환이 늦게 붙는 일이 있는데, 그건 광고비 없이 잡힌 값이라
+      어느 줄 몫인지 알 수 없어 ROAS 를 부풀리기만 한다). */
+  const paid = (rows) => rows.filter((row) => (Number(row.spend) || 0) > 0);
+
+  const rowsFor = (channel) => paid(packsOf(channel).reduce((all, one) => all.concat(one.rows), []));
 
   // 공용 파일 전체의 줄 (어느 프로모션에도 안 붙은 줄을 찾을 때 쓴다)
   const allRows = () => files.reduce((all, one) => all.concat(rowsIn(one.body)), []);
@@ -12282,15 +12294,21 @@ if (eventResult) {
     { name: '노출', cell: (one) => (one.imp ? num(one.imp) : '—') },
     { name: '클릭', cell: (one) => (one.clk ? num(one.clk) : '—') },
     { name: '판매량', cell: (one) => (one.buy ? num(one.buy) : '—') },
-    { name: 'CPS', cell: (one) => moneyText(ratio(one.spend, one.buy)) },
+    /* 사전알림 프로모션은 **CPA** 로 센다.
+       그런 캠페인은 신청을 받는 것이 목표라 구매가 거의 안 잡힌다 — CPS 를 그대로 두면
+       '한 건에 수십만 원' 처럼 보인다. 결과(그 줄이 최적화한 전환 = 신청)로 나눈다. */
+    { name: 'CPS', alarmName: 'CPA',
+      cell: (one, alarm) => moneyText(ratio(one.spend, alarm ? one.conv : one.buy)) },
     { name: 'ROAS', cell: (one) => (one.spend ? perfRoas(ratio(one.rev, one.spend) || 0) : '—') },
     { name: 'CVR', cell: (one) => pctText(ratio(one.buy, one.clk)) },
     { name: 'CPC', cell: (one) => moneyText(ratio(one.spend, one.clk)) },
     { name: 'CTR', cell: (one) => pctText(ratio(one.clk, one.imp)) },
     { name: 'CPM', cell: (one) => moneyText(ratio(one.spend * 1000, one.imp)) },
   ];
-  const metricHeads = () => METRICS.map((one) => `<th class="perf-num">${escape(one.name)}</th>`).join('');
-  const metricRow = (sum) => METRICS.map((one) => `<td class="perf-num">${one.cell(sum)}</td>`).join('');
+  // alarm 을 주면 CPS 자리가 CPA 로 바뀐다 (머리글도 값도 함께)
+  const metricHeads = (alarm) => METRICS.map((one) => `<th class="perf-num">${escape(alarm && one.alarmName
+    ? one.alarmName : one.name)}</th>`).join('');
+  const metricRow = (sum, alarm) => METRICS.map((one) => `<td class="perf-num">${one.cell(sum, alarm)}</td>`).join('');
 
   /* 집행매체는 요약 줄에서 뺐다 — 매체가 넷이면 이름만 한 줄을 채워 정작 숫자가 밀렸다.
      대신 줄을 펼치면 [매체별] 에서 매체마다 숫자와 함께 본다. */
@@ -12477,6 +12495,7 @@ if (eventResult) {
   /* 주차별 — 붙인 파일 하나가 한 줄이다. 맨 위 줄(종합)은 이 줄들을 다 합친 값이다.
      매체에 묻지 않으므로 기다릴 것이 없고, 파일을 붙이는 대로 바로 늘어난다. */
   const weekTable = (channel) => {
+    const alarm = isAlarm(channel);
     const packs = packsOf(channel);
     if (!packs.length) {
       return '<p class="perf-note">붙인 전매체 파일이 없습니다 — 주차마다 그 주만 조회해 '
@@ -12492,19 +12511,19 @@ if (eventResult) {
       if (one.range.until && (!wide.until || one.range.until > wide.until)) wide.until = one.range.until;
     });
     return `<div class="tool-table-wrap"><table class="tool-table tr-split">
-        <thead><tr><th>주차</th><th>기간</th><th>파일</th>${metricHeads()}</tr></thead>
+        <thead><tr><th>주차</th><th>기간</th><th>파일</th>${metricHeads(alarm)}</tr></thead>
         <tbody>
           <tr class="tr-sum">
             <td><b>합계</b></td>
             <td>${escape(span(wide.since, wide.until)) || '<span class="tool-blank">—</span>'}</td>
             <td class="tr-week-file">${num(packs.length)}개 파일</td>
-            ${metricRow(whole)}
+            ${metricRow(whole, alarm)}
           </tr>
           ${lines.map((one) => `<tr>
           <td><b>${escape(weekName(one.range))}</b></td>
           <td>${escape(span(one.range.since, one.range.until)) || '<span class="tool-blank">—</span>'}</td>
           <td class="tr-week-file">${escape(one.name)}</td>
-          ${metricRow(one.sum)}
+          ${metricRow(one.sum, alarm)}
         </tr>`).join('')}</tbody>
       </table></div>
       ${packs.length === 1 ? '<p class="perf-note">파일이 하나라 합계와 같습니다 — 주차마다 따로 내려받아 붙이면 줄이 늘어납니다.</p>' : ''}`;
@@ -12519,7 +12538,7 @@ if (eventResult) {
     const bucket = {};
     mine.forEach((file) => {
       phasesIn(file.body).forEach((each) => {
-        const rows = own.length ? (each.rows || []) : (each.rows || []).filter((row) => mineRow(row, channel));
+        const rows = paid(own.length ? (each.rows || []) : (each.rows || []).filter((row) => mineRow(row, channel)));
         if (!rows.length) return;
         const name = String(each.name || '(단계 없음)');
         if (!bucket[name]) bucket[name] = { name: name, since: '', until: '', rows: [] };
@@ -12537,6 +12556,7 @@ if (eventResult) {
   };
 
   const phaseTable = (channel) => {
+    const alarm = isAlarm(channel);
     const packs = phasePacks(channel);
     if (!packs.length) {
       return '<p class="perf-note">붙인 전매체 파일이 없습니다 — 전매체 검색에서 단계 날짜를 '
@@ -12547,13 +12567,13 @@ if (eventResult) {
        (광고비가 큰 단계가 더 무겁다). 원래 줄을 통째로 모아 한 번에 센다. */
     const whole = sumOf(packs.reduce((all, one) => all.concat(one.rows), []));
     return `<div class="tool-table-wrap"><table class="tool-table tr-split">
-        <thead><tr><th>단계</th><th>기간</th>${metricHeads()}</tr></thead>
+        <thead><tr><th>단계</th><th>기간</th>${metricHeads(alarm)}</tr></thead>
         <tbody>
-          <tr class="tr-sum"><td><b>합계</b></td><td>—</td>${metricRow(whole)}</tr>
+          <tr class="tr-sum"><td><b>합계</b></td><td>—</td>${metricRow(whole, alarm)}</tr>
           ${lines.map((one) => `<tr>
           <td><b>${escape(one.name)}</b></td>
           <td>${escape(span(one.since, one.until)) || '<span class="tool-blank">—</span>'}</td>
-          ${metricRow(one.sum)}
+          ${metricRow(one.sum, alarm)}
         </tr>`).join('')}</tbody>
       </table></div>
       ${packs.length === 1 && packs[0].name === '(단계 없음)'
@@ -12567,6 +12587,7 @@ if (eventResult) {
   let openMedia = '';   // '프로모션|매체' — 펼친 매체 하나
 
   const mediaTable = (channel) => {
+    const alarm = isAlarm(channel);
     const rows = rowsFor(channel);
     if (!rows.length) return '<p class="perf-note">붙인 전매체 파일이 없습니다.</p>';
     const bucket = {};
@@ -12594,23 +12615,45 @@ if (eventResult) {
     };
 
     return `<div class="tool-table-wrap"><table class="tool-table tr-split">
-        <thead><tr><th>매체 · 캠페인</th>${metricHeads()}</tr></thead>
+        <thead><tr><th>매체 · 캠페인</th>${metricHeads(alarm)}</tr></thead>
         <tbody>
-          <tr class="tr-sum"><td><b>합계</b></td>${metricRow(whole)}</tr>
+          <tr class="tr-sum"><td><b>합계</b></td>${metricRow(whole, alarm)}</tr>
           ${lines.map((one) => {
     const key = `${channel}|${one.name}`;
     const isOpen = openMedia === key;
     const camps = isOpen ? campsOf(one.name) : [];
     return `<tr class="tr-mrow${isOpen ? ' is-open' : ''}" data-tr="media" data-key="${escape(key)}">
           <td class="tr-mname"><i data-lucide="chevron-right"></i><b>${escape(one.name)}</b></td>
-          ${metricRow(one.sum)}
+          ${metricRow(one.sum, alarm)}
         </tr>`
       + camps.map((each) => `<tr class="tr-camp">
           <td class="tr-cname">${escape(each.name)}</td>
-          ${metricRow(each.sum)}
+          ${metricRow(each.sum, alarm)}
         </tr>`).join('');
   }).join('')}</tbody>
       </table></div>`;
+  };
+
+  /* 사람이 적는 칸. 매체가 주는 값이 아니라 **판매처에서 세는 값**이다.
+     광고가 보고하는 전환은 어트리뷰션이 붙은 값이라 실제로 팔린 수와 다르다 —
+     그 둘을 나란히 두고 보려고 여기에 적는다.
+     적은 값은 시트(추이판매채널)에 달별로 담겨 팀이 같이 본다. */
+  const numText = (value) => (value === '' || value === null || value === undefined ? '' : num(value));
+
+  const typedBar = (channel) => {
+    const one = typedOf(channel);
+    const box = (key, name, hint) => `<label class="tr-typed" title="${escape(hint)}">${escape(name)}
+      <input type="text" inputmode="numeric" data-tr="typed" data-key="${key}"
+        data-channel="${escape(channel)}" value="${escape(numText(one[key]))}" placeholder="—"></label>`;
+    return `<div class="tr-typed-bar">
+      ${box('sales', '총 판매수', '판매처에서 센 실제 판매 건수 (광고가 보고한 전환수와 다릅니다)')}
+      ${box('rev', '총 매출', '판매처에서 센 실제 매출 (광고가 보고한 판매전환값과 다릅니다)')}
+      <label class="tr-typed tr-alarm" title="사전알림을 받은 행사면 켜 주세요 — 아래 표의 CPS 가 CPA 로 바뀝니다">
+        <input type="checkbox" data-tr="alarm" data-channel="${escape(channel)}"${one.alarm ? ' checked' : ''}>사전알림</label>
+      ${one.alarm ? box('ask', '사전알림 신청수', '사전알림을 신청한 사람 수') : ''}
+      ${one.alarm ? box('buy', '사전알림 유저 구매수', '사전알림을 신청한 사람 중 실제로 산 수') : ''}
+      ${one.alarm ? `<span class="tr-typed-note">사전알림 행사라 아래 표는 <b>CPA</b>(광고비 ÷ 결과) 로 셉니다</span>` : ''}
+    </div>`;
   };
 
   const detailCard = (channel) => {
@@ -12627,6 +12670,7 @@ if (eventResult) {
       ? `<span class="tr-asked">${escape(pack.range.since)} ~ ${escape(pack.range.until)}</span>` : '';
     const notes = offline ? [] : ((pack && pack.notes) || []);
     return `<div class="tr-detail">
+      ${typedBar(channel)}
       <div class="tr-tabs">${TABS.map((one) => `<button type="button" data-tr="tab" data-tab="${one.key}"
         class="${one.key === tab ? 'is-on' : ''}">${escape(one.name)}</button>`).join('')}
         ${asked}
@@ -12639,16 +12683,27 @@ if (eventResult) {
   /* 사람이 적어 둔 판매채널. 그 달에 적은 것이 없으면 **지난달 값을 이어받아** 보여 준다
      (프로모션은 달이 바뀌어도 대개 같은 채널에서 돈다). 이어받은 값은 옅게 적고,
      한 번 고치거나 그대로 저장하면 그 달 값으로 굳는다. */
+  const manualNow = (promo) => manual[`${month}|${promo}`] || null;
+
+  /* 판매채널만 이어받는다. 총판매수 · 총매출 · 사전알림은 **그 달의 값**이라
+     지난달 것을 끌어오면 안 된다 (9월 매출이 10월 칸에 뜨면 거짓말이 된다). */
   const manualOf = (promo) => {
-    const now = manual[`${month}|${promo}`];
-    if (now !== undefined) return { value: now, from: month };
+    const now = manualNow(promo);
+    if (now && now.channel !== undefined) return { value: now.channel, from: month };
     const before = ((body && body.months) || []).filter((ym) => ym < month).sort();
     for (let at = before.length - 1; at >= 0; at -= 1) {
       const found = manual[`${before[at]}|${promo}`];
-      if (found) return { value: found, from: before[at] };
+      if (found && found.channel) return { value: found.channel, from: before[at] };
     }
     return { value: '', from: '' };
   };
+
+  // 그 달에 적어 둔 것 (없으면 빈 것). 이어받지 않는 칸들은 이것만 본다.
+  const typedOf = (promo) => ({ ...BLANK_MANUAL, ...(manualNow(promo) || {}),
+    channel: manualOf(promo).value });
+
+  // 사전알림 프로모션인가 — 그러면 CPS 대신 CPA 로 센다 (아래 METRICS)
+  const isAlarm = (promo) => !!typedOf(promo).alarm;
 
   const salesCell = (promo) => {
     const found = manualOf(promo);
@@ -12700,7 +12755,7 @@ if (eventResult) {
       if (pair[0] && picks.indexOf(pair[0]) < 0) picks.push(pair[0]);
     });
     Object.keys(manual).forEach((key) => {
-      const value = manual[key];
+      const value = (manual[key] || {}).channel || '';
       if (value && picks.indexOf(value) < 0) picks.push(value);
     });
 
@@ -12763,7 +12818,16 @@ if (eventResult) {
       .then((found) => {
         body = found;
         manual = {};
-        (found.manual || []).forEach((one) => { manual[`${one.month}|${one.promo}`] = one.channel; });
+        (found.manual || []).forEach((one) => {
+          manual[`${one.month}|${one.promo}`] = {
+            channel: String(one.channel || ''),
+            sales: one.sales === undefined || one.sales === null ? '' : one.sales,
+            rev: one.rev === undefined || one.rev === null ? '' : one.rev,
+            alarm: !!one.alarm,
+            ask: one.ask === undefined || one.ask === null ? '' : one.ask,
+            buy: one.buy === undefined || one.buy === null ? '' : one.buy,
+          };
+        });
         const months = found.months || [];
         if (!month || months.indexOf(month) < 0) month = months[months.length - 1] || '';
         status = 'ready';
@@ -12772,29 +12836,51 @@ if (eventResult) {
       .catch((reason) => { status = 'ready'; error = reason.message; render(); });
   };
 
+  /* 한 줄을 통째로 보낸다. 칸 하나만 보내면 서버가 나머지를 읽어 와 다시 써야 하는데,
+     그 사이에 남이 고치면 그 값을 덮는다. */
+  const putTyped = (promo, one, hit) => {
+    if (hit) hit.classList.add('is-saving');
+    askSheet({ action: 'trendChannelPut', month: month, promo: promo,
+      channel: one.channel, sales: one.sales, rev: one.rev,
+      alarm: one.alarm, ask: one.ask, buy: one.buy })
+      .then(() => {
+        if (!hit) return;
+        hit.classList.remove('is-saving');
+        if (hit.isConnected) hit.classList.add('is-saved');
+      })
+      .catch((reason) => {
+        if (hit) hit.classList.remove('is-saving');
+        error = `적어 둔 값을 담지 못했습니다 (${promo}) — ${reason.message}`;
+        render();
+      });
+  };
+
   eventResult.addEventListener('change', (event) => {
     const hit = event.target.closest('[data-tr]');
     if (!hit) return;
     if (hit.dataset.tr === 'month') { month = hit.value; open = ''; render(); return; }
+    if (hit.dataset.tr === 'typed' || hit.dataset.tr === 'alarm') {
+      const promo = hit.dataset.channel;
+      const one = { ...typedOf(promo) };
+      if (hit.dataset.tr === 'alarm') one.alarm = hit.checked;
+      else one[hit.dataset.key] = String(hit.value || '').replace(/[,\s\u20a9원]/g, '').trim();
+      manual[`${month}|${promo}`] = one;
+      /* 체크는 바로 다시 그린다 (신청수 칸이 나오고 CPS 가 CPA 로 바뀐다).
+         글자 칸은 안 그린다 — change 는 빠져나올 때 와서, 그때 다시 그리면
+         사람이 이어서 누른 곳이 사라져 그 누름이 삼켜진다. */
+      if (hit.dataset.tr === 'alarm') render();
+      putTyped(promo, one, hit);
+      return;
+    }
     if (hit.dataset.tr === 'sales') {
       /* 여기서 **다시 그리지 않는다.** 글자 칸의 change 는 빠져나올 때 오는데,
          그때 화면을 다시 그리면 사람이 이어서 누른 곳이 사라져 그 누름이 삼켜진다.
          그래서 담아 둔 값과 칸 모양만 손으로 맞춘다. */
       const promo = hit.dataset.channel;
-      const value = hit.value.trim();
-      manual[`${month}|${promo}`] = value;
+      const one = { ...typedOf(promo), channel: hit.value.trim() };
+      manual[`${month}|${promo}`] = one;
       hit.classList.remove('is-old');
-      hit.classList.add('is-saving');
-      askSheet({ action: 'trendChannelPut', month: month, promo: promo, channel: value })
-        .then(() => {
-          hit.classList.remove('is-saving');
-          if (hit.isConnected) hit.classList.add('is-saved');
-        })
-        .catch((reason) => {
-          hit.classList.remove('is-saving');
-          error = `판매채널을 담지 못했습니다 (${promo}) — ${reason.message}`;
-          render();
-        });
+      putTyped(promo, one, hit);
       return;
     }
     if (hit.dataset.tr === 'file' || hit.dataset.tr === 'one') {
