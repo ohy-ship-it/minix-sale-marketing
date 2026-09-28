@@ -38,13 +38,34 @@ if (creativeBoard) {
     { key: 'owners', name: '담당자', type: 'multi_select', icon: 'users', options: OWNER_OPTIONS },
     { key: 'eventDate', name: '행사일정', type: 'date', icon: 'calendar' },
     { key: 'dueDate', name: '전달희망일정', type: 'date', icon: 'calendar' },
-    { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS },
+    /* 매체는 **손으로 적어 넣을 수 있다** (custom). 새 매체는 자꾸 생기는데
+       (토스-머니알림 · 당근-이미지 …) 그때마다 코드를 고쳐 배포할 수는 없다. */
+    { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS, custom: true },
     { key: 'creativeCount', name: '소재 갯수', type: 'computed', icon: 'hash' },
   ];
   // 보드 카드에 노출할 속성 (요청받은 순서)
   const CARD_PROPS = ['sku', 'owners', 'dueDate', 'creativeCount'];
   const propByKey = Object.fromEntries(SCHEMA.map((prop) => [prop.key, prop]));
   const colorOf = (prop, value) => (prop.options || []).find(([option]) => option === value)?.[1] || 'default';
+
+  /* 고를 수 있는 값 — 정해 둔 목록 + **이미 어딘가에 적혀 있는 이름**.
+     손으로 적어 넣은 매체를 따로 담아 두지 않는다. 카드에 적힌 값이 곧 목록이라,
+     시트에 그대로 실려 가고 다른 PC · 다른 주차에서도 그대로 보인다.
+     (따로 담아 두면 그 목록만 사라지거나 카드와 어긋나는 일이 생긴다)
+     빛깔은 'default' 다 — 정해 둔 것과 손으로 적은 것이 한눈에 갈린다. */
+  const optionsOf = (prop) => {
+    const known = prop.options || [];
+    if (!prop.custom) return known;
+    const more = [];
+    const seen = (list, name) => list.some(([option]) => option === name);
+    weeks.forEach((week) => (week.rows || []).forEach((row) => {
+      (row[prop.key] || []).forEach((name) => {
+        if (!name || seen(known, name) || seen(more, name)) return;
+        more.push([name, 'default']);
+      });
+    }));
+    return known.concat(more);
+  };
 
   const COLUMN_CLASS = {
     '요청': 'request-column',
@@ -394,7 +415,12 @@ if (creativeBoard) {
         ${selected.length ? selected.map((item) => chip(prop, item)).join('') : '<span class="peek-empty">비어 있음</span>'}
       </button>
       <div class="peek-options" data-options="${prop.key}" hidden>
-        ${prop.options.map(([option]) => `<button type="button" class="peek-option${selected.includes(option) ? ' is-selected' : ''}" data-option="${escapeHtml(option)}">${chip(prop, option)}</button>`).join('')}
+        ${optionsOf(prop).map(([option]) => `<button type="button" class="peek-option${selected.includes(option) ? ' is-selected' : ''}" data-option="${escapeHtml(option)}">${chip(prop, option)}</button>`).join('')}
+        ${prop.custom ? `<label class="peek-option-add">
+          <input type="text" data-add-option="${prop.key}" placeholder="목록에 없는 ${escapeHtml(prop.name)} 직접 적기"
+            spellcheck="false" autocomplete="off">
+          <button type="button" data-add-go="${prop.key}">추가</button>
+        </label>` : ''}
       </div>`;
   };
 
@@ -455,6 +481,34 @@ if (creativeBoard) {
     renderBoard();
     if (redrawPeek && openId) renderPeek();
   };
+
+  /* 손으로 적어 넣기. 앞뒤 공백을 떼고, 이미 있는 이름이면 새로 만들지 않고
+     그것을 고른다 (같은 매체가 두 이름으로 갈리지 않게).
+     고르개는 열어 둔다 — 대개 한 번에 두어 개를 적어 넣는다. */
+  const addOption = (key) => {
+    const box = peek.querySelector(`[data-add-option="${key}"]`);
+    const row = rows.find((entry) => entry.id === openId);
+    if (!box || !row) return;
+    const name = String(box.value || '').trim().replace(/\s+/g, ' ');
+    if (!name) return;
+    const already = optionsOf(propByKey[key]).find(([option]) => option === name);
+    const picked = already ? already[0] : name;
+    if (!row[key].includes(picked)) row[key] = [...row[key], picked];
+    if (key === 'media' && row.mediaNotes[picked] === undefined) row.mediaNotes[picked] = NOTE_TEMPLATE;
+    box.value = '';
+    commit();
+    const list = peek.querySelector(`[data-options="${key}"]`);
+    if (list) list.hidden = false;
+    const again = peek.querySelector(`[data-add-option="${key}"]`);
+    if (again) again.focus();
+  };
+
+  peek.addEventListener('keydown', (event) => {
+    const box = event.target.closest('[data-add-option]');
+    if (!box || event.key !== 'Enter') return;
+    event.preventDefault();   // 엔터로 칸을 닫지 않는다
+    addOption(box.dataset.addOption);
+  });
 
   board.addEventListener('click', (event) => {
     const addButton = event.target.closest('.new-page');
@@ -651,6 +705,8 @@ if (creativeBoard) {
       if (prop.type === 'multi_select') peek.querySelector(`[data-options="${key}"]`).hidden = false;
       return;
     }
+    const addGo = event.target.closest('[data-add-go]');
+    if (addGo) { addOption(addGo.dataset.addGo); return; }
     const range = event.target.closest('.peek-range');
     if (range) {
       const key = range.dataset.edit;

@@ -61,6 +61,13 @@
 .peek-option{display:flex;align-items:center;gap:6px;width:100%;border:0;background:none;border-radius:5px;padding:5px 6px;cursor:pointer;text-align:left}
 .peek-option:hover{background:#f4f4f1}
 .peek-option.is-selected::after{content:'✓';margin-left:auto;color:#8c8c85;font-size:11px}
+
+/* 목록에 없는 매체를 손으로 적어 넣는 칸 (광고소재 기획 · 고르개 맨 아래) */
+.peek-option-add{display:flex;gap:4px;align-items:center;margin-top:4px;padding-top:5px;border-top:1px solid #eeedea}
+.peek-option-add input{flex:1;min-width:0;border:1px solid #e3e2dc;border-radius:5px;padding:5px 7px;font:400 12px 'Noto Sans KR',sans-serif;background:#fff}
+.peek-option-add input:focus{outline:0;border-color:#c9c8c1}
+.peek-option-add button{flex:0 0 auto;border:0;border-radius:5px;padding:5px 9px;background:#f0efec;color:#41403b;font:500 12px 'Noto Sans KR',sans-serif;cursor:pointer}
+.peek-option-add button:hover{background:#e6e5e1}
 @media(max-width:900px){.peek-panel{width:100vw;padding:14px 18px 40px}.peek-row{grid-template-columns:104px 1fr}}
 
 /* 보드 화면에서는 상단 헤더를 감춘다 */
