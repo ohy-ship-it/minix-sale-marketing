@@ -13483,7 +13483,11 @@ if (budgetPlanView) {
     return list;
   };
 
-  const monthPick = () => `<select data-bg="month">${monthList()
+  /* 고르개에는 **늦은 달이 위로** 온다. 짜는 것은 늘 이번 달 · 다음 달이라,
+     오름차순이면 쓸 달을 보려고 목록을 끝까지 내려야 했다.
+     monthList() 자체는 오름차순으로 둔다 — '가장 늦은 달의 다음 달'(monthNext)이
+     그 차례를 쓴다. 뒤집는 것은 그리는 자리뿐이다. */
+  const monthPick = () => `<select data-bg="month">${monthList().slice().reverse()
     .map((one) => `<option${one === month ? ' selected' : ''}>${escape(one)}</option>`).join('')}</select>`;
 
   // 'YYYY-MM' 에 달을 더한다 (12월 다음은 이듬해 1월)
