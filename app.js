@@ -1843,6 +1843,25 @@ const perfRange = (preset) => {
   return null;
 };
 
+/* 시작일이 종료일보다 뒤면 메타는 거들떠보지도 않고 '(#100) … since must be less
+   than or equal to until' 만 돌려준다. 그 말만 보고는 무엇을 고쳐야 할지 알 수 없다.
+   그래서 애초에 뒤집히지 않게 한다 — 달력에서 흔히 하듯 한쪽을 옮기면 다른 쪽이
+   따라온다. 9/20~9/27 을 보다가 시작일을 10/1 로 바꾸면 종료일도 10/1 이 되고,
+   거기서 종료일만 10/7 로 늘리면 된다. (예전에는 시작일을 바꾸는 그 순간
+   10/1~9/27 로 물어 버려서, 종료일을 고치기도 전에 오류가 떴다) */
+const perfPullDate = (box, field) => {
+  if (!box || !box.since || !box.until || box.since <= box.until) return box;
+  if (field === 'since') box.until = box.since;
+  else box.since = box.until;
+  return box;
+};
+
+// 이미 뒤집힌 채로 담겨 있던 기간 (지난번에 그렇게 두고 화면을 닫은 경우).
+// 매체에 묻기 전에 걸러 내고 사람 말로 알려 준다.
+const perfBackwards = (range) => ((range && range.since && range.until && range.since > range.until)
+  ? `조회 기간이 뒤집혀 있습니다 — 시작 ${range.since} 이 종료 ${range.until} 보다 뒤입니다. 날짜를 다시 골라 주세요.`
+  : '');
+
 // 시트에 붙은 Apps Script 에 물어본다. 토큰은 그쪽에만 있다.
 //
 // Apps Script 의 /exec 는 이따금 요청을 흘린다. 40초쯤 끌다가 JSON 대신 구글의
@@ -8628,8 +8647,8 @@ if (mediaPerformance) {
         <label>기간
           <select data-perf="preset">${PRESETS.map(([key, name]) => `<option value="${key}"${rangeState().preset === key ? ' selected' : ''}>${name}</option>`).join('')}</select>
         </label>
-        ${custom ? `<label>시작<input type="date" data-perf="since" value="${escapeHtml(range.since)}"></label>
-        <label>종료<input type="date" data-perf="until" value="${escapeHtml(range.until)}"></label>` : ''}
+        ${custom ? `<label>시작<input type="date" data-perf="since" value="${escapeHtml(range.since)}" max="${escapeHtml(range.until)}"></label>
+        <label>종료<input type="date" data-perf="until" value="${escapeHtml(range.until)}" min="${escapeHtml(range.since)}"></label>` : ''}
         ${ROLLING.indexOf(rangeState().preset) >= 0 ? `<label class="perf-check"
           title="'최근 N일' 은 기본으로 어제까지 봅니다. 당일 수치는 아직 집계 중이라 늘어납니다.">
           <input type="checkbox" data-perf="today"${rangeState().today ? ' checked' : ''}>오늘 포함</label>` : ''}
@@ -10006,6 +10025,8 @@ if (mediaPerformance) {
   const loadReport = (refresh) => {
     if (!account()) return;
     const range = currentRange();
+    const backwards = perfBackwards(range);
+    if (backwards) { status = 'error'; error = backwards; render(); return; }
     status = 'loading';
     beginLoad();
     render();
@@ -10196,7 +10217,9 @@ if (mediaPerformance) {
     if (field === 'cross-text') { crossText = event.target.value; return; }
     if (field === 'since' || field === 'until') {
       rangeState()[field] = event.target.value;
+      perfPullDate(rangeState(), field);   // 뒤집히면 다른 쪽을 끌어온다
       save();
+      render();                            // 따라 옮긴 날짜를 칸에도 보여 준다
       if (rangeState().since && rangeState().until) loadReport(false);
     }
   });
@@ -10580,8 +10603,8 @@ if (creativePerformance) {
         <label>기간
           <select data-creative="preset">${PERF_PRESETS.map(([key, name]) => `<option value="${key}"${state.preset === key ? ' selected' : ''}>${name}</option>`).join('')}</select>
         </label>
-        ${custom ? `<label>시작<input type="date" data-creative="since" value="${perfEscape(range.since)}"></label>
-        <label>종료<input type="date" data-creative="until" value="${perfEscape(range.until)}"></label>` : ''}
+        ${custom ? `<label>시작<input type="date" data-creative="since" value="${perfEscape(range.since)}" max="${perfEscape(range.until)}"></label>
+        <label>종료<input type="date" data-creative="until" value="${perfEscape(range.until)}" min="${perfEscape(range.since)}"></label>` : ''}
         <button type="button" class="tool-add" data-creative="reload"${status === 'loading' ? ' disabled' : ''}>
           <i data-lucide="refresh-cw"></i>${status === 'loading' ? '불러오는 중…' : '새로고침'}</button>
       </div>
@@ -10973,6 +10996,8 @@ if (creativePerformance) {
     if (!account()) return;
     const mine = turn || nextEpoch();
     const range = currentRange();
+    const backwards = perfBackwards(range);
+    if (backwards) { status = 'error'; error = backwards; render(); return; }
     status = 'loading';
     beginLoad();
     render();
@@ -11047,6 +11072,8 @@ if (creativePerformance) {
   const loadAll = (refresh) => {
     const mine = nextEpoch();
     const range = currentRange();
+    const backwards = perfBackwards(range);
+    if (backwards) { status = 'error'; error = backwards; render(); return; }
     const keys = Object.keys(PERF_SOURCES);
     status = 'loading';
     error = '';
@@ -11083,6 +11110,8 @@ if (creativePerformance) {
     if (!account()) return;
     const mine = nextEpoch();
     const range = currentRange();
+    const backwards = perfBackwards(range);
+    if (backwards) { status = 'error'; error = backwards; render(); return; }
     status = 'loading';
     beginLoad();
     render();
@@ -11238,7 +11267,9 @@ if (creativePerformance) {
     }
     if (field === 'since' || field === 'until') {
       state[field] = event.target.value;
+      perfPullDate(state, field);   // 뒤집히면 다른 쪽을 끌어온다
       save();
+      render();                     // 따라 옮긴 날짜를 칸에도 보여 준다
       if (!state.since || !state.until) return;
       if (isAll()) loadAll(false);
       else loadReport(false);
