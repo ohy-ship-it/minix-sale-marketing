@@ -12166,10 +12166,24 @@ if (eventResult) {
     return out.filter(Boolean);
   };
 
+  // 단계 차례. 파일에 적힌 이름 그대로다 (행사별 결과와 같은 말을 쓴다).
+  const PHASE_ORDER = ['사전', '당일', '사후', '상시'];
+
   // 파일 한 개의 줄 — 단계(사전 · 당일 · 사후 · 상시) 줄을 쓰고, 없으면 조회 기간 줄을 쓴다
   const rowsIn = (one) => {
     const phases = (one.phases || []).reduce((all, each) => all.concat(each.rows || []), []);
     return phases.length ? phases : (one.searched || []);
+  };
+
+  /* 파일 한 개의 단계 묶음. 단계가 안 적힌 옛 파일은 통째로 한 덩이로 둔다 —
+     이름을 '(단계 없음)' 으로 두어, 갈라 볼 수 없다는 것이 표에서 바로 보이게 한다. */
+  const phasesIn = (one) => {
+    const list = (one.phases || []).filter((each) => (each.rows || []).length);
+    if (list.length) return list;
+    const rows = one.searched || [];
+    if (!rows.length) return [];
+    const range = one.range || {};
+    return [{ name: '(단계 없음)', since: range.since || '', until: range.until || '', rows: rows }];
   };
 
   // 파일 한 개가 덮는 기간 (단계가 있으면 단계를 통째로 감싼 것, 없으면 조회 기간)
@@ -12204,15 +12218,16 @@ if (eventResult) {
   };
 
   // 공용 파일에서 이 프로모션 줄만 고른다 (프로모션 파일은 통째로 그 프로모션 것이다)
-  const pickRows = (one, channel) => {
+  // 공용 파일의 이 줄이 이 프로모션 것인가 (광고그룹 이름 끝토막 · 이름 조각으로 본다)
+  const mineRow = (row, channel) => {
     const marks = marksOf(channel);
-    return rowsIn(one).filter((row) => {
-      const tail = tailOf(row.adset);
-      if (tail && marks.indexOf(tail) >= 0) return true;
-      // 제휴처럼 매출채널 표에 없는 것 — 이름 조각이 광고그룹에 들어 있는지 본다
-      return marks.some((mark) => mark.length >= 3 && plain(row.adset).indexOf(mark) >= 0);
-    });
+    const tail = tailOf(row.adset);
+    if (tail && marks.indexOf(tail) >= 0) return true;
+    // 제휴처럼 매출채널 표에 없는 것 — 이름 조각이 광고그룹에 들어 있는지 본다
+    return marks.some((mark) => mark.length >= 3 && plain(row.adset).indexOf(mark) >= 0);
   };
+
+  const pickRows = (one, channel) => rowsIn(one).filter((row) => mineRow(row, channel));
 
   /* 프로모션 하나에 붙은 파일들. **파일 하나가 한 구간(주차)** 이다.
      따로 붙인 파일이 있으면 그것만 쓴다 — 공용 파일보다 정확하다. */
@@ -12231,14 +12246,23 @@ if (eventResult) {
   // 공용 파일 전체의 줄 (어느 프로모션에도 안 붙은 줄을 찾을 때 쓴다)
   const allRows = () => files.reduce((all, one) => all.concat(rowsIn(one.body)), []);
 
+  /* 판매량 — 행사별 결과가 세는 그 값(구매 수)이다.
+     conv(= 전매체의 '결과') 는 그 줄의 **목표 전환**이라 줄마다 뜻이 다르다 —
+     알람 신청으로 최적화한 캠페인은 신청 수가, 구매 캠페인은 구매 수가 들어 있어
+     한 표에서 더하면 무엇을 센 값인지 알 수 없다. 그래서 총합은 판매량으로 센다.
+     purchase 를 안 담던 옛 파일은 conv 로 물러선다 (그때는 conv 가 구매 수였다). */
+  const buyOf = (row) => Number(row.purchase !== undefined && row.purchase !== null
+    ? row.purchase : row.conv) || 0;
+
   const sumOf = (rows) => rows.reduce((into, row) => ({
     spend: into.spend + (Number(row.spend) || 0),
     imp: into.imp + (Number(row.imp) || 0),
     clk: into.clk + (Number(row.clk) || 0),
     conv: into.conv + (Number(row.conv) || 0),
+    buy: into.buy + buyOf(row),
     rev: into.rev + (Number(row.rev) || 0),
     media: into.media.indexOf(row.sourceName) < 0 ? into.media.concat(row.sourceName) : into.media,
-  }), { spend: 0, imp: 0, clk: 0, conv: 0, rev: 0, media: [] });
+  }), { spend: 0, imp: 0, clk: 0, conv: 0, buy: 0, rev: 0, media: [] });
 
   const ratio = (top, bottom) => (bottom > 0 ? top / bottom : null);
   const pctText = (value) => (value === null ? '—' : perfPercent(value));
@@ -12247,13 +12271,15 @@ if (eventResult) {
   /* 지표 차례는 **한 군데서 정한다** — 이 화면의 표가 셋(프로모션 줄 · 주차별 · 상세)이라
      따로 적어 두면 곧 서로 어긋난다. 이름과 계산을 짝지어 두고 모두 이 목록을 쓴다.
      차례: 광고비 → 전환수 → 전환값 → ROAS → CPS → CVR → CPM → CPC → CTR */
+  /* 판매량 · 판매전환값으로 센다 (행사별 결과와 같은 기준).
+     ROAS = 판매전환값 ÷ 광고비 · CPS = 광고비 ÷ 판매량 · CVR = 판매량 ÷ 클릭. */
   const METRICS = [
     { name: '광고비', cell: (one) => money(one.spend) },
-    { name: '전환수', cell: (one) => (one.conv ? num(one.conv) : '—') },
-    { name: '전환값', cell: (one) => money(one.rev) },
+    { name: '판매량', cell: (one) => (one.buy ? num(one.buy) : '—') },
+    { name: '판매전환값', cell: (one) => money(one.rev) },
     { name: 'ROAS', cell: (one) => (one.spend ? perfRoas(ratio(one.rev, one.spend) || 0) : '—') },
-    { name: 'CPS', cell: (one) => moneyText(ratio(one.spend, one.conv)) },
-    { name: 'CVR', cell: (one) => pctText(ratio(one.conv, one.clk)) },
+    { name: 'CPS', cell: (one) => moneyText(ratio(one.spend, one.buy)) },
+    { name: 'CVR', cell: (one) => pctText(ratio(one.buy, one.clk)) },
     { name: 'CPM', cell: (one) => moneyText(ratio(one.spend * 1000, one.imp)) },
     { name: 'CPC', cell: (one) => moneyText(ratio(one.spend, one.clk)) },
     { name: 'CTR', cell: (one) => pctText(ratio(one.clk, one.imp)) },
@@ -12261,14 +12287,15 @@ if (eventResult) {
   const metricHeads = () => METRICS.map((one) => `<th class="perf-num">${escape(one.name)}</th>`).join('');
   const metricRow = (sum) => METRICS.map((one) => `<td class="perf-num">${one.cell(sum)}</td>`).join('');
 
-  const HEAD = ['판매채널', '프로모션명', '라이브기간', '광고기간', '집행매체']
+  /* 집행매체는 요약 줄에서 뺐다 — 매체가 넷이면 이름만 한 줄을 채워 정작 숫자가 밀렸다.
+     대신 줄을 펼치면 [매체별] 에서 매체마다 숫자와 함께 본다. */
+  const HEAD = ['판매채널', '프로모션명', '라이브기간', '광고기간']
     .concat(METRICS.map((one) => one.name)).concat(['파일']);
-  const HEAD_NUM_FROM = 5;         // 이 칸부터 숫자다 (오른쪽 맞춤)
+  const HEAD_NUM_FROM = 4;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
   const metricCells = (got) => {
     if (!got) return `<td class="tr-none" colspan="${HEAD.length - HEAD_NUM_FROM}">파일을 붙이면 채워집니다</td>`;
-    return `<td class="tr-media">${got.media.length ? escape(got.media.join(' · ')) : '—'}</td>`
-      + metricRow(got);
+    return metricRow(got);
   };
 
   /* ── 판매채널 하나를 펼쳐 본다 ──────────────────────────────────
@@ -12277,7 +12304,10 @@ if (eventResult) {
      그래서 파일이 작게 유지되고, 값도 늘 최신이다.
      대신 부를 때마다 몇 초 걸리므로 **탭을 누른 것만** 묻고 받아 둔 것은 다시 안 묻는다. */
   const TABS = [
-    // 주차별은 **매체에 묻지 않는다** — 이미 붙여 둔 파일을 갈라 놓기만 하면 된다
+    /* 앞의 셋은 **매체에 묻지 않는다** — 이미 붙여 둔 파일을 갈라 놓기만 하면 된다.
+       그래서 누르는 즉시 그려진다. 뒤의 넷은 매체에 물어보느라 몇 초 걸린다. */
+    { key: 'phase', name: '단계별' },
+    { key: 'media', name: '매체별' },
     { key: 'week', name: '주차별' },
     { key: 'placement', name: '게재지면' },
     { key: 'age', name: '연령대' },
@@ -12287,7 +12317,8 @@ if (eventResult) {
   // 쪼개 보기를 주는 매체 (네이버 GFA · 검색광고는 그 길이 없다)
   const SPLITS = ['meta', 'google', 'kakao'];
 
-  let tab = 'week';
+  // 펼치면 먼저 보이는 탭. 행사별 결과와 같이 **단계별**로 연다.
+  let tab = 'phase';
   const got = {};          // '프로모션|탭' → { status, rows, notes }
 
   const slotOf = (channel, key) => `${channel}|${key}`;
@@ -12324,7 +12355,8 @@ if (eventResult) {
   };
 
   const askDetail = (channel, key, again) => {
-    if (key === 'week') return;    // 붙인 파일로 그린다 — 물어볼 것이 없다
+    // 단계별 · 매체별 · 주차별은 붙인 파일로 그린다 — 물어볼 것이 없다
+    if (key === 'phase' || key === 'media' || key === 'week') return;
     const slot = slotOf(channel, key);
     if (got[slot] && !again) return;
     const spots = spotsOf(channel);
@@ -12473,22 +12505,100 @@ if (eventResult) {
       ${packs.length === 1 ? '<p class="perf-note">파일이 하나라 합계와 같습니다 — 주차마다 따로 내려받아 붙이면 줄이 늘어납니다.</p>' : ''}`;
   };
 
+  /* 단계별 — 사전 · 당일 · 사후 · 상시. 행사별 결과와 같은 갈래다.
+     파일마다 단계가 따로 적혀 있으므로, 붙인 파일을 모두 훑어 단계 이름으로 모은다
+     (주차별로 여러 개를 붙였으면 같은 단계끼리 합쳐진다). */
+  const phasePacks = (channel) => {
+    const own = byChannel[channel] || [];
+    const mine = own.length ? own : files;
+    const bucket = {};
+    mine.forEach((file) => {
+      phasesIn(file.body).forEach((each) => {
+        const rows = own.length ? (each.rows || []) : (each.rows || []).filter((row) => mineRow(row, channel));
+        if (!rows.length) return;
+        const name = String(each.name || '(단계 없음)');
+        if (!bucket[name]) bucket[name] = { name: name, since: '', until: '', rows: [] };
+        const one = bucket[name];
+        if (each.since && (!one.since || each.since < one.since)) one.since = each.since;
+        if (each.until && (!one.until || each.until > one.until)) one.until = each.until;
+        one.rows = one.rows.concat(rows);
+      });
+    });
+    return Object.keys(bucket).sort((a, b) => {
+      const one = PHASE_ORDER.indexOf(a);
+      const two = PHASE_ORDER.indexOf(b);
+      return (one < 0 ? 99 : one) - (two < 0 ? 99 : two);
+    }).map((name) => bucket[name]);
+  };
+
+  const phaseTable = (channel) => {
+    const packs = phasePacks(channel);
+    if (!packs.length) {
+      return '<p class="perf-note">붙인 전매체 파일이 없습니다 — 전매체 검색에서 단계 날짜를 '
+        + '적고 내려받은 파일을 붙이면 사전 · 당일 · 사후로 갈라 보여 드립니다.</p>';
+    }
+    const lines = packs.map((one) => ({ ...one, sum: sumOf(one.rows) }));
+    /* 합계는 **줄을 다 더해 다시 계산한다** — 단계별 ROAS · CPS 를 평균 내면 틀린다
+       (광고비가 큰 단계가 더 무겁다). 원래 줄을 통째로 모아 한 번에 센다. */
+    const whole = sumOf(packs.reduce((all, one) => all.concat(one.rows), []));
+    return `<div class="tool-table-wrap"><table class="tool-table tr-split">
+        <thead><tr><th>단계</th><th>기간</th>${metricHeads()}</tr></thead>
+        <tbody>
+          <tr class="tr-sum"><td><b>합계</b></td><td>—</td>${metricRow(whole)}</tr>
+          ${lines.map((one) => `<tr>
+          <td><b>${escape(one.name)}</b></td>
+          <td>${escape(span(one.since, one.until)) || '<span class="tool-blank">—</span>'}</td>
+          ${metricRow(one.sum)}
+        </tr>`).join('')}</tbody>
+      </table></div>
+      ${packs.length === 1 && packs[0].name === '(단계 없음)'
+    ? '<p class="perf-note">이 파일에는 단계 날짜가 없습니다 — 전매체 검색에서 사전 · 당일 · 사후 날짜를 적고 다시 내려받아 주세요.</p>' : ''}`;
+  };
+
+  /* 매체별 — 요약 줄에서 뺀 집행매체를 여기서 숫자와 함께 본다.
+     이것도 파일만 있으면 되므로 매체에 묻지 않는다. */
+  const mediaTable = (channel) => {
+    const rows = rowsFor(channel);
+    if (!rows.length) return '<p class="perf-note">붙인 전매체 파일이 없습니다.</p>';
+    const bucket = {};
+    rows.forEach((row) => {
+      const name = String(row.sourceName || '(매체 미상)');
+      if (!bucket[name]) bucket[name] = [];
+      bucket[name].push(row);
+    });
+    const lines = Object.keys(bucket).map((name) => ({ name: name, sum: sumOf(bucket[name]) }))
+      .sort((a, b) => b.sum.spend - a.sum.spend);   // 광고비가 큰 매체가 위로
+    const whole = sumOf(rows);
+    return `<div class="tool-table-wrap"><table class="tool-table tr-split">
+        <thead><tr><th>매체</th><th>광고그룹</th>${metricHeads()}</tr></thead>
+        <tbody>
+          <tr class="tr-sum"><td><b>합계</b></td><td>${num(rows.length)}개</td>${metricRow(whole)}</tr>
+          ${lines.map((one) => `<tr>
+          <td><b>${escape(one.name)}</b></td>
+          <td>${num(bucket[one.name].length)}개</td>
+          ${metricRow(one.sum)}
+        </tr>`).join('')}</tbody>
+      </table></div>`;
+  };
+
   const detailCard = (channel) => {
     const slot = slotOf(channel, tab);
     const pack = got[slot];
-    const inside = tab === 'week' ? weekTable(channel)
+    // 파일만으로 그리는 탭 — 매체에 묻지 않으니 기다릴 것이 없다
+    const offline = { phase: phaseTable, media: mediaTable, week: weekTable }[tab];
+    const inside = offline ? offline(channel)
       : !pack ? '<p class="perf-note">누르면 매체에 물어봅니다.</p>'
         : pack.status === 'loading' ? '<p class="perf-note">매체에서 받는 중… (몇 초 걸립니다)</p>'
           : (tab === 'creative' ? creativeCards(pack.rows) : splitTable(pack.rows));
     // 어느 기간을 물었는지 늘 보여 준다 — 값이 비면 대개 기간이 어긋난 것이다
     const asked = pack && pack.range && pack.range.since
       ? `<span class="tr-asked">${escape(pack.range.since)} ~ ${escape(pack.range.until)}</span>` : '';
-    const notes = tab === 'week' ? [] : ((pack && pack.notes) || []);
+    const notes = offline ? [] : ((pack && pack.notes) || []);
     return `<div class="tr-detail">
       <div class="tr-tabs">${TABS.map((one) => `<button type="button" data-tr="tab" data-tab="${one.key}"
         class="${one.key === tab ? 'is-on' : ''}">${escape(one.name)}</button>`).join('')}
         ${asked}
-        ${tab === 'week' ? '' : `<button type="button" class="tr-redo" data-tr="redo" data-channel="${escape(channel)}"
+        ${offline ? '' : `<button type="button" class="tr-redo" data-tr="redo" data-channel="${escape(channel)}"
           title="매체에 다시 묻기"><i data-lucide="rotate-ccw"></i></button>`}</div>
       ${notes.map((one) => `<p class="perf-note bg-note-bad">${escape(one)}</p>`).join('')}${inside}
     </div>`;

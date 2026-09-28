@@ -1725,7 +1725,6 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .tr-name svg{width:13px;color:#b0afa8;transition:transform .12s}
 .tr-row.is-open .tr-name svg{transform:rotate(90deg);color:#37352f}
 .tr-row.is-open{background:#f6f5f1}
-.tr-media{color:#6f6f68}
 .tr-none{color:#b6b5ae}
 .tr-file{position:relative;cursor:pointer}
 .tr-more>td{background:#fbfaf7;padding:0}
