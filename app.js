@@ -184,6 +184,35 @@ if (creativeBoard) {
   const knownWrite = (ids) => { try { localStorage.setItem(KNOWN_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ } };
   const weekCache = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks)); } catch { /* 거들기다 */ } };
 
+  /* 시트 것으로 바꿔 그리기 **직전의 모습**을 한 벌 남겨 둔다.
+     덮어써서 잃는 일이 또 생겨도 되찾을 자리가 있어야 한다.
+     F12 → 콘솔에서 꺼낸다: localStorage.getItem('minix-creative-weeks-backup') */
+  const BACKUP_KEY = 'minix-creative-weeks-backup';
+  const weekBackup = () => {
+    if (!weeks.length) return;
+    try {
+      localStorage.setItem(BACKUP_KEY, JSON.stringify({ at: new Date().toISOString(), weeks }));
+    } catch { /* 거들기다 */ }
+  };
+
+  let weekSending = null;   // 지금 보내고 있는 저장 (끝나야 시트 값을 믿을 수 있다)
+
+  const sendWeeks = () => {
+    // base = 이 화면이 아는 주차 ID. 시트에만 있고 여기에도 없는 주차는 서버가 살려 둔다.
+    const mine = askSheet({ action: 'weeksPut', weeks: weeks, base: knownRead(), by: '' })
+      .then(() => {
+        knownWrite(weeks.map((one) => one.id));   // 시트가 이제 이 주차들을 안다
+        weekNote = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
+      })
+      .catch((reason) => { weekNote = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
+      .then(() => {
+        if (weekSending === mine) weekSending = null;
+        if (weekList && !weekList.hidden) renderWeekList();
+      });
+    weekSending = mine;
+    return mine;
+  };
+
   const save = () => {
     weekCache();
     if (weekSaveWait) window.clearTimeout(weekSaveWait);
@@ -191,15 +220,21 @@ if (creativeBoard) {
     if (weekList && !weekList.hidden) renderWeekList();
     weekSaveWait = window.setTimeout(() => {
       weekSaveWait = null;
-      // base = 이 화면이 아는 주차 ID. 시트에만 있고 여기에도 없는 주차는 서버가 살려 둔다.
-      askSheet({ action: 'weeksPut', weeks: weeks, base: knownRead(), by: '' })
-        .then(() => {
-          knownWrite(weeks.map((one) => one.id));   // 시트가 이제 이 주차들을 안다
-          weekNote = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
-        })
-        .catch((reason) => { weekNote = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
-        .then(() => { if (weekList && !weekList.hidden) renderWeekList(); });
+      sendWeeks();
     }, 700);
+  };
+
+  /* 아직 안 보낸 저장을 **지금** 보낸다. 시트를 읽기 전에 꼭 부른다.
+     이걸 안 하면 방금 적은 것이 시트의 옛 값으로 덮인다 — 저장은 한 박자(0.7초) 모았다
+     보내는데 그 요청이 오가는 데 또 2~4초가 걸린다. 그 사이에 [새로고침] 을 누르거나
+     화면을 다시 열면, 아직 시트에 없는 카드가 통째로 사라졌다. */
+  const flushWeeks = () => {
+    if (weekSaveWait) {
+      window.clearTimeout(weekSaveWait);
+      weekSaveWait = null;
+      return sendWeeks();
+    }
+    return weekSending || Promise.resolve();
   };
 
   /* 시트에서 받아 온다.
@@ -207,26 +242,47 @@ if (creativeBoard) {
      만들어 둔 주차(다른 PC 에서 안 보이던 그것)를 잃지 않게, 그리고 시트로 올려 준다.
      사람이 새로고침을 누른 때는 시트를 그대로 따른다 — 남이 지운 주차가 되살아나면 안 된다. */
   let weekPulled = false;
-  const pullWeeks = (mine) => askSheet({ action: 'weeksGet' })
+  const pullWeeks = (mine) => flushWeeks()
+    .then(() => askSheet({ action: 'weeksGet' }))
     .then((body) => {
       const got = (body.weeks || []).map(normalizeWeek);
       const first = !weekPulled;
       weekPulled = true;
       let push = false;
+      let told = false;   // 없어진 주차를 이미 알렸나 (아래 기본 알림이 그 말을 덮지 않게)
       if (first && !mine) {
         const sameWeek = (a, b) => a.year === b.year && a.month === b.month && a.week === b.week;
         const known = knownRead();
-        const onlyHere = weeks.filter((one) => !known.includes(one.id)
-          && !got.some((there) => there.id === one.id || sameWeek(there, one)));
+        const onlyHere = weeks.filter((one) => {
+          if (known.includes(one.id)) return false;                    // 시트가 알던 주차 — 남이 지운 것이다
+          if (got.some((there) => there.id === one.id)) return false;   // 시트에 이미 있다
+          /* 년 · 월 · 주차가 같은 주차가 시트에 있어도 **카드가 들어 있으면 버리지 않는다.**
+             예전에는 이름만 같으면 통째로 버렸다 — 그래서 주차를 고쳐 이름이 시트의 다른
+             주차와 같아지는 순간, 이쪽에서 적어 둔 카드가 말없이 사라졌다.
+             빈 주차만 겹치는 것으로 보고 접는다 (그건 잃을 것이 없다). */
+          if (one.rows.length) return true;
+          return !got.some((there) => sameWeek(there, one));
+        });
+        weekBackup();
         weeks = got.concat(onlyHere);
         push = onlyHere.length > 0;
         if (push) weekNote = `이 브라우저에만 있던 ${onlyHere.length}개를 시트에 올립니다`;
       } else {
+        /* 시트에 없는데 여기에는 카드가 들어 있는 주차. 조용히 지우지 않고 알려 준다 —
+           '적었는데 날아갔다' 는 말이 나오는 자리가 여기다. */
+        const lost = weeks.filter((one) => one.rows.length
+          && !got.some((there) => there.id === one.id));
+        weekBackup();
         weeks = got;
+        if (lost.length) {
+          weekNote = `시트에 없어 ${lost.length}개 주차(${lost.map(weekName).join(" · ")})를 내렸습니다`
+            + ' — 되살리려면 F12 콘솔에서 localStorage.getItem(\'minix-creative-weeks-backup\')';
+          told = true;
+        }
       }
       weekCache();
       knownWrite(got.map((one) => one.id));
-      if (!push) weekNote = weeks.length ? '' : '시트에 주차가 없습니다';
+      if (!push && !told) weekNote = weeks.length ? '' : '시트에 주차가 없습니다';
       if (push) save();               // 올려 준다 (save 가 알림도 갈아 준다)
       if (weekList && !weekList.hidden) renderWeekList();
       if (currentWeekId) {
@@ -1077,7 +1133,20 @@ if (creativeBoard) {
       return;
     }
     if (event.target.closest('.week-save')) {
+      const before = { year: week.year, month: week.month, week: week.week };
       rowElement.querySelectorAll('.week-input').forEach((field) => { week[field.dataset.field] = field.value.trim() || week[field.dataset.field]; });
+      /* 이름이 같은 주차가 둘이 되면 목록에서 어느 쪽이 어느 쪽인지 알 수 없다.
+         (예전에는 그 상태로 두면 다음에 열 때 한쪽이 말없이 사라지기까지 했다) */
+      const twin = weeks.find((one) => one.id !== week.id && one.year === week.year
+        && one.month === week.month && one.week === week.week);
+      if (twin && !window.confirm(`'${weekName(week)}'가 이미 있습니다 (카드 ${twin.rows.length}건).`
+        + '\n\n이름이 같은 주차를 둘로 둘까요? [취소] 를 누르면 되돌립니다.')) {
+        week.year = before.year;
+        week.month = before.month;
+        week.week = before.week;
+        renderWeekList();
+        return;
+      }
       editingWeekId = null;
       save();
       renderWeekList();
@@ -1108,7 +1177,10 @@ if (creativeBoard) {
   // 부르는 것은 스크립트가 다 읽힌 뒤에 — askSheet 가 이 아래에 선언돼 있다.
   weekNote = '시트에서 불러오는 중…';
   renderWeekList();
-  window.setTimeout(pullWeeks, 0);
+  /* 괄호 없이 넘기면 안 된다 — 브라우저(파이어폭스)가 늦은 정도를 인자로 얹어 줘서
+     그 값이 mine 으로 새어 들어간다. 그러면 '처음 읽기' 인데도 합치지 않고
+     시트 것으로 통째로 갈아 버린다. */
+  window.setTimeout(() => pullWeeks(), 0);
 
   // '#creative-planning/<주차>' 또는 '#creative-planning/<주차>/<카드>'
   const linked = window.location.hash.startsWith('#creative-planning/')
