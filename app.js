@@ -1961,6 +1961,17 @@ const perfPercent = (value) => `${((Number(value) || 0) * 100).toFixed(2)}%`;
 const perfRoas = (value) => `${((Number(value) || 0) * 100).toFixed(1)}%`;
 const perfRatio = (top, bottom) => (bottom > 0 ? top / bottom : null);
 
+/* 빈도 — 한 사람이 그 기간에 평균 몇 번 봤나 (노출 ÷ 도달).
+   같은 사람에게 너무 자주 보이면 클릭은 안 늘고 광고비만 나간다. 소재를 갈아야 할
+   때를 이 숫자로 본다.
+   **매체가 준 값을 그대로 쓴다** — 노출 ÷ 도달로 우리가 다시 세면 매체가 반올림해
+   준 도달로 나누게 되어 관리자 화면과 소수점이 어긋난다.
+   도달을 주는 매체는 지금 **메타뿐**이다. 나머지는 값이 없어 — 로 둔다.
+   0 을 '0.00' 으로 그리면 '아무도 안 봤다' 는 거짓말이 되므로 빈칸으로 둔다. */
+const perfFreqOf = (row) => (Number(row && row.frequency) > 0 ? Number(row.frequency) : null);
+const perfFreq = (value) => Number(value).toFixed(2);
+const perfReachTip = (row) => (Number(row && row.reach) > 0 ? `도달 ${perfCount(row.reach)}명` : '');
+
 // ── 상세 보기 차트 ──────────────────────────────────────────────────
 // 표만으로는 연령 · 성별 쏠림이 안 보여서 막대로도 그린다. 라이브러리 없이 SVG 로 그린다.
 // 색은 한 벌만 쓴다 — 한 계열이면 파랑 하나, 여러 계열이면 아래 차례대로.
@@ -8772,12 +8783,14 @@ if (mediaPerformance) {
     <td class="perf-num">${blank(ratio(row.spend * 1000, row.impressions), money)}</td>
     <td class="perf-num">${blank(ratio(row.spend, row.linkClicks), money)}</td>
     <td class="perf-num">${blank(ratio(row.linkClicks, row.impressions), percent)}</td>
-    <td class="perf-num">${blank(cvrOf(row), percent)}</td>`;
+    <td class="perf-num">${blank(cvrOf(row), percent)}</td>
+    <td class="perf-num" title="${escapeHtml(perfReachTip(row))}">${blank(perfFreqOf(row), perfFreq)}</td>`;
 
   // 표 머리글도 한 군데서 만든다 (매체별 성과 표 · 상세 표가 같은 칸을 쓴다)
   const metricHeads = () => `<th>광고비</th>${revenueHead()}<th>ROAS</th>${costHeads()}
     <th>노출</th><th>${source().clicks}</th>${countHeads()}
-    <th>CPM</th><th>CPC</th><th>CTR</th><th>CVR<small>구매</small></th>`;
+    <th>CPM</th><th>CPC</th><th>CTR</th><th>CVR<small>구매</small></th>
+    <th title="한 사람이 평균 몇 번 봤나 (노출 ÷ 도달). 도달은 메타만 줍니다">빈도</th>`;
 
   // ── 상세 보기 ───────────────────────────────────────────────────
 
@@ -8847,9 +8860,9 @@ if (mediaPerformance) {
 
   const detailPanel = (campaign) => {
     const keys = source().breakdowns || [];
-    // 이름 · 예산 + 광고비 전환값 ROAS + 비용 자리 + 노출 클릭 + 결과 자리 + CPM CPC CTR CVR + 상세 칸
-    // (칸 수는 전과 같다 — 차례만 바뀌었다)
-    const span = 2 + 6 + resultCount() + 2 + 1;
+    // 이름 · 예산 + 광고비 전환값 ROAS + 비용 자리 + 노출 클릭 + 결과 자리
+    //   + CPM CPC CTR CVR 빈도 + 상세 칸
+    const span = 2 + 6 + resultCount() + 3 + 1;
     return `<tr class="perf-detail-row"><td colspan="${span}">
       <div class="perf-detail">
         <div class="perf-detail-picks">
@@ -8957,7 +8970,7 @@ if (mediaPerformance) {
         <td class="perf-name"><span class="perf-branch"></span>
           <span title="이 기간에는 돌았지만 지금 목록에 없는 광고그룹입니다">그 밖 (꺼진 · 지워진 광고그룹)</span></td>
         <td></td><td class="perf-num">${money(rest)}</td>
-        ${new Array(7 + resultCount()).fill('<td></td>').join('')}<td></td>
+        ${new Array(8 + resultCount()).fill('<td></td>').join('')}<td></td>
       </tr>` : '';
 
       return head + panel + children.map((adset) => `<tr class="perf-child">
@@ -10357,7 +10370,7 @@ if (mediaPerformance) {
     const split = Boolean(source().splitResults);
     const head = ['캠페인', '광고그룹', '목적', '예산', '광고비', '노출', source().clicks, 'CTR', 'CPC', 'CPM']
       .concat(split ? ['구매', '장바구니', 'CVR(구매)', 'CPS', 'CPB', '구매매출'] : ['결과', 'CVR(구매)', 'CPA', '구매전환값'])
-      .concat(['ROAS']);
+      .concat(['ROAS', '빈도']);
     const line = (campaign, adset) => {
       const row = adset || campaign;
       const cpa = isTraffic(row) ? '' : ratio(row.spend, row.results);
@@ -10375,7 +10388,8 @@ if (mediaPerformance) {
         : [row.results, cvrOf(row) === null ? '' : percent(cvrOf(row)),
           cpa === null || cpa === '' ? '' : Math.round(cpa)])
         .concat([Math.round(row.revenue || 0),
-          ratio(row.revenue, row.spend) === null ? '' : perfRoas(ratio(row.revenue, row.spend))])
+          ratio(row.revenue, row.spend) === null ? '' : perfRoas(ratio(row.revenue, row.spend)),
+          perfFreqOf(row) === null ? '' : perfFreq(perfFreqOf(row))])
         .join('\t');
     };
     const lines = [head.join('\t')];
@@ -10787,6 +10801,7 @@ if (creativePerformance) {
           ${showCustom()
     ? metricRow('맞춤전환', row.custom ? perfCount(row.custom) : '<span class="tool-blank">—</span>') : ''}
           ${metricRow('노출', perfCount(row.impressions))}
+          ${metricRow('빈도', blank(perfFreqOf(row), perfFreq))}
           ${metricRow(source().clicks, perfCount(row.linkClicks))}
           ${metricRow('CTR', blank(ctr, perfPercent))}
           ${metricRow('CPC', blank(cpc, money))}
@@ -11483,7 +11498,7 @@ if (creativePerformance) {
       .concat(source().splitResults
         ? ['구매', '장바구니'].concat(mine).concat(['CVR(구매)', 'CPS', 'CPB', '구매매출'])
         : ['결과'].concat(mine).concat(['CVR(구매)', 'CPA', '구매전환값']))
-      .concat(['ROAS', '평균재생(초)']);
+      .concat(['ROAS', '평균재생(초)', '빈도']);
     const lines = [head.join('\t')];
     shown().forEach((row) => {
       const ctr = perfRatio(row.linkClicks, row.impressions);
@@ -11508,7 +11523,8 @@ if (creativePerformance) {
           cpa === null ? '' : Math.round(cpa)]))
         .concat([Math.round(row.revenue || 0),
           perfRatio(row.revenue, row.spend) === null ? '' : perfRoas(perfRatio(row.revenue, row.spend)),
-          row.watch ? (Number(row.watch) || 0).toFixed(1) : ''])
+          row.watch ? (Number(row.watch) || 0).toFixed(1) : '',
+          perfFreqOf(row) === null ? '' : perfFreq(perfFreqOf(row))])
         .join('\t'));
     });
     return lines.join('\n');

@@ -2673,6 +2673,7 @@ function metaReport_(payload) {
 
   var range = JSON.stringify({ since: since, until: until });
   var fields = 'campaign_id,campaign_name,objective,spend,impressions,clicks,inline_link_clicks,'
+    + 'reach,frequency,'
     + 'actions,catalog_segment_actions,action_values,catalog_segment_value';
 
   var info = graph_('/' + account, { fields: 'name,currency,account_status,timezone_name' });
@@ -2843,6 +2844,13 @@ function metrics_(row, base, window) {
   base.impressions = row ? Number(row.impressions || 0) : 0;
   base.clicks = row ? Number(row.clicks || 0) : 0;
   base.linkClicks = row ? Number(row.inline_link_clicks || 0) : 0;
+  /* 도달 = 한 번이라도 본 사람 수 · 빈도 = 그 사람들이 평균 몇 번 봤나 (노출 ÷ 도달).
+     빈도는 **매체가 준 값을 그대로** 쓴다 — 우리가 노출 ÷ 도달로 다시 세면 매체가
+     반올림해 준 도달로 나누게 되어 관리자 화면과 소수점이 어긋난다.
+     도달은 **더할 수 없는 값**이다. 캠페인 둘을 같은 사람이 봤으면 그 사람이 두 번
+     세어진다. 그래서 화면도 줄마다만 보여 주고 합계 칸에는 넣지 않는다. */
+  base.reach = row ? Number(row.reach || 0) : 0;
+  base.frequency = row ? Number(row.frequency || 0) : 0;
 
   // 카탈로그(Advantage+) 캠페인은 전환이 actions 가 아니라 catalog_segment_actions 로 온다.
   // actions 에 잡힌 게 없을 때만 그쪽 값을 쓴다. (둘 다 세면 같은 전환을 두 번 세게 된다)
@@ -3265,6 +3273,8 @@ function adsMetrics_(row, categories, base) {
   base.addToCart = categories ? categories.addToCart : 0;
   base.lead = categories ? categories.lead : 0;
   base.custom = 0;                     // 구글은 커스텀 이벤트를 따로 주지 않는다
+  base.reach = 0;                      // 도달 · 빈도는 보고서에 없다 (화면은 — 로 그린다)
+  base.frequency = 0;
   /* 결과는 구매 하나만 센다 (메타와 같은 규칙 — 장바구니 · 리드는 칸으로만 남는다).
      구글은 캠페인이 무슨 전환으로 최적화하는지를 보고서에서 주지 않아 구매로 둔다. */
   base.slot = 'purchase';
@@ -3395,6 +3405,7 @@ function metaCreatives_(payload) {
   var rows = graphAll_('/' + scope + '/insights', {
     level: 'ad',
     fields: 'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,'
+      + 'reach,frequency,'
       + 'inline_link_clicks,actions,catalog_segment_actions,action_values,catalog_segment_value,'
       + 'video_avg_time_watched_actions,video_p25_watched_actions,'
       + 'video_p50_watched_actions,video_p75_watched_actions,video_p100_watched_actions',
@@ -3990,6 +4001,8 @@ function kakaoMetrics_(metrics, base, window) {
   base.addToCart = counted.addToCart;
   base.lead = counted.lead;
   base.custom = 0;                     // 카카오는 커스텀 이벤트를 따로 주지 않는다
+  base.reach = 0;                      // 도달 · 빈도는 보고서에 없다 (화면은 — 로 그린다)
+  base.frequency = 0;
   /* 결과는 구매 하나만 센다 (메타와 같은 규칙). 카카오모먼트는 전환 목표가 'CONVERSION'
      하나뿐이라 무슨 이벤트로 최적화하는지를 알려 주지 않는다 — 구매로 둔다. */
   base.slot = 'purchase';
@@ -5059,7 +5072,7 @@ function metaBreakdownRows_(rows, name, window) {
   }));
 }
 
-var META_BREAKDOWN_FIELDS = 'spend,impressions,clicks,inline_link_clicks,'
+var META_BREAKDOWN_FIELDS = 'spend,impressions,clicks,inline_link_clicks,reach,frequency,'
   + 'actions,catalog_segment_actions,action_values,catalog_segment_value';
 
 /* 상세는 **여러 소재를 한꺼번에** 받는다 (ads=번호,번호,…).
