@@ -12272,17 +12272,22 @@ if (eventResult) {
      따로 적어 두면 곧 서로 어긋난다. 이름과 계산을 짝지어 두고 모두 이 목록을 쓴다.
      차례: 광고비 → 전환수 → 전환값 → ROAS → CPS → CVR → CPM → CPC → CTR */
   /* 판매량 · 판매전환값으로 센다 (행사별 결과와 같은 기준).
-     ROAS = 판매전환값 ÷ 광고비 · CPS = 광고비 ÷ 판매량 · CVR = 판매량 ÷ 클릭. */
+     ROAS = 판매전환값 ÷ 광고비 · CPS = 광고비 ÷ 판매량 · CVR = 판매량 ÷ 클릭.
+     차례는 **받은 값 먼저, 셈한 값 나중**이다 —
+       광고비 · 판매전환값 · 노출 · 클릭 · 판매량   (매체가 준 그대로)
+       CPS · ROAS · CVR · CPC · CTR · CPM          (위 값으로 우리가 센 것) */
   const METRICS = [
     { name: '광고비', cell: (one) => money(one.spend) },
-    { name: '판매량', cell: (one) => (one.buy ? num(one.buy) : '—') },
     { name: '판매전환값', cell: (one) => money(one.rev) },
-    { name: 'ROAS', cell: (one) => (one.spend ? perfRoas(ratio(one.rev, one.spend) || 0) : '—') },
+    { name: '노출', cell: (one) => (one.imp ? num(one.imp) : '—') },
+    { name: '클릭', cell: (one) => (one.clk ? num(one.clk) : '—') },
+    { name: '판매량', cell: (one) => (one.buy ? num(one.buy) : '—') },
     { name: 'CPS', cell: (one) => moneyText(ratio(one.spend, one.buy)) },
+    { name: 'ROAS', cell: (one) => (one.spend ? perfRoas(ratio(one.rev, one.spend) || 0) : '—') },
     { name: 'CVR', cell: (one) => pctText(ratio(one.buy, one.clk)) },
-    { name: 'CPM', cell: (one) => moneyText(ratio(one.spend * 1000, one.imp)) },
     { name: 'CPC', cell: (one) => moneyText(ratio(one.spend, one.clk)) },
     { name: 'CTR', cell: (one) => pctText(ratio(one.clk, one.imp)) },
+    { name: 'CPM', cell: (one) => moneyText(ratio(one.spend * 1000, one.imp)) },
   ];
   const metricHeads = () => METRICS.map((one) => `<th class="perf-num">${escape(one.name)}</th>`).join('');
   const metricRow = (sum) => METRICS.map((one) => `<td class="perf-num">${one.cell(sum)}</td>`).join('');
@@ -12556,7 +12561,11 @@ if (eventResult) {
   };
 
   /* 매체별 — 요약 줄에서 뺀 집행매체를 여기서 숫자와 함께 본다.
-     이것도 파일만 있으면 되므로 매체에 묻지 않는다. */
+     이것도 파일만 있으면 되므로 매체에 묻지 않는다.
+     매체 이름을 누르면 그 아래 **캠페인**까지 펼친다. 매체 합계만 보면
+     '메타가 비싸다' 까지밖에 못 말하는데, 대개 비싼 것은 그 안의 캠페인 하나다. */
+  let openMedia = '';   // '프로모션|매체' — 펼친 매체 하나
+
   const mediaTable = (channel) => {
     const rows = rowsFor(channel);
     if (!rows.length) return '<p class="perf-note">붙인 전매체 파일이 없습니다.</p>';
@@ -12569,15 +12578,38 @@ if (eventResult) {
     const lines = Object.keys(bucket).map((name) => ({ name: name, sum: sumOf(bucket[name]) }))
       .sort((a, b) => b.sum.spend - a.sum.spend);   // 광고비가 큰 매체가 위로
     const whole = sumOf(rows);
+
+    /* 매체 하나 안의 캠페인들. 광고그룹이 여럿이면 캠페인 하나로 합친다 —
+       여기서 보고 싶은 것은 "어느 캠페인이 비싼가" 이지 광고그룹 목록이 아니다.
+       캠페인 이름이 안 담긴 옛 파일은 광고그룹 이름으로 물러선다. */
+    const campsOf = (name) => {
+      const inside = {};
+      bucket[name].forEach((row) => {
+        const key = String(row.campaign || row.adset || '(캠페인 미상)');
+        if (!inside[key]) inside[key] = [];
+        inside[key].push(row);
+      });
+      return Object.keys(inside).map((key) => ({ name: key, sum: sumOf(inside[key]) }))
+        .sort((a, b) => b.sum.spend - a.sum.spend);
+    };
+
     return `<div class="tool-table-wrap"><table class="tool-table tr-split">
-        <thead><tr><th>매체</th><th>광고그룹</th>${metricHeads()}</tr></thead>
+        <thead><tr><th>매체 · 캠페인</th>${metricHeads()}</tr></thead>
         <tbody>
-          <tr class="tr-sum"><td><b>합계</b></td><td>${num(rows.length)}개</td>${metricRow(whole)}</tr>
-          ${lines.map((one) => `<tr>
-          <td><b>${escape(one.name)}</b></td>
-          <td>${num(bucket[one.name].length)}개</td>
+          <tr class="tr-sum"><td><b>합계</b></td>${metricRow(whole)}</tr>
+          ${lines.map((one) => {
+    const key = `${channel}|${one.name}`;
+    const isOpen = openMedia === key;
+    const camps = isOpen ? campsOf(one.name) : [];
+    return `<tr class="tr-mrow${isOpen ? ' is-open' : ''}" data-tr="media" data-key="${escape(key)}">
+          <td class="tr-mname"><i data-lucide="chevron-right"></i><b>${escape(one.name)}</b></td>
           ${metricRow(one.sum)}
-        </tr>`).join('')}</tbody>
+        </tr>`
+      + camps.map((each) => `<tr class="tr-camp">
+          <td class="tr-cname">${escape(each.name)}</td>
+          ${metricRow(each.sum)}
+        </tr>`).join('');
+  }).join('')}</tbody>
       </table></div>`;
   };
 
@@ -12825,14 +12857,21 @@ if (eventResult) {
       askDetail(channel, tab, true);
       return;
     }
+    if (what === 'media') {
+      openMedia = openMedia === hit.dataset.key ? '' : hit.dataset.key;
+      render();
+      return;
+    }
     if (what === 'tab') {
       tab = hit.dataset.tab;
+      openMedia = '';   // 탭을 옮기면 펼쳐 둔 매체는 닫는다
       render();
       if (open) askDetail(open, tab);
       return;
     }
     if (what === 'pick') {
       open = open === hit.dataset.channel ? '' : hit.dataset.channel;
+      openMedia = '';   // 다른 프로모션을 펼치면 매체도 닫는다
       render();
       if (open) askDetail(open, tab);
     }

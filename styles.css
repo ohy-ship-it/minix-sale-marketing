@@ -1779,6 +1779,16 @@ html.is-gated,html.is-gated body{overflow:hidden}
 /* 주차별 맨 위 합계 줄 — 그래프를 걷어 내고 그 자리에 숫자로 둔다 */
 .tr-sum td{background:#f7f7f4;font-weight:700;border-bottom:2px solid #e6e5e0}
 .tr-sum .tr-week-file{font-weight:400;color:#a5a49f}
+/* 매체별 — 매체 줄을 누르면 그 아래 캠페인이 펼쳐진다 */
+.tr-split tbody tr.tr-mrow{cursor:pointer}
+.tr-split tbody tr.tr-mrow:hover{background:#faf9f6}
+.tr-mname{display:flex;align-items:center;gap:5px}
+.tr-mname svg{width:13px;color:#b0afa8;transition:transform .12s}
+.tr-mrow.is-open .tr-mname svg{transform:rotate(90deg);color:#37352f}
+.tr-mrow.is-open td{background:#f6f5f1}
+.tr-camp td{background:#fcfcfa;color:#6f6f68}
+.tr-camp .tr-cname{padding-left:24px}
+.tr-camp .tr-cname::before{content:"└";margin-right:5px;color:#c9c8c1}
 /* 붙인 파일 담아 두기 */
 .tr-save.is-stale{border-color:#f0dcc2;background:#fdf6ec;color:#96632a}
 
