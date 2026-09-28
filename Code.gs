@@ -7345,7 +7345,24 @@ var TREND_CHANNEL_SHEET_NAME = '추이판매채널';
 /* 판매수 · 매출과 사전알림 칸은 **맨 뒤에** 붙인다. 수정자 · 수정시각 사이에 끼워 넣으면
    이미 쌓인 줄이 밀려 엉뚱하게 읽힌다 (단계날짜 · 퍼포먼스일정에서 겪은 것과 같다). */
 var TREND_CHANNEL_HEADERS = ['달', '프로모션명', '판매채널', '수정자', '수정시각',
-  '총판매수', '총매출', '사전알림', '알림신청수', '알림구매수'];
+  '총판매수', '총매출', '사전알림', '알림신청수', '알림구매수', '단계별(JSON)'];
+
+/* 단계(사전 · 당일 · 사후 · 상시)마다 손으로 적은 판매수 · 매출.
+   칸을 여덟 개 더 붙이는 대신 한 칸에 JSON 으로 둔다 — 단계가 늘어도 시트를 안 고친다.
+     { '사전': { sales: 12, rev: 340000 }, '당일': { … } }
+   빈 값은 담지 않는다 (0 과 '아직 안 적었다' 는 다르다). */
+function trendPhases_(found) {
+  var out = {};
+  if (!found || typeof found !== 'object') return out;
+  Object.keys(found).forEach(function (name) {
+    var one = found[name] || {};
+    var sales = trendNum_(one.sales);
+    var rev = trendNum_(one.rev);
+    if (sales === '' && rev === '') return;
+    out[String(name)] = { sales: sales, rev: rev };
+  });
+  return out;
+}
 
 // 빈 칸은 '' 로 둔다 — 0 (안 팔렸다) 과 '아직 안 적었다' 는 다르다.
 function trendNum_(value) {
@@ -7394,7 +7411,8 @@ function trendChannelRows_(book) {
       rev: trendNum_(line[6]),          // 총 매출
       alarm: line[7] === true || String(line[7]).trim().toUpperCase() === 'TRUE',
       ask: trendNum_(line[8]),          // 사전알림 신청수
-      buy: trendNum_(line[9])           // 사전알림 유저 구매수
+      buy: trendNum_(line[9]),          // 사전알림 유저 구매수
+      phases: trendPhases_(monthBudgetParse_(line[10], null))   // 단계별로 적은 판매수 · 매출
     });
   });
   return out;
@@ -7419,6 +7437,8 @@ function trendChannelPut_(payload) {
   var alarm = !!(payload && payload.alarm);
   var ask = trendNum_(payload && payload.ask);
   var buy = trendNum_(payload && payload.buy);
+  var phases = trendPhases_(payload && payload.phases);
+  var anyPhase = Object.keys(phases).length > 0;
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -7436,17 +7456,18 @@ function trendChannelPut_(payload) {
       }
     }
     // 적은 것이 하나도 없으면 줄을 지운다 (그래야 화면이 다시 지난달 값을 이어받는다)
-    if (!channel && sales === '' && rev === '' && !alarm && ask === '' && buy === '') {
+    if (!channel && sales === '' && rev === '' && !alarm && ask === '' && buy === '' && !anyPhase) {
       if (at) sheet.deleteRow(at);
       budgetStamp_(true);
       return { ok: true, month: month, promo: promo, removed: !!at };
     }
     if (!at) at = sheet.getLastRow() + 1;
     sheet.getRange(at, 1, 1, TREND_CHANNEL_HEADERS.length)
-      .setValues([[month, promo, channel, who, new Date(), sales, rev, alarm, ask, buy]]);
+      .setValues([[month, promo, channel, who, new Date(), sales, rev, alarm, ask, buy,
+        anyPhase ? JSON.stringify(phases) : '']]);
     budgetStamp_(true);            // 담아 둔 추이를 버린다 (다음에 열면 새로 읽는다)
     return { ok: true, month: month, promo: promo, channel: channel,
-      sales: sales, rev: rev, alarm: alarm, ask: ask, buy: buy,
+      sales: sales, rev: rev, alarm: alarm, ask: ask, buy: buy, phases: phases,
       savedAt: new Date().toISOString() };
   } finally {
     lock.releaseLock();

@@ -12061,7 +12061,7 @@ if (eventResult) {
      { channel, sales, rev, alarm, ask, buy } — 숫자 칸은 **빈 글자로 비워 둔다**.
      0(안 팔렸다) 과 '아직 안 적었다' 는 다르고, 0 으로 두면 CPS 가 거짓말을 한다. */
   let manual = {};
-  const BLANK_MANUAL = { channel: '', sales: '', rev: '', alarm: false, ask: '', buy: '' };
+  const BLANK_MANUAL = { channel: '', sales: '', rev: '', alarm: false, ask: '', buy: '', phases: {} };
   let fileNote = '';
   let open = '';                   // 펼친 프로모션
 
@@ -12562,18 +12562,34 @@ if (eventResult) {
       return '<p class="perf-note">붙인 전매체 파일이 없습니다 — 전매체 검색에서 단계 날짜를 '
         + '적고 내려받은 파일을 붙이면 사전 · 당일 · 사후로 갈라 보여 드립니다.</p>';
     }
-    const lines = packs.map((one) => ({ ...one, sum: sumOf(one.rows) }));
+    const lines = packs.map((one) => {
+      const typed = phaseTyped(channel, one.name);
+      return { ...one, typed: typed, sum: withTyped(sumOf(one.rows), typed) };
+    });
     /* 합계는 **줄을 다 더해 다시 계산한다** — 단계별 ROAS · CPS 를 평균 내면 틀린다
-       (광고비가 큰 단계가 더 무겁다). 원래 줄을 통째로 모아 한 번에 센다. */
+       (광고비가 큰 단계가 더 무겁다). 원래 줄을 통째로 모아 한 번에 센다.
+       판매수 · 매출은 손으로 적은 단계가 섞일 수 있어 **단계별 값을 더한다** —
+       그래야 합계가 화면에 보이는 줄들과 맞는다. */
     const whole = sumOf(packs.reduce((all, one) => all.concat(one.rows), []));
+    whole.buy = lines.reduce((sum, one) => sum + (Number(one.sum.buy) || 0), 0);
+    whole.rev = lines.reduce((sum, one) => sum + (Number(one.sum.rev) || 0), 0);
+    const anyTyped = lines.some((one) => one.typed.sales !== '' || one.typed.rev !== '');
     return `<div class="tool-table-wrap"><table class="tool-table tr-split">
-        <thead><tr><th>단계</th><th>기간</th>${metricHeads(alarm)}</tr></thead>
+        <thead><tr><th>단계</th><th>기간</th>${metricHeads(alarm)}
+          <th class="perf-num tr-typed-head">적은 판매수</th><th class="perf-num tr-typed-head">적은 매출</th></tr></thead>
         <tbody>
-          <tr class="tr-sum"><td><b>합계</b></td><td>—</td>${metricRow(whole, alarm)}</tr>
+          <tr class="tr-sum"><td><b>합계</b></td><td>—</td>${metricRow(whole, alarm)}
+            <td class="perf-num" colspan="2">${anyTyped ? '적은 값으로 셌습니다' : '<span class="tool-blank">—</span>'}</td></tr>
           ${lines.map((one) => `<tr>
           <td><b>${escape(one.name)}</b></td>
           <td>${escape(span(one.since, one.until)) || '<span class="tool-blank">—</span>'}</td>
           ${metricRow(one.sum, alarm)}
+          <td class="perf-num"><input type="text" inputmode="numeric" class="tr-phase-in"
+            data-tr="phase" data-key="sales" data-phase="${escape(one.name)}"
+            data-channel="${escape(channel)}" value="${escape(numText(one.typed.sales))}" placeholder="—"></td>
+          <td class="perf-num"><input type="text" inputmode="numeric" class="tr-phase-in"
+            data-tr="phase" data-key="rev" data-phase="${escape(one.name)}"
+            data-channel="${escape(channel)}" value="${escape(numText(one.typed.rev))}" placeholder="—"></td>
         </tr>`).join('')}</tbody>
       </table></div>
       ${packs.length === 1 && packs[0].name === '(단계 없음)'
@@ -12702,6 +12718,25 @@ if (eventResult) {
   const typedOf = (promo) => ({ ...BLANK_MANUAL, ...(manualNow(promo) || {}),
     channel: manualOf(promo).value });
 
+  /* 단계마다 손으로 적은 판매수 · 매출.
+     매체가 보고하는 전환은 어트리뷰션이 붙은 값이라 실제로 팔린 수와 다르다.
+     **적어 둔 값이 있으면 그것으로 센다** — 판매량 · 판매전환값은 물론
+     거기서 나오는 CPS · ROAS · CVR 까지 같이 바뀐다.
+     적은 것이 없으면 매체가 준 값 그대로다 (0 과 '아직 안 적었다' 는 다르다). */
+  const phaseTyped = (promo, name) => {
+    const one = (typedOf(promo).phases || {})[name] || {};
+    return { sales: one.sales === undefined || one.sales === null ? '' : one.sales,
+      rev: one.rev === undefined || one.rev === null ? '' : one.rev };
+  };
+
+  // 적어 둔 값을 합계 위에 덮는다 (적은 칸만)
+  const withTyped = (sum, typed) => {
+    const out = { ...sum };
+    if (typed.sales !== '') out.buy = Number(typed.sales) || 0;
+    if (typed.rev !== '') out.rev = Number(typed.rev) || 0;
+    return out;
+  };
+
   // 사전알림 프로모션인가 — 그러면 CPS 대신 CPA 로 센다 (아래 METRICS)
   const isAlarm = (promo) => !!typedOf(promo).alarm;
 
@@ -12826,6 +12861,7 @@ if (eventResult) {
             alarm: !!one.alarm,
             ask: one.ask === undefined || one.ask === null ? '' : one.ask,
             buy: one.buy === undefined || one.buy === null ? '' : one.buy,
+            phases: (one.phases && typeof one.phases === 'object') ? one.phases : {},
           };
         });
         const months = found.months || [];
@@ -12842,7 +12878,7 @@ if (eventResult) {
     if (hit) hit.classList.add('is-saving');
     askSheet({ action: 'trendChannelPut', month: month, promo: promo,
       channel: one.channel, sales: one.sales, rev: one.rev,
-      alarm: one.alarm, ask: one.ask, buy: one.buy })
+      alarm: one.alarm, ask: one.ask, buy: one.buy, phases: one.phases || {} })
       .then(() => {
         if (!hit) return;
         hit.classList.remove('is-saving');
@@ -12859,6 +12895,20 @@ if (eventResult) {
     const hit = event.target.closest('[data-tr]');
     if (!hit) return;
     if (hit.dataset.tr === 'month') { month = hit.value; open = ''; render(); return; }
+    if (hit.dataset.tr === 'phase') {
+      const promo = hit.dataset.channel;
+      const one = { ...typedOf(promo) };
+      const phases = { ...(one.phases || {}) };
+      const name = hit.dataset.phase;
+      const was = { sales: '', rev: '', ...(phases[name] || {}) };
+      was[hit.dataset.key] = String(hit.value || '').replace(/[,\s\u20a9원]/g, '').trim();
+      phases[name] = was;
+      one.phases = phases;
+      manual[`${month}|${promo}`] = one;
+      render();   // 적은 값으로 판매량 · CPS · ROAS 가 그 자리에서 다시 셈해진다
+      putTyped(promo, one, null);
+      return;
+    }
     if (hit.dataset.tr === 'typed' || hit.dataset.tr === 'alarm') {
       const promo = hit.dataset.channel;
       const one = { ...typedOf(promo) };

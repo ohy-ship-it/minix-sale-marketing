@@ -1742,6 +1742,12 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .tr-alarm input{margin:0;cursor:pointer}
 .tr-typed-note{font:400 11px 'Noto Sans KR',sans-serif;color:#8c8c85}
 .tr-typed-note b{color:#37352f}
+/* 단계별 표에서 손으로 적는 판매수 · 매출 칸 */
+.tr-typed-head{color:#8c8c85;font-weight:500}
+.tr-phase-in{width:88px;text-align:right;border:1px solid #e3e2dc;border-radius:5px;padding:3px 6px;
+  font:600 12px 'DM Sans','Noto Sans KR',sans-serif;color:#37352f;background:#fff}
+.tr-phase-in:focus{border-color:#2f86d9;outline:none}
+.tr-phase-in::placeholder{font-weight:400;color:#c9c8c1}
 .tr-tabs{display:flex;gap:6px;margin-bottom:12px}
 .tr-tabs button{border:1px solid var(--line,#e6e5e0);border-radius:6px;background:#fff;padding:6px 12px;font:600 12px inherit;color:#6f6f68;cursor:pointer}
 .tr-tabs button.is-on{border-color:#2f2f2b;background:#2f2f2b;color:#fff}
