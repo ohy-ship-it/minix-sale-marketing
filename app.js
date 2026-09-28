@@ -12862,7 +12862,25 @@ if (budgetPlanView) {
   const today = new Date();
   const thisMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
 
-  let month = thisMonth;
+  /* 화면을 열면 **가장 늦게 짜 둔 달**을 편다.
+     예전에는 늘 이번 달이었다 — 10월을 짜 두고 새로고침하면 9월이 떠서,
+     달을 바꿔 가며 짜다가도 한 번 새로고침하면 처음부터 다시 찾아 들어가야 했다.
+     짠 달이 무엇인지는 시트를 읽어야 안다. 그래서 지난번에 본 목록의 마지막 달을
+     이 브라우저에 적어 두고 그 달로 먼저 연다 (기다리지 않고 바로 그려진다).
+     시트를 받아 본 뒤 더 늦은 달이 있으면 그때 옮겨 간다 (아래 load). */
+  const LAST_KEY = 'minix-budget-last-month';
+  const lastMonth = () => {
+    try {
+      const kept = String(window.localStorage.getItem(LAST_KEY) || '');
+      return /^\d{4}-\d{2}$/.test(kept) ? kept : '';
+    } catch { return ''; }
+  };
+  const keepLast = (want) => {
+    try { window.localStorage.setItem(LAST_KEY, want); } catch { /* 거들기다 */ }
+  };
+
+  let month = lastMonth() || thisMonth;
+  let opening = true;   // 화면을 처음 여는 길인가 (그때만 가장 늦은 달로 옮겨 간다)
   let months = [];
   let plan = { skus: [], rows: [] };
   let saved = { at: '', by: '' };
@@ -13748,6 +13766,16 @@ if (budgetPlanView) {
       .then((body) => {
         if (mine !== month) return;      // 그새 다른 달로 옮겼다
         months = body.months || [];
+        /* 짜 둔 달 중 가장 늦은 것이 **가장 최근에 짠 것**이다. 화면을 처음 열 때
+           다른 달이 떠 있으면 그리로 옮겨 간다 (남이 다음 달을 짜 두었을 때도 따라간다).
+           **처음 열 때만** 옮긴다 — 안 그러면 고르개에서 지난달을 골라도 곧바로
+           도로 튕겨 나와 지난달을 볼 수가 없다. */
+        const newest = months.length ? months.slice().sort()[months.length - 1] : '';
+        if (newest) keepLast(newest);
+        if (opening) {
+          opening = false;
+          if (newest && newest !== month) { month = newest; load(); return; }
+        }
         sheetUrl = body.url || '';
         tableUrl = body.tableUrl || tableUrl;
         auto = body.auto || null;
