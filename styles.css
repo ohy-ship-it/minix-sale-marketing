@@ -68,6 +68,12 @@
 .peek-option-add input:focus{outline:0;border-color:#c9c8c1}
 .peek-option-add button{flex:0 0 auto;border:0;border-radius:5px;padding:5px 9px;background:#f0efec;color:#41403b;font:500 12px 'Noto Sans KR',sans-serif;cursor:pointer}
 .peek-option-add button:hover{background:#e6e5e1}
+/* 손으로 적어 넣은 이름 — 아직 아무 카드에도 안 붙였으면 목록에서 뺄 수 있다 */
+.peek-option-row{display:flex;align-items:center;gap:2px}
+.peek-option-row .peek-option{flex:1;min-width:0}
+.peek-option-drop{flex:0 0 auto;border:0;background:none;border-radius:5px;padding:4px 6px;color:#b6b5b0;font-size:11px;line-height:1;cursor:pointer}
+.peek-option-row:hover .peek-option-drop{color:#8c8c85}
+.peek-option-drop:hover{background:#efeeea;color:#41403b}
 @media(max-width:900px){.peek-panel{width:100vw;padding:14px 18px 40px}.peek-row{grid-template-columns:104px 1fr}}
 
 /* 보드 화면에서는 상단 헤더를 감춘다 */
