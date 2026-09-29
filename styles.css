@@ -1828,3 +1828,78 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .tool-add.is-stale{border-color:#f0dcc2;background:#fdf6ec;color:#96632a}
 .perf-stale{display:block;margin-top:4px;font-style:normal;color:#96632a}
 .tr-saved{font-size:10.5px;color:#a5a49f;align-self:center}
+
+/* ── 행사별 결과 ──────────────────────────────────────────────────
+   줄을 누르면 아래로 펼친다. 판매채널 추이와 같은 모양을 쓴다 —
+   두 화면이 같은 행사를 다루므로 눈에 다르게 보이면 안 된다. */
+.er-table{min-width:1720px}
+.er-table th,.er-table td{white-space:nowrap}
+.er-table tbody tr.er-row{cursor:pointer}
+.er-table tbody tr.er-row:hover{background:#faf9f6}
+.er-name{display:flex;align-items:center;gap:5px;font-weight:600;color:#37352f}
+.er-name svg{width:13px;color:#b0afa8;transition:transform .12s}
+.er-row.is-open .er-name svg{transform:rotate(90deg);color:#37352f}
+.er-row.is-open>td{background:#f6f5f1}
+.er-none{color:#b6b5ae}
+.er-more>td{background:#fbfaf7;padding:0}
+.er-detail{padding:14px 16px 18px;white-space:normal}
+.er-h{margin:16px 0 8px;font:700 12.5px 'Noto Sans KR',sans-serif;color:#37352f}
+.er-h:first-of-type{margin-top:10px}
+.er-h small{margin-left:6px;font-weight:400;font-size:11px;color:#a5a49f}
+/* 사람이 적는 칸 */
+.er-typed-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;
+  border:1px solid #eeede8;border-radius:9px;background:#fff;padding:9px 12px}
+.er-typed{display:flex;align-items:center;gap:6px;font:500 12px 'Noto Sans KR',sans-serif;color:#6f6f68}
+.er-typed input[type=text]{width:96px;text-align:right;border:1px solid #e3e2dc;border-radius:6px;
+  padding:4px 7px;font:600 12px inherit;color:#37352f}
+.er-typed input[type=text]:focus{border-color:#2f86d9;outline:none}
+.er-typed input.is-saving{background:#f7f7f4;border-color:#e6e5e0}
+.er-typed input.is-saved{border-color:#cfe3d4}
+.er-alarm{gap:5px;cursor:pointer;color:#37352f;font-weight:600}
+.er-alarm input{margin:0;cursor:pointer}
+.er-typed-note{font:400 11px 'Noto Sans KR',sans-serif;color:#8c8c85}
+.er-typed-note b{color:#37352f}
+/* 종합결과 · 사전알림 — 두 박스를 같은 크기로 둔다 (나란히 읽히게) */
+.er-hero .bg-stat,.er-alarm-box .bg-stat{min-width:104px}
+.er-alarm-box .bg-stat{background:#f3f7fd;border-color:#d3e2f4}
+.er-alarm-box .bg-stat small{color:#5c7ea6}
+.er-alarm-box .bg-stat b{color:#1f5da3}
+.er-alarm-box .bg-stat em{color:#8ba6c4}
+.er-stat-in b{margin-top:1px}
+.er-in{width:100%;border:1px solid #cfdff1;border-radius:6px;background:#fff;
+  padding:2px 6px;font:800 16px 'Noto Sans KR',sans-serif;color:#1f5da3;text-align:right}
+.er-in:focus{border-color:#2f86d9;outline:none}
+.er-in::placeholder{font-weight:400;color:#b9cbdf}
+.er-in.is-saving{background:#f7f9fc;border-color:#dde7f2}
+.er-in.is-saved{border-color:#cfe3d4}
+/* 단계별 표 */
+.er-split{min-width:1040px;margin-top:2px}
+.er-typed-head{color:#8c8c85;font-weight:500}
+.er-phase-in{width:88px;text-align:right;border:1px solid #e3e2dc;border-radius:5px;padding:3px 6px;
+  font:600 12px 'Noto Sans KR',sans-serif;color:#37352f}
+.er-phase-in:focus{border-color:#2f86d9;outline:none}
+.er-phase-in::placeholder{font-weight:400;color:#c9c8c1}
+/* 단계별 매체성과 — 단계 줄 아래로 매체가, 매체를 누르면 캠페인이 펼쳐진다 */
+.er-phase-head td{background:#f2f5f9;font-weight:700;border-top:2px solid #e2e7ee}
+.er-phase-head small{margin-left:5px;font-weight:400;color:#8ba6c4}
+.er-split tbody tr.er-mrow{cursor:pointer}
+.er-split tbody tr.er-mrow:hover{background:#faf9f6}
+.er-mname{display:flex;align-items:center;gap:5px;padding-left:12px}
+.er-mname svg{width:13px;color:#b0afa8;transition:transform .12s}
+.er-mrow.is-open .er-mname svg{transform:rotate(90deg);color:#37352f}
+.er-mrow.is-open td{background:#f6f5f1}
+.er-camp td{background:#fcfcfa;color:#6f6f68}
+.er-camp .er-cname{padding-left:36px}
+.er-camp .er-cname::before{content:"└";margin-right:5px;color:#c9c8c1}
+/* 파일 붙이기 */
+.er-file{position:relative;cursor:pointer}
+.er-own{white-space:nowrap}
+.er-pick{display:inline-flex;align-items:center;gap:4px;max-width:132px;border:1px solid var(--line,#e6e5e0);
+  border-radius:6px;padding:4px 8px;background:#fff;font-size:11px;color:#6f6f68;cursor:pointer;overflow:hidden}
+.er-pick:hover{border-color:#c9c8c1;color:#37352f}
+.er-pick svg{width:12px;flex:none}
+.er-off{margin-left:4px;border:0;background:none;padding:2px;color:#b0afa8;cursor:pointer}
+.er-off:hover{color:#d44c47}
+.er-off svg{width:12px}
+.er-files{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}
+.er-saved{font-size:10.5px;color:#a5a49f;align-self:center}
