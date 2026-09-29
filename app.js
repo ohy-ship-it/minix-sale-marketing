@@ -1205,6 +1205,7 @@ document.querySelectorAll('.tree-group').forEach((group) => {
 // 전용 화면을 가진 메뉴 (그 외에는 대시보드를 보여준다)
 const VIEWS = {
   '판매채널 추이': { section: '#event-result', hash: '#event' },
+  '행사별 결과': { section: '#event-report', hash: '#event-report-view' },
   '콘텐츠 일정': { section: '#content-schedule', hash: '#content-cal' },
   '광고소재 기획': { section: '#creative-board', hash: '#creative-planning' },
   '광고소재 파일명': { section: '#filename-tool', hash: '#filename' },
@@ -13015,6 +13016,224 @@ if (eventResult) {
 
   restoreFiles();
   openViewOnce(eventResult, load);
+}
+
+// ── 행사별 결과 ────────────────────────────────────────────────────
+/* 월별 예산에 짜 둔 **프로모션 줄을 그대로** 펼쳐 보는 자리다.
+   월별 예산은 SKU 마다 표가 갈려 있어, 그 달에 무슨 행사를 도는지 한눈에 보려면
+   표를 여럿 오가며 읽어야 한다. 여기서는 그 줄을 한 판에 모아 둔다.
+
+   **적는 칸이 없다.** 고치는 곳은 월별 예산 한 곳이다 — 두 곳에서 같은 값을 고칠 수
+   있게 두면 어느 쪽이 맞는지 아무도 모르게 된다 (이 워크스페이스의 다른 거울과 같은 규칙).
+   그래서 시트에 새로 담는 것도 없다 — 이미 있는 'budgetGet' 을 그대로 읽는다. */
+const eventReport = document.querySelector('#event-report');
+if (eventReport) {
+  const escape = perfEscape;
+  const won = perfMoney('KRW');
+  const num = perfCount;
+  const dash = '<span class="tool-blank">—</span>';
+
+  let month = '';
+  let months = [];
+  let plan = { skus: [], rows: [] };
+  let saved = { at: '', by: '' };
+  let status = 'idle';
+  let error = '';
+  let opening = true;        // 처음 열 때만 가장 늦게 짜 둔 달로 옮겨 간다
+
+  const today = new Date();
+  const thisMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  month = thisMonth;
+
+  const monthName = (ym) => `${Number(String(ym).slice(0, 4))}년 ${Number(String(ym).slice(5, 7))}월`;
+
+  /* 셈하는 규칙은 월별 예산과 **같아야 한다** — 다르면 같은 달을 놓고 두 화면이
+     다른 금액을 말한다. 광고비는 목표수량 × 목표 CPS 이고, 그 줄에 금액을 직접
+     적어 두었으면 그것이 이긴다 (정액 상품 · 협찬비처럼 수량으로 안 떨어지는 줄이 있다).
+     브검비는 더하지 않는다 — 고정비의 브랜드검색에 이미 들어 있어 두 번 세게 된다. */
+  const rowManual = (row) => (Number(row.cost) || 0) > 0;
+  const rowCost = (row) => (rowManual(row)
+    ? Number(row.cost) : (Number(row.goal) || 0) * (Number(row.cps) || 0));
+  const rowUsed = (row) => Number(row.used) || 0;
+  const rowBrand = (row) => Number(row.brand) || 0;
+  const mediaOf = (row) => (Array.isArray(row.media) ? row.media : []);
+
+  const allRows = () => (Array.isArray(plan.rows) ? plan.rows : []);
+
+  /* 어느 SKU 부터 보여 줄지. 월별 예산에 넣어 둔 차례를 그대로 따르고,
+     거기 없는 SKU 로 적힌 줄(SKU 를 뺐는데 줄이 남은 경우)도 뒤에 붙여 준다 —
+     조용히 빠지면 '있는데 안 보이는' 줄이 생긴다. */
+  const skuNames = () => {
+    const out = (Array.isArray(plan.skus) ? plan.skus : [])
+      .map((one) => String(one.name || '')).filter((one) => one !== '');
+    allRows().forEach((row) => {
+      const name = String(row.sku || '');
+      if (out.indexOf(name) < 0) out.push(name);
+    });
+    return out;
+  };
+  const rowsOf = (name) => allRows().filter((row) => String(row.sku || '') === name);
+
+  const sumOf = (rows) => rows.reduce((sum, row) => ({
+    rows: sum.rows + 1,
+    goal: sum.goal + (Number(row.goal) || 0),
+    cost: sum.cost + rowCost(row),
+    brand: sum.brand + rowBrand(row),
+    used: sum.used + rowUsed(row),
+    done: sum.done + (rowUsed(row) > 0 ? 1 : 0),
+  }), { rows: 0, goal: 0, cost: 0, brand: 0, used: 0, done: 0 });
+
+  // ── 그리기 ──────────────────────────────────────────────────────
+  const monthPick = () => `<select data-er="month">${(months.length ? months : [month])
+    .slice().reverse().map((one) => `<option value="${escape(one)}"
+      ${one === month ? 'selected' : ''}>${escape(monthName(one))}</option>`).join('')}</select>`;
+
+  // 월별 예산의 요약 조각과 같은 모양을 쓴다 (두 화면이 나란히 읽혀야 한다)
+  const statBox = (label, value, hint) => `<span class="bg-stat">
+    <small>${escape(label)}</small><b>${value}</b>${hint ? `<em>${hint}</em>` : ''}</span>`;
+
+  const line = (row) => {
+    const cost = rowCost(row);
+    const used = rowUsed(row);
+    const span = row.since || row.until
+      ? `${escape(row.since || '')} ~ ${escape(row.until || '')}` : dash;
+    return `<tr>
+      <td>${escape(row.group || '') || dash}</td>
+      <td>${escape(row.kind || '') || dash}</td>
+      <td class="perf-name"><span>${escape(row.channel || '') || dash}</span></td>
+      <td class="bg-live">${escape(row.live || '') || dash}</td>
+      <td class="bg-span">${span}</td>
+      <td class="perf-num">${row.goal ? num(row.goal) : dash}</td>
+      <td class="perf-num">${row.cps ? won(row.cps) : dash}</td>
+      <td class="bg-kinds">${mediaOf(row).length
+    ? mediaOf(row).map((one) => `<span class="bg-kind is-on">${escape(one)}</span>`).join('')
+    : dash}</td>
+      <td class="perf-num bg-aside">${rowBrand(row) ? won(rowBrand(row)) : dash}</td>
+      <td class="perf-num bg-cost"><span${rowManual(row) ? ' class="is-manual" title="수기로 적은 금액입니다"' : ''}>${cost ? won(cost) : dash}</span></td>
+      <td class="perf-num bg-used">${used ? won(used) : dash}</td>
+      <td class="perf-num">${cost || used ? won(cost - used) : dash}</td>
+    </tr>`;
+  };
+
+  const headRow = `<tr>
+    <th>구분</th><th>파트</th><th>판매채널</th><th>라이브일정</th><th>광고기간</th>
+    <th class="perf-num">목표수량</th><th class="perf-num">목표 CPS</th><th>진행광고매체</th>
+    <th class="perf-num">브검비<small>합계 밖</small></th>
+    <th class="perf-num">광고비<small>CPS×목표수량</small></th>
+    <th class="perf-num">실사용비</th><th class="perf-num">잔여</th>
+  </tr>`;
+
+  const skuCard = (name) => {
+    const rows = rowsOf(name);
+    const sum = sumOf(rows);
+    return `<div class="tool-card bg-sku">
+      <div class="bg-sku-head">
+        <span class="bg-sku-name">${escape(name) || '(SKU 없음)'}</span>
+        <small class="bg-sku-cat">${num(sum.rows)}줄</small>
+      </div>
+      <div class="bg-stats">
+        ${statBox('총 갯수', `${num(sum.rows)}건`, '프로모션 줄 수')}
+        ${statBox('완료갯수', `${num(sum.done)}건`, '실사용비를 적은 줄')}
+        ${statBox('광고비', sum.cost ? won(sum.cost) : '—', 'CPS × 목표수량')}
+        ${statBox('실사용비', sum.used ? won(sum.used) : '—', sum.used ? '' : '아직 안 적었습니다')}
+        ${statBox('잔여', sum.cost || sum.used ? won(sum.cost - sum.used) : '—', '광고비 − 실사용비')}
+      </div>
+      <div class="tool-table-wrap"><table class="tool-table bg-table">
+        <thead>${headRow}</thead>
+        <tbody>${rows.length ? rows.map(line).join('')
+    : '<tr><td colspan="12" class="bg-none">적어 둔 프로모션이 없습니다.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+  };
+
+  const render = () => {
+    if (status === 'loading') {
+      eventReport.innerHTML = '<div class="tool-head"><h2>행사별 결과</h2></div>'
+        + `<div class="tool-card page-loading">${escape(monthName(month))} 프로모션을 읽는 중…</div>`;
+      lucide.createIcons();
+      return;
+    }
+    const names = skuNames();
+    const whole = sumOf(allRows());
+    eventReport.innerHTML = `<div class="tool-head">
+        <h2>행사별 결과</h2>
+        <p><b>월별 예산</b>에 짜 둔 프로모션 줄을 그대로 모아 봅니다.
+          고치는 곳은 월별 예산 한 곳입니다 — 여기서는 보기만 합니다.</p>
+      </div>
+      <div class="tool-card">
+        <div class="perf-filter">
+          <label class="bg-cat">달 ${monthPick()}</label>
+          <button type="button" class="tool-copy-all" data-er="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
+          <button type="button" class="tool-copy-all" data-er="budget"><i data-lucide="wallet"></i>월별 예산에서 고치기</button>
+        </div>
+        <p class="perf-note${error ? ' bg-note-bad' : ''}">${error ? escape(error)
+    : `${saved.at ? `월별 예산 마지막 저장 ${escape(new Date(saved.at).toLocaleString('ko-KR'))}${saved.by ? ` · ${escape(saved.by)}` : ''}`
+      : '아직 저장한 적이 없는 달입니다.'}`}</p>
+      </div>
+      <div class="tool-card">
+        <div class="bg-stats">
+          ${statBox('프로모션', `${num(whole.rows)}줄`, `${escape(monthName(month))} · SKU ${num(names.length)}개`)}
+          ${statBox('목표수량', whole.goal ? `${num(whole.goal)}대` : '—', '줄에 적은 목표의 합')}
+          ${statBox('광고비', whole.cost ? won(whole.cost) : '—', '브검비는 뺀 금액입니다')}
+          ${statBox('실사용비', whole.used ? won(whole.used) : '—', `완료 ${num(whole.done)}줄`)}
+          ${statBox('잔여', whole.cost || whole.used ? won(whole.cost - whole.used) : '—', '광고비 − 실사용비')}
+        </div>
+      </div>
+      ${names.length ? names.map(skuCard).join('')
+    : `<div class="tool-card bg-none">${escape(monthName(month))} 에 짜 둔 프로모션이 없습니다 —
+        <b>월별 예산</b> 에서 먼저 짜 주세요.</div>`}`;
+    lucide.createIcons();
+  };
+
+  // ── 읽기 ────────────────────────────────────────────────────────
+  const load = () => {
+    status = 'loading';
+    error = '';
+    render();
+    const mine = month;
+    askSheet({ action: 'budgetGet', month })
+      .then((body) => {
+        if (mine !== month) return;   // 그새 다른 달로 옮겼다
+        months = body.months || [];
+        /* 처음 열 때는 **가장 늦게 짜 둔 달**을 편다 (월별 예산과 같은 규칙).
+           그 뒤에는 옮기지 않는다 — 안 그러면 지난달을 골라도 도로 튕겨 나온다. */
+        const newest = months.length ? months.slice().sort()[months.length - 1] : '';
+        if (opening) {
+          opening = false;
+          if (newest && newest !== month) { month = newest; load(); return; }
+        }
+        const found = body.budget || {};
+        plan = (found.plan && typeof found.plan === 'object') ? found.plan : { skus: [], rows: [] };
+        saved = { at: found.updatedAt || '', by: found.updatedBy || '' };
+        status = 'ready';
+        render();
+      })
+      .catch((reason) => {
+        if (mine !== month) return;
+        status = 'ready';
+        error = reason.message;
+        render();
+      });
+  };
+
+  eventReport.addEventListener('change', (event) => {
+    const pick = event.target.closest('[data-er="month"]');
+    if (!pick) return;
+    month = pick.value;
+    load();
+  });
+
+  eventReport.addEventListener('click', (event) => {
+    const hit = event.target.closest('[data-er]');
+    if (!hit) return;
+    if (hit.dataset.er === 'reload') { load(); return; }
+    if (hit.dataset.er === 'budget') {
+      // 고치는 곳으로 보낸다 (이 화면에는 적는 칸이 없다)
+      document.querySelector('[data-view="월별 예산"]')?.click();
+    }
+  });
+
+  openViewOnce(eventReport, load);
 }
 
 // ── 월별 예산 (화면 안에서 짠다) ────────────────────────────────────
