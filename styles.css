@@ -1931,3 +1931,6 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .perf-files small{margin-right:2px;font-size:10.5px;color:#a5a49f}
 .perf-files .tool-copy-all{padding:4px 9px;font-size:11px}
 .er-merge{margin-bottom:8px}
+
+/* 월별 예산 — 파일로 실사용비 채우기 */
+.bg-cross{position:relative;cursor:pointer}

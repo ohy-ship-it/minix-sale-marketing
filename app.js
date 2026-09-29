@@ -13074,6 +13074,111 @@ if (eventResult) {
   openViewOnce(eventResult, load);
 }
 
+// ── 전매체 파일 읽기 (여러 화면이 같이 쓴다) ─────────────────────────
+/* 전매체 검색에서 내려받은 파일을 읽어 **판매채널마다 얼마가 나갔나** 를 센다.
+   행사별 결과와 월별 예산이 이 한 벌을 같이 쓴다 — 규칙이 두 벌이면 같은 파일을
+   놓고 두 화면이 다른 금액을 말하게 된다.
+
+   광고그룹 이름은 '[행사]_타겟팅_매출채널' 이라 **마지막 토막이 매출채널**이다.
+   설정 탭의 행사채널 → 매출채널 표로 되짚어 판매채널과 맞추고, 표에 없는 채널
+   (찰스엔터 비밀특가 같은 제휴)은 이름 조각으로 한 번 더 찾는다. */
+const perfPlain = (text) => String(text || '').toLowerCase().replace(/[^0-9a-z가-힣]/g, '');
+const perfTailOf = (adset) => {
+  const parts = String(adset || '').split('_');
+  return perfPlain(parts[parts.length - 1] || '');
+};
+// 그 판매채널로 볼 매출채널 조각들 (sales = 설정 탭 K:L · ads = 제휴 규칙표)
+const perfMarksOf = (channel, sales, ads) => {
+  const out = [perfPlain(channel)];
+  (ads || []).forEach((one) => {
+    if (perfPlain(one.channel) === perfPlain(channel) && out.indexOf(perfPlain(one.match)) < 0) {
+      out.push(perfPlain(one.match));
+    }
+  });
+  (sales || []).forEach((pair) => {
+    const korean = perfPlain(pair[0]);
+    const english = perfPlain(pair[1]);
+    if (korean && english && perfPlain(channel).indexOf(korean) === 0 && out.indexOf(english) < 0) {
+      out.push(english);
+    }
+  });
+  return out.filter(Boolean);
+};
+const perfMineRow = (row, channel, sales, ads) => {
+  const marks = perfMarksOf(channel, sales, ads);
+  const tail = perfTailOf(row.adset);
+  if (tail && marks.indexOf(tail) >= 0) return true;
+  return marks.some((mark) => mark.length >= 3 && perfPlain(row.adset).indexOf(mark) >= 0);
+};
+
+// 단계 차례. 파일에 적힌 이름 그대로다.
+const PERF_PHASE_ORDER = ['사전', '당일', '사후', '상시'];
+
+const perfRowsIn = (one) => {
+  const phases = ((one && one.phases) || []).reduce((all, each) => all.concat(each.rows || []), []);
+  return phases.length ? phases : ((one && one.searched) || []);
+};
+/* 파일 한 개의 단계 묶음. 단계가 안 적힌 옛 파일은 통째로 한 덩이로 둔다 —
+   이름을 '(단계 없음)' 으로 두어, 갈라 볼 수 없다는 것이 표에서 바로 보이게 한다. */
+const perfPhasesIn = (one) => {
+  const list = ((one && one.phases) || []).filter((each) => (each.rows || []).length);
+  if (list.length) return list;
+  const rows = (one && one.searched) || [];
+  if (!rows.length) return [];
+  const range = (one && one.range) || {};
+  return [{ name: '(단계 없음)', since: range.since || '', until: range.until || '', rows: rows }];
+};
+const perfRangeIn = (one) => {
+  let since = '';
+  let until = '';
+  ((one && one.phases) || []).forEach((each) => {
+    if (each.since && (!since || each.since < since)) since = each.since;
+    if (each.until && (!until || each.until > until)) until = each.until;
+  });
+  const range = (one && one.range) || {};
+  return { since: since || range.since || '', until: until || range.until || '' };
+};
+
+/* 광고비가 0원인 줄은 **아예 뺀다.** 그 기간에 안 돈 광고그룹이라, 두면 매체별
+   목록이 0원짜리로 덮인다. 안 돈 줄에는 노출 · 클릭 · 전환도 없어 합계도 안 바뀐다. */
+const perfPaid = (rows) => rows.filter((row) => (Number(row.spend) || 0) > 0);
+
+/* 네이버 브랜드검색인가. 정액(CPT) 이라 광고비가 계약 금액이고, 고정비의
+   '브랜드검색' 에 이미 들어 있다 — 실사용비에 또 넣으면 같은 돈을 두 번 센다. */
+const perfIsBrand = (row) => String((row && row.source) || '') === 'naverSa'
+  || String((row && row.sourceName) || '').indexOf('브랜드검색') >= 0;
+
+/* 붙인 파일들을 훑어 **판매채널마다 나간 돈**을 센다.
+   같은 단계 · 같은 기간의 같은 광고그룹은 한 번만 센다 — 단계통합과 사전 파일을
+   같이 넣어도 두 배가 되지 않아야 한다. 기간이 다르면(주차별) 더한다.
+   브랜드검색은 따로 세어 함께 돌려준다 (부르는 쪽이 빼고 쓸 수 있게). */
+const perfCrossSpend = (files, channels, sales, ads) => {
+  const out = {};
+  (channels || []).forEach((one) => { out[one] = { spend: 0, brand: 0, rows: 0 }; });
+  const seen = {};
+  (files || []).forEach((file) => {
+    perfPhasesIn(file && file.body).forEach((each) => {
+      perfPaid(each.rows || []).forEach((row) => {
+        (channels || []).forEach((channel) => {
+          if (!perfMineRow(row, channel, sales, ads)) return;
+          const mark = [channel, each.name, each.since, each.until,
+            row.source, row.account, row.id || row.adset].join('|');
+          if (row.id || row.adset) {
+            if (seen[mark]) return;   // 다른 파일에 있던 그 줄이다
+            seen[mark] = true;
+          }
+          const money = Number(row.spend) || 0;
+          out[channel].rows += 1;
+          if (perfIsBrand(row)) out[channel].brand += money;
+          else out[channel].spend += money;
+        });
+      });
+    });
+  });
+  return out;
+};
+// ── 전매체 파일 읽기 끝 ─────────────────────────────────────────────
+
 // ── 행사별 결과 ────────────────────────────────────────────────────
 /* 월별 예산에 짜 둔 **프로모션 줄을 그대로** 펼쳐 놓고, 줄마다 그 행사의 결과를 본다.
    월별 예산은 SKU 마다 표가 갈려 있어, 그 달에 무슨 행사를 도는지 한눈에 보려면
@@ -13139,10 +13244,8 @@ if (eventReport) {
 
      **보는 사람 것이라 시트에 담지 않는다** (월별 예산의 브검비 얹어보기와 같은 규칙).
      팀이 함께 보는 값이 아니라 지금 내가 어떻게 볼지를 고른 것이다. */
-  const BRAND_SOURCE = 'naverSa';
   const NO_BRAND_KEY = 'minix-event-no-brand';
-  const isBrandRow = (row) => String(row.source || '') === BRAND_SOURCE
-    || String(row.sourceName || '').indexOf('브랜드검색') >= 0;
+  const isBrandRow = perfIsBrand;
   const brandSpend = (rows) => rows.filter(isBrandRow)
     .reduce((sum, row) => sum + (Number(row.spend) || 0), 0);
 
@@ -13252,63 +13355,15 @@ if (eventReport) {
      설정 탭의 행사채널 → 매출채널 표로 되짚어 판매채널과 맞춘다.
      표에 없는 채널(찰스엔터 비밀특가 같은 제휴)은 이름 조각으로 한 번 더 찾는다.
      (판매채널 추이와 같은 규칙이다 — 두 화면이 같은 줄을 같은 행사로 봐야 한다) */
-  const plain = (text) => String(text || '').toLowerCase().replace(/[^0-9a-z가-힣]/g, '');
-  const tailOf = (adset) => {
-    const parts = String(adset || '').split('_');
-    return plain(parts[parts.length - 1] || '');
-  };
-  const marksOf = (channel) => {
-    const out = [plain(channel)];
-    channelAds.forEach((one) => {
-      if (plain(one.channel) === plain(channel) && out.indexOf(plain(one.match)) < 0) {
-        out.push(plain(one.match));
-      }
-    });
-    salesMap.forEach((pair) => {
-      const korean = plain(pair[0]);
-      const english = plain(pair[1]);
-      if (korean && english && plain(channel).indexOf(korean) === 0 && out.indexOf(english) < 0) {
-        out.push(english);
-      }
-    });
-    return out.filter(Boolean);
-  };
-  const mineRow = (row, channel) => {
-    const marks = marksOf(channel);
-    const tail = tailOf(row.adset);
-    if (tail && marks.indexOf(tail) >= 0) return true;
-    return marks.some((mark) => mark.length >= 3 && plain(row.adset).indexOf(mark) >= 0);
-  };
-
-  // 단계 차례. 파일에 적힌 이름 그대로다.
-  const PHASE_ORDER = ['사전', '당일', '사후', '상시'];
-
-  const rowsIn = (one) => {
-    const phases = (one.phases || []).reduce((all, each) => all.concat(each.rows || []), []);
-    return phases.length ? phases : (one.searched || []);
-  };
-  const phasesIn = (one) => {
-    const list = (one.phases || []).filter((each) => (each.rows || []).length);
-    if (list.length) return list;
-    const rows = one.searched || [];
-    if (!rows.length) return [];
-    const range = one.range || {};
-    return [{ name: '(단계 없음)', since: range.since || '', until: range.until || '', rows: rows }];
-  };
-  const rangeIn = (one) => {
-    let since = '';
-    let until = '';
-    (one.phases || []).forEach((each) => {
-      if (each.since && (!since || each.since < since)) since = each.since;
-      if (each.until && (!until || each.until > until)) until = each.until;
-    });
-    const range = one.range || {};
-    return { since: since || range.since || '', until: until || range.until || '' };
-  };
-
-  /* 광고비가 0원인 줄은 **아예 뺀다.** 그 기간에 안 돈 광고그룹이라, 두면 매체별
-     목록이 0원짜리로 덮인다. 안 돈 줄에는 노출 · 클릭 · 전환도 없어 합계도 안 바뀐다. */
-  const paid = (rows) => rows.filter((row) => (Number(row.spend) || 0) > 0);
+  /* 파일을 읽어 판매채널에 붙이는 규칙은 **위에 한 벌만** 둔다 (perf* 들).
+     월별 예산도 같은 것을 써서 실사용비를 채운다 — 두 벌이면 곧 서로 어긋난다. */
+  const plain = perfPlain;
+  const mineRow = (row, channel) => perfMineRow(row, channel, salesMap, channelAds);
+  const PHASE_ORDER = PERF_PHASE_ORDER;
+  const rowsIn = perfRowsIn;
+  const phasesIn = perfPhasesIn;
+  const rangeIn = perfRangeIn;
+  const paid = perfPaid;
 
   const packsOf = (channel) => {
     const own = byChannel[channel] || [];
@@ -13989,6 +14044,111 @@ if (eventReport) {
     </div>`;
   };
 
+  /* ── 실사용비 채우기 ────────────────────────────────────────────
+     붙인 파일의 집행 광고비를 월별 예산의 **실사용비** 칸에 넣는다.
+
+     **브랜드검색은 뺀다.** 정액(CPT) 이라 광고비가 계약 금액이고, 월별 예산에서는
+     고정비의 '브랜드검색' 항목으로 이미 잡혀 있다 — 실사용비에 또 넣으면 같은 돈을
+     두 번 세게 된다.
+
+     **같은 판매채널 줄이 여럿이면 건드리지 않는다.** 어느 줄 몫인지 알 수 없어서다
+     (서버의 자동 올리기도 같은 규칙이다). 그런 채널은 몇 개인지 적어 알려 준다.
+
+     쓰기 전에 그 달을 **다시 읽는다.** 이 화면을 열어 둔 사이에 남이 월별 예산을
+     고쳤을 수 있는데, 들고 있던 옛 판을 그대로 덮으면 그 고침이 사라진다. */
+  const spendFor = (channel) => {
+    const rows = rowsFor(channel);
+    let spend = 0;
+    let brand = 0;
+    rows.forEach((row) => {
+      const money = Number(row.spend) || 0;
+      if (isBrandRow(row)) brand += money;
+      else spend += money;
+    });
+    return { spend: Math.round(spend), brand: Math.round(brand), rows: rows.length };
+  };
+
+  let filling = false;
+
+  // 채울 것이 있나 (파일이 붙어 있고, 그 채널 줄이 하나뿐인 것)
+  const fillPlan = () => {
+    const byCh = {};
+    allPlanRows().forEach((row) => {
+      const ch = String(row.channel || '').trim();
+      if (!ch) return;
+      if (!byCh[ch]) byCh[ch] = [];
+      byCh[ch].push(row);
+    });
+    const ready = [];
+    const many = [];
+    Object.keys(byCh).forEach((ch) => {
+      const got = spendFor(ch);
+      if (!got.rows) return;                      // 이 채널에 붙은 파일이 없다
+      if (byCh[ch].length > 1) { many.push(ch); return; }
+      ready.push({ channel: ch, row: byCh[ch][0], ...got });
+    });
+    return { ready: ready, many: many };
+  };
+
+  const fillUsed = () => {
+    const plan0 = fillPlan();
+    if (!plan0.ready.length) {
+      fileNote = plan0.many.length
+        ? `채울 줄이 없습니다 — <b>${escape(plan0.many.join(' · '))}</b> 은 같은 판매채널 줄이 여럿이라 건드리지 않았습니다.`
+        : '붙인 파일에서 이 달 판매채널을 찾지 못했습니다.';
+      render();
+      return;
+    }
+    const total = plan0.ready.reduce((sum, one) => sum + one.spend, 0);
+    const brand = plan0.ready.reduce((sum, one) => sum + one.brand, 0);
+    const what = plan0.ready.map((one) => `${one.channel} ${won(one.spend)}`).join('\n');
+    if (!window.confirm(`${plan0.ready.length}개 판매채널의 실사용비를 붙인 파일로 채웁니다.\n\n`
+      + `${what}\n\n합계 ${won(total)}`
+      + (brand ? `\n(브랜드검색 ${won(brand)} 은 뺐습니다 — 고정비에 이미 있습니다)` : '')
+      + '\n\n월별 예산에 그대로 저장됩니다. 채울까요?')) return;
+
+    filling = true;
+    fileNote = '';
+    error = '';
+    render();
+
+    const mine = month;
+    askSheet({ action: 'budgetGet', month })
+      .then((body) => {
+        const found = (body.budget || {}).plan;
+        const fresh = (found && typeof found === 'object') ? found : { skus: [], rows: [] };
+        if (!Array.isArray(fresh.rows)) fresh.rows = [];
+        // 다시 읽은 판에 붙인다 (들고 있던 옛 판을 덮지 않는다)
+        const byId = {};
+        plan0.ready.forEach((one) => { byId[String(one.row.id)] = one; });
+        let done = 0;
+        fresh.rows.forEach((row) => {
+          const one = byId[String(row.id)];
+          if (!one) return;
+          row.used = one.spend;
+          done += 1;
+        });
+        if (!done) throw new Error(`${monthName(month)} 에서 채울 줄을 찾지 못했습니다 (그새 지워진 듯합니다).`);
+        return askSheet({ action: 'budgetPut', month: month, plan: fresh, by: '' })
+          .then(() => ({ done: done, fresh: fresh }));
+      })
+      .then((got) => {
+        filling = false;
+        if (mine !== month) return;
+        plan = got.fresh;
+        keepBudget(month, { plan: plan, updatedAt: new Date().toISOString(), updatedBy: saved.by });
+        fileNote = `실사용비를 <b>${num(got.done)}줄</b> 채웠습니다 (합계 ${won(total)}).`
+          + (brand ? ` 브랜드검색 ${won(brand)} 은 뺐습니다 — 고정비에 이미 있습니다.` : '')
+          + (plan0.many.length ? ` <b>${escape(plan0.many.join(' · '))}</b> 은 같은 판매채널 줄이 여럿이라 건드리지 않았습니다 — 손으로 나눠 적어 주세요.` : '');
+        render();
+      })
+      .catch((reason) => {
+        filling = false;
+        error = `실사용비를 채우지 못했습니다 — ${reason.message}`;
+        render();
+      });
+  };
+
   const savedText = () => {
     if (!savedAt) return '';
     const when = new Date(savedAt);
@@ -14021,6 +14181,9 @@ if (eventReport) {
             title="붙인 파일을 이 브라우저에 담아 둡니다 (판매채널 추이와 같은 자리입니다)">
             <i data-lucide="save"></i>저장</button>
           <span class="er-saved">${savedAt ? `담아 둠 · ${escape(savedText())}` : ''}</span>
+          <button type="button" class="tool-copy-all" data-er="fill"${filling ? ' disabled' : ''}
+            title="붙인 파일의 집행 광고비를 월별 예산의 실사용비에 넣습니다 (브랜드검색은 뺍니다)">
+            <i data-lucide="wand-2"></i>${filling ? '채우는 중…' : '실사용비 채우기'}</button>
           <button type="button" class="tool-copy-all" data-er="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
           <button type="button" class="tool-copy-all" data-er="budget"><i data-lucide="wallet"></i>월별 예산에서 고치기</button>
         </div>
@@ -14231,6 +14394,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     const what = hit.dataset.er;
     if (what === 'reload') { opening = false; load(true); return; }
     if (what === 'save') { saveFiles(); return; }
+    if (what === 'fill') { fillUsed(); return; }
     if (what === 'drop') { files = []; fileNote = ''; open = ''; render(); return; }
     if (what === 'dropone') {
       files.splice(Number(hit.dataset.at), 1);
@@ -15164,6 +15328,11 @@ if (budgetPlanView) {
             ${fixedPulling || pushing || !fresh ? ' disabled' : ''}>
             <i data-lucide="table"></i>${fixedPulling ? '매체에서 받는 중…'
     : pushing ? '구글시트에 올리는 중…' : '구글시트 받기'}</button>
+          <label class="tool-copy-all bg-cross" title="전매체 검색에서 내려받은 파일을 붙이면
+ 판매채널마다 실사용비를 채웁니다 (브랜드검색은 뺍니다)">
+            <i data-lucide="wand-2"></i>${crossBusy ? '채우는 중…' : '파일로 실사용비 채우기'}
+            <input type="file" accept=".json,application/json" multiple data-bg="cross" hidden
+              ${crossBusy || !fresh ? 'disabled' : ''}></label>
           <button type="button" class="tool-copy-all" data-bg="sheetOpen"><i data-lucide="external-link"></i>시트 열기</button>
           <button type="button" class="tool-copy-all" data-bg="reload"><i data-lucide="rotate-ccw"></i>다시 읽기</button>
           ${editing ? `<button type="button" class="tool-copy-all bg-drop-month" data-bg="dropMonth"
@@ -15172,6 +15341,7 @@ if (budgetPlanView) {
         </div>
         ${noteLine()}
         ${fixedNote ? `<p class="perf-note bg-pull-note">${fixedNote}</p>` : ''}
+        ${crossNote ? `<p class="perf-note bg-pull-note">${crossNote}</p>` : ''}
       </div>
       ${heroCard()}
       ${summaryCard()}
@@ -15340,6 +15510,95 @@ if (budgetPlanView) {
       });
   };
 
+  /* ── 전매체 파일로 실사용비 채우기 ──────────────────────────────
+     전매체 검색에서 내려받은 파일을 붙이면 **판매채널마다 나간 돈**을 세어
+     그 줄의 실사용비에 넣는다. 행사별 결과의 [실사용비 채우기] 와 같은 것이다 —
+     규칙도 코드도 한 벌(perf* 들)을 같이 쓴다.
+
+     **브랜드검색은 뺀다.** 정액(CPT) 이라 광고비가 계약 금액이고, 아래 고정비의
+     '브랜드검색' 항목으로 이미 잡혀 있다 — 여기에 또 넣으면 같은 돈을 두 번 센다.
+
+     **같은 판매채널 줄이 여럿이면 건드리지 않는다.** 어느 줄 몫인지 알 수 없어서다
+     (서버의 아침 자동 올리기도 같은 규칙이다). 그런 채널은 이름을 적어 알려 준다. */
+  let crossBusy = false;
+  let crossNote = '';
+
+  const crossRead = (picked) => picked.text().then((text) => {
+    let found = null;
+    try { found = JSON.parse(text); } catch (reason) { found = null; }
+    if (!found || found.kind !== 'minix-cross-result') {
+      throw new Error(`${picked.name} 은 전매체 검색에서 내려받은 파일이 아닙니다.`);
+    }
+    return { name: picked.name, body: found };
+  });
+
+  const crossFill = (picked) => {
+    crossBusy = true;
+    crossNote = '';
+    error = '';
+    render();
+
+    const mine = month;
+    Promise.all(picked.map(crossRead))
+      .then((files) => {
+        // 매출채널 표 · 제휴 규칙은 서버가 준다 (행사별 결과가 쓰는 그 표다)
+        return askSheet({ action: 'budgetTrend' })
+          .then((trend) => ({ files: files, sales: trend.sales || [], ads: trend.channelAds || [] }));
+      })
+      .then((got) => {
+        const byCh = {};
+        plan.rows.forEach((row) => {
+          const ch = String(row.channel || '').trim();
+          if (!ch) return;
+          if (!byCh[ch]) byCh[ch] = [];
+          byCh[ch].push(row);
+        });
+        const names = Object.keys(byCh);
+        if (!names.length) throw new Error(`${month} 에 판매채널을 적어 둔 프로모션 줄이 없습니다.`);
+
+        const found = perfCrossSpend(got.files, names, got.sales, got.ads);
+        const ready = [];
+        const many = [];
+        names.forEach((ch) => {
+          const one = found[ch];
+          if (!one || !one.rows) return;              // 파일에서 이 채널을 못 찾았다
+          if (byCh[ch].length > 1) { many.push(ch); return; }
+          ready.push({ channel: ch, row: byCh[ch][0], spend: Math.round(one.spend),
+            brand: Math.round(one.brand) });
+        });
+        if (!ready.length) {
+          throw new Error(many.length
+            ? `채울 줄이 없습니다 — ${many.join(' · ')} 은 같은 판매채널 줄이 여럿이라 건드리지 않았습니다.`
+            : '붙인 파일에서 이 달 판매채널을 하나도 찾지 못했습니다.');
+        }
+
+        const total = ready.reduce((sum, one) => sum + one.spend, 0);
+        const brand = ready.reduce((sum, one) => sum + one.brand, 0);
+        const what = ready.map((one) => `${one.channel} ${won(one.spend)}`).join('\n');
+        if (!window.confirm(`${ready.length}개 판매채널의 실사용비를 붙인 파일로 채웁니다.\n\n`
+          + `${what}\n\n합계 ${won(total)}`
+          + (brand ? `\n(브랜드검색 ${won(brand)} 은 뺐습니다 — 고정비에 이미 있습니다)` : '')
+          + '\n\n채울까요?')) return null;
+
+        ready.forEach((one) => { one.row.used = one.spend; });
+        return { done: ready.length, total: total, brand: brand, many: many };
+      })
+      .then((got) => {
+        crossBusy = false;
+        if (!got || mine !== month) { render(); return; }
+        crossNote = `실사용비를 <b>${num(got.done)}줄</b> 채웠습니다 (합계 ${won(got.total)}).`
+          + (got.brand ? ` 브랜드검색 ${won(got.brand)} 은 뺐습니다 — 고정비에 이미 있습니다.` : '')
+          + (got.many.length ? ` <b>${escape(got.many.join(' · '))}</b> 은 같은 판매채널 줄이 여럿이라 건드리지 않았습니다 — 손으로 나눠 적어 주세요.` : '');
+        render();
+        save(true);   // 곧바로 시트에 담는다
+      })
+      .catch((reason) => {
+        crossBusy = false;
+        error = `실사용비를 채우지 못했습니다 — ${reason.message}`;
+        render();
+      });
+  };
+
   // 이 달을 통째로 지운다. 시트에서 줄이 없어지므로 달 고르개에서도 사라진다.
   // 되돌릴 수 없어 무엇이 사라지는지 세어 보여 주고 묻는다.
   const dropMonth = () => {
@@ -15471,6 +15730,13 @@ if (budgetPlanView) {
   const NUM_FIELDS = ['skuBudget', 'goal', 'cps', 'brand', 'cost', 'used', 'fixedPlan', 'fixedUsed'];
 
   budgetPlanView.addEventListener('change', (event) => {
+    const cross = event.target.closest('[data-bg="cross"]');
+    if (cross) {
+      const picked = Array.from(cross.files || []);
+      cross.value = '';                 // 같은 파일을 다시 골라도 change 가 오게
+      if (picked.length) crossFill(picked);
+      return;
+    }
     const hit = event.target.closest('[data-bg]');
     if (!hit) return;
     const what = hit.dataset.bg;
