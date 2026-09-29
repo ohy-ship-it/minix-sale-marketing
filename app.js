@@ -14514,7 +14514,48 @@ if (kolLiveView) {
   const AUTO_FROM = { spend: 'spend', clicks: 'clk' };
   const isAuto = (name) => Object.prototype.hasOwnProperty.call(AUTO_FROM, name);
 
-  let months = [];          // [{ month, phases, updatedBy, updatedAt }] — 새 달이 위
+  /* ── 사전 리포트 ────────────────────────────────────────────────
+     'KOL 라이브 결과' 시트의 (2)사전 블록을 그대로 옮긴 것이다.
+     라이브는 사전알림으로 사람을 모아 당일에 파는 장사라, 사전에 **몇 명이 들어와
+     몇 명이 신청하고 몇 명이 샀는지**가 그 라이브의 성패를 가른다.
+     그 값은 매체가 주지 않는다 (GA4 · 신청폼에서 나온다) — 그래서 손으로 적는다.
+
+     비율은 **담지 않는다.** 적은 다섯 칸에서 바로 나오는 값이라, 함께 담아 두면
+     한쪽만 고쳐졌을 때 어느 것이 맞는지 알 수 없게 된다 (이 화면의 다른 칸과 같은 규칙). */
+  const PRE_FIELDS = [
+    ['sessions', '세션수', '사전알림 페이지에 들어온 세션 (GA4)'],
+    ['users', '방문유저(고유)', '같은 사람을 한 번만 센 수'],
+    ['formIn', '신청폼 진입', '신청폼까지 간 수'],
+    ['signups', '신청자', '실제로 신청을 마친 수'],
+    ['buyers', '사전신청 구매자', '신청한 사람 중 라이브에서 산 수'],
+  ];
+
+  /* 목록 표 셋 — 구매희망 SKU · 신청경로 · GA4 매체별 신청폼 진입.
+     셋 다 '이름 + 수' 한 쌍이라 한 가지 표로 그린다. 비중(%)은 그 표의 합으로 센다. */
+  const PRE_LISTS = [
+    ['wish', '구매희망 SKU', '신청자', '신청폼에서 고른 것 (중복 선택이 있어 합이 신청자 수보다 클 수 있다)'],
+    ['routes', '사전알림 신청경로', '신청수', '신청폼에서 적은 유입 경로'],
+    ['ga', 'GA4 매체별 신청폼 진입', '이벤트수', 'GA4 가 센 매체별 신청폼 진입'],
+  ];
+
+  // 적어 둔 사전 리포트 (없으면 빈 것). 칸이 늘어도 옛 줄이 그대로 읽히게 늘 같은 모양으로 편다.
+  const preOf = (row) => {
+    const one = (row && row.pre) || {};
+    const out = { wish: [], routes: [], ga: [] };
+    PRE_FIELDS.forEach(([key]) => { out[key] = one[key] === undefined || one[key] === null ? '' : one[key]; });
+    PRE_LISTS.forEach(([key]) => {
+      out[key] = Array.isArray(one[key]) ? one[key].map((each) => ({
+        name: String((each && each.name) || ''),
+        count: (each && each.count !== undefined && each.count !== null) ? each.count : '',
+      })) : [];
+    });
+    return out;
+  };
+
+  const preNum = (value) => (value === '' || value === null || value === undefined
+    ? null : Number(value));
+
+  let months = [];          // [{ month, phases, pre, updatedBy, updatedAt }] — 새 달이 위
   let status = 'loading';
   let error = '';
   let note = '';
@@ -14892,8 +14933,98 @@ if (kolLiveView) {
         CPC = 광고비 ÷ 클릭 · CTR = 클릭 ÷ 노출. 종합 · total 은 더한 값에서 다시 셉니다.</p>
     </div>`;
   };
+  /* ── 사전 행동지표 ──────────────────────────────────────────────
+     다섯 칸을 적으면 나머지는 셈한다:
+       구매 CVR        = 사전신청 구매자 ÷ 신청자
+       사전신청 CPA    = 사전 광고비 ÷ 신청자
+       방문 > 신청클릭  = 신청폼 진입 ÷ 세션수
+       방문 > 최종신청  = 신청자 ÷ 세션수
+       신청폼 > 최종신청 = 신청자 ÷ 신청폼 진입                              */
+  const preCard = (row) => {
+    const one = preOf(row);
+    const at = escape(row.month);
+    const spend = Number((row.phases && row.phases.pre && row.phases.pre.spend) || 0);
+    const box = ([key, name, hint]) => `<td class="perf-num"><input type="text" class="kol-in"
+      inputmode="numeric" data-kol-pre="1" data-month="${at}" data-field="${key}"
+      title="${escape(hint)}" value="${one[key] === '' ? '' : escape(commaNum(Number(one[key]) || 0))}" placeholder="0"></td>`;
+    const sessions = preNum(one.sessions);
+    const formIn = preNum(one.formIn);
+    const signups = preNum(one.signups);
+    const buyers = preNum(one.buyers);
+    return `<div class="tool-list-head"><h3>사전 행동지표
+      <small>사전알림 페이지에서 몇 명이 들어와 몇 명이 신청하고 몇 명이 샀나 — 매체가 주지 않는 값이라 손으로 적습니다</small></h3></div>
+      <div class="tool-table-wrap"><table class="tool-table kol-table">
+        <thead><tr>${PRE_FIELDS.map(([, name]) => `<th class="perf-num">${escape(name)}</th>`).join('')}
+          <th class="perf-num">구매 CVR</th><th class="perf-num">사전신청 CPA</th>
+          <th class="perf-num">방문 &gt; 신청클릭</th><th class="perf-num">방문 &gt; 최종신청</th>
+          <th class="perf-num">신청폼 &gt; 최종신청</th></tr></thead>
+        <tbody><tr>${PRE_FIELDS.map(box).join('')}
+          <td class="perf-num">${rate(perfRatio(buyers, signups))}</td>
+          <td class="perf-num">${money(perfRatio(spend, signups))}</td>
+          <td class="perf-num">${rate(perfRatio(formIn, sessions))}</td>
+          <td class="perf-num">${rate(perfRatio(signups, sessions))}</td>
+          <td class="perf-num">${rate(perfRatio(signups, formIn))}</td>
+        </tr></tbody></table></div>`;
+  };
+
+  /* ── 프로젝트 비교 ──────────────────────────────────────────────
+     시트에서는 지난 라이브들의 숫자를 손으로 옮겨 적고 있었다. 여기서는 **적어 둔 달을
+     그대로 줄로 세운다** — 옮겨 적을 것이 없고, 지난 달 값을 고치면 여기도 따라 바뀐다.
+     사전 숫자를 하나도 안 적은 달은 뺀다 (빈 줄만 늘어서 읽기 나쁘다). */
+  const compareCard = (row) => {
+    const lines = months.map((each) => ({ each: each, pre: preOf(each) }))
+      .filter(({ pre }) => PRE_FIELDS.some(([key]) => pre[key] !== ''));
+    if (lines.length < 2) return '';
+    return `<div class="tool-list-head"><h3>프로젝트 비교
+      <small>적어 둔 라이브를 그대로 세웁니다 — 옮겨 적을 것이 없습니다</small></h3></div>
+      <div class="tool-table-wrap"><table class="tool-table kol-table">
+        <thead><tr><th>프로젝트</th><th class="perf-num">세션수</th><th class="perf-num">신청폼 진입</th>
+          <th class="perf-num">신청수</th><th class="perf-num">진입률</th><th class="perf-num">신청률</th>
+          <th class="perf-num">세션진입신청률</th><th class="perf-num">사전알림구매율</th></tr></thead>
+        <tbody>${lines.map(({ each, pre }) => {
+    const sessions = preNum(pre.sessions);
+    const formIn = preNum(pre.formIn);
+    const signups = preNum(pre.signups);
+    return `<tr class="${each.month === row.month ? 'kol-this' : ''}">
+          <td>${escape(each.promo || '')}${each.promo ? ' ' : ''}<small>(${escape(each.month)})</small></td>
+          <td class="perf-num">${count(sessions)}</td>
+          <td class="perf-num">${count(formIn)}</td>
+          <td class="perf-num">${count(signups)}</td>
+          <td class="perf-num">${rate(perfRatio(formIn, sessions))}</td>
+          <td class="perf-num">${rate(perfRatio(signups, formIn))}</td>
+          <td class="perf-num">${rate(perfRatio(signups, sessions))}</td>
+          <td class="perf-num">${rate(perfRatio(preNum(pre.buyers), signups))}</td>
+        </tr>`; }).join('')}</tbody></table></div>`;
+  };
+
+  /* ── 목록 표 (구매희망 SKU · 신청경로 · GA4 매체) ────────────────────
+     셋 다 '이름 + 수' 한 쌍이라 한 가지 표로 그린다. 비중(%)은 **그 표의 합**으로 센다 —
+     구매희망은 중복 선택이 있어 합이 신청자 수보다 클 수 있어서, 신청자로 나누면 100% 가 넘는다.
+     빈 줄 하나를 늘 아래에 둔다 (적으면 그 자리에 들어가고 새 빈 줄이 생긴다). */
+  const preListCard = (row, [key, title, unit, hint]) => {
+    const at = escape(row.month);
+    const list = preOf(row)[key];
+    const whole = list.reduce((sum, one) => sum + (Number(one.count) || 0), 0);
+    const line = (one, i) => `<tr><td><input type="text" class="kol-name" data-kol-list="${key}"
+      data-month="${at}" data-at="${i}" data-part="name" value="${escape(one.name)}" placeholder="이름"></td>
+      <td class="perf-num"><input type="text" class="kol-in" inputmode="numeric" data-kol-list="${key}"
+        data-month="${at}" data-at="${i}" data-part="count" value="${one.count === '' ? '' : escape(commaNum(Number(one.count) || 0))}" placeholder="0"></td>
+      <td class="perf-num">${rate(perfRatio(Number(one.count) || 0, whole))}</td></tr>`;
+    return `<div class="tool-list-head"><h3>${escape(title)}<small>${escape(hint)}</small></h3></div>
+      <div class="tool-table-wrap"><table class="tool-table kol-table kol-list">
+        <thead><tr><th>${escape(title)}</th><th class="perf-num">${escape(unit)}</th>
+          <th class="perf-num">비중(%)</th></tr></thead>
+        <tbody>${list.map(line).join('')}
+          ${line({ name: '', count: '' }, list.length)}
+          ${whole ? `<tr class="tr-sum"><td><b>총합</b></td><td class="perf-num"><b>${count(whole)}</b></td><td class="perf-num">100.00%</td></tr>` : ''}
+        </tbody></table></div>`;
+  };
+
+  const preBlock = (row) => `<div class="kol-pre">${preCard(row)}${compareCard(row)}
+    <div class="kol-lists">${PRE_LISTS.map((one) => `<div class="kol-list-box">${preListCard(row, one)}</div>`).join('')}</div></div>`;
+
   const detailRow = (row) => `<tr class="perf-detail-row" data-kol-detail="${escape(row.month)}">
-    <td colspan="10"><div class="kol-detail">${heroBox(row)}${stepTable(row)}${mediaCard(row)}</div></td></tr>`;
+    <td colspan="10"><div class="kol-detail">${heroBox(row)}${stepTable(row)}${preBlock(row)}${mediaCard(row)}</div></td></tr>`;
 
   // 라이브 일자 — 달 밑에 작게. 눌러야 칸이 열린다.
   const dayCell = (row) => (isEditing(row, 'day')
@@ -15077,7 +15208,7 @@ if (kolLiveView) {
       const row = rowOf(want);
       if (!row) return null;
       return askSheet({ action: 'kolPut', month: want, day: row.day || '', promo: row.promo || '',
-        phases: row.phases, media: mediaRows(row), mediaFrom: row.mediaFrom || null, by: '' })
+        phases: row.phases, pre: row.pre || {}, media: mediaRows(row), mediaFrom: row.mediaFrom || null, by: '' })
         .then((body) => {
           row.updatedAt = body.savedAt || row.updatedAt;
           note = `${monthLabel(want)} 저장했습니다`;
@@ -15164,6 +15295,7 @@ if (kolLiveView) {
           day: String(row.day || ''),
           promo: String(row.promo || ''),
           phases: usePhases(row.phases),
+          pre: (row.pre && typeof row.pre === 'object') ? row.pre : {},
           media: Array.isArray(row.media) ? row.media : [],
           mediaFrom: row.mediaFrom || null,
           updatedBy: row.updatedBy || '',
@@ -15334,6 +15466,36 @@ if (kolLiveView) {
   });
 
   kolLiveView.addEventListener('change', (event) => {
+    const pre = event.target.closest('[data-kol-pre]');
+    if (pre) {
+      const row = rowOf(pre.dataset.month);
+      if (!row) return;
+      if (!row.pre) row.pre = {};
+      const text = String(pre.value || '').replace(/[,\s\u20a9원]/g, '').trim();
+      row.pre[pre.dataset.field] = text === '' ? '' : (Number(text) || 0);
+      render();   // 적은 값으로 CVR · CPA · 비율이 그 자리에서 다시 셈해진다
+      save(row.month);
+      return;
+    }
+    const item = event.target.closest('[data-kol-list]');
+    if (item) {
+      const row = rowOf(item.dataset.month);
+      if (!row) return;
+      if (!row.pre) row.pre = {};
+      const key = item.dataset.list;
+      const list = Array.isArray(row.pre[key]) ? row.pre[key].slice() : [];
+      const at = Number(item.dataset.at);
+      while (list.length <= at) list.push({ name: '', count: '' });
+      const text = String(item.value || '').replace(/[,\s\u20a9원]/g, '').trim();
+      if (item.dataset.part === 'name') list[at].name = String(item.value || '').trim();
+      else list[at].count = text === '' ? '' : (Number(text) || 0);
+      /* 이름도 수도 없는 줄은 뺀다 — 맨 아래 빈 줄에 적었다 지우면 빈 줄이 쌓인다.
+         맨 끝 줄만 보지 않고 다 훑는다 (가운데 줄을 지웠을 때도 정리되게). */
+      row.pre[key] = list.filter((one) => String(one.name || '').trim() !== '' || one.count !== '');
+      render();
+      save(row.month);
+      return;
+    }
     const phase = event.target.closest('[data-kol-mp]');
     if (phase) {
       const row = rowOf(phase.dataset.month);

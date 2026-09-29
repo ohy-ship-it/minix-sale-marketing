@@ -8228,6 +8228,34 @@ var KOL_FIELDS = ['spend', 'revenue', 'orders', 'alerts', 'sessions', 'clicks'];
 var KOL_MEDIA_FIELDS = ['spend', 'imp', 'clk', 'conv'];
 var KOL_MEDIA_MAX = 300;          // 담아 둘 줄의 끝 (시트 한 칸을 넘지 않게)
 
+/* 사전 리포트 — 'KOL 라이브 결과' 시트의 (2)사전 블록. 내용 JSON 안에 함께 담는다
+   (칸을 늘리면 이미 쌓인 줄의 수정자 · 수정시각이 밀린다).
+   비율은 담지 않는다 — 아래 다섯 칸과 목록에서 바로 나오는 값이라 화면에서 센다. */
+var KOL_PRE_FIELDS = ['sessions', 'users', 'formIn', 'signups', 'buyers'];
+var KOL_PRE_LISTS = ['wish', 'routes', 'ga'];
+var KOL_PRE_MAX = 80;             // 목록 한 개의 줄 끝
+
+// 빈 칸은 '' 로 둔다 (0 과 '아직 안 적었다' 는 다르다 — 이 파일의 다른 곳과 같은 규칙)
+function kolNum_(value) {
+  var text = String(value === null || value === undefined ? '' : value).replace(/[,s₩원]/g, '');
+  if (text === '') return '';
+  return isNaN(Number(text)) ? '' : Number(text);
+}
+
+function kolPre_(found) {
+  var one = (found && found.pre) || {};
+  var out = {};
+  KOL_PRE_FIELDS.forEach(function (name) { out[name] = kolNum_(one[name]); });
+  KOL_PRE_LISTS.forEach(function (name) {
+    var list = one[name];
+    if (Object.prototype.toString.call(list) !== '[object Array]') { out[name] = []; return; }
+    out[name] = list.slice(0, KOL_PRE_MAX).map(function (each) {
+      return { name: String((each && each.name) || ''), count: kolNum_(each && each.count) };
+    }).filter(function (each) { return each.name !== '' || each.count !== ''; });
+  });
+  return out;
+}
+
 function kolSheet_(book) {
   book = book || SpreadsheetApp.openById(SHEET_ID);
   var sheet = book.getSheetByName(KOL_SHEET_NAME);
@@ -8293,6 +8321,7 @@ function kolRow_(line) {
     day: String((found && found.day) || '').slice(0, 10),
     promo: String((found && found.promo) || ''),
     phases: kolPhases_(found),
+    pre: kolPre_(found),
     media: kolMedia_(found),
     mediaFrom: kolFrom_(found),
     updatedBy: String(line[2] || ''),
@@ -8332,6 +8361,7 @@ function kolPut_(payload) {
   var day = String((payload && payload.day) || '').slice(0, 10);
   var promo = String((payload && payload.promo) || '');
   var phases = kolPhases_({ phases: (payload && payload.phases) || {} });
+  var pre = kolPre_(payload);
   var media = kolMedia_(payload);
   var from = kolFrom_(payload);
 
@@ -8353,7 +8383,8 @@ function kolPut_(payload) {
     if (!at) at = sheet.getLastRow() + 1;
     sheet.getRange(at, 1, 1, KOL_HEADERS.length)
       .setValues([[month,
-        JSON.stringify({ day: day, promo: promo, phases: phases, media: media, mediaFrom: from }),
+        JSON.stringify({ day: day, promo: promo, phases: phases, pre: pre,
+          media: media, mediaFrom: from }),
         who, new Date()]]);
     return { ok: true, month: month, promo: promo, savedAt: new Date().toISOString() };
   } finally {
