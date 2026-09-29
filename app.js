@@ -13765,6 +13765,103 @@ if (eventReport) {
     </div>`;
   };
 
+  /* ── 카테고리별 (더 플렌더 · 생활가전) ────────────────────────────
+     목록은 월별 예산과 **같아야 한다** — 거기서 짠 줄을 여기서 묶어 보는 것이라,
+     갈래가 다르면 같은 달을 놓고 두 화면이 다른 말을 한다.
+     여기 없는 SKU 로 적힌 줄은 '그 밖' 으로 묶어 **보여는 준다** — 조용히 빠지면
+     합이 안 맞는데 까닭을 알 수가 없다. */
+  const SKU_TREE = [
+    ['더 플렌더', ['더 플렌더mini', '더 플렌더MAX', '더 플렌더PRO']],
+    ['생활가전', ['더 에어드라이', '더 시프트']],
+  ];
+  const ETC_CAT = '그 밖';
+  const nameKey = (name) => String(name || '').toLowerCase().replace(/[\s()_·\-.]/g, '');
+  const catOf = (sku) => {
+    const want = nameKey(sku);
+    const found = SKU_TREE.filter(([, list]) => list.some((one) => nameKey(one) === want))[0];
+    return found ? found[0] : ETC_CAT;
+  };
+
+  /* 실제로 나간 돈. **판매채널 단위로** 센다 — 같은 채널에 SKU 줄이 둘이면
+     파일의 집행 광고비를 두 번 세게 된다.
+       ① 월별 예산에 적어 둔 실사용비가 있으면 그 값
+       ② 없으면 붙인 전매체 파일의 집행 광고비
+     둘 다 없으면 0 이다 (아직 아무것도 모르는 줄이다). */
+  const spentOf = (rows) => {
+    const byCh = {};
+    let sum = 0;
+    rows.forEach((row) => {
+      const ch = String(row.channel || '').trim();
+      if (!ch) { sum += rowUsed(row); return; }   // 채널을 안 적은 줄은 그 줄 값만
+      if (!byCh[ch]) byCh[ch] = [];
+      byCh[ch].push(row);
+    });
+    Object.keys(byCh).forEach((ch) => {
+      const used = byCh[ch].reduce((into, row) => into + rowUsed(row), 0);
+      sum += used || sumOf(rowsFor(ch)).spend;
+    });
+    return sum;
+  };
+
+  /* 실제로 팔린 수. 이것도 판매채널 단위다.
+       ① 적어 둔 **총 판매수** 가 있으면 그 값 (판매처에서 센 수다)
+       ② 없으면 단계별로 적은 판매수 · 붙인 파일의 판매량 (wholeOf 가 그 차례로 센다) */
+  const soldOf = (rows) => {
+    const seen = [];
+    let sum = 0;
+    rows.forEach((row) => {
+      const ch = String(row.channel || '').trim();
+      if (!ch || seen.indexOf(ch) >= 0) return;
+      seen.push(ch);
+      const typed = typedOf(ch);
+      sum += typed.sales !== '' ? (Number(typed.sales) || 0) : wholeOf(ch).buy;
+    });
+    return sum;
+  };
+
+  const catBlock = (name, rows) => {
+    const goal = rows.reduce((into, row) => into + (Number(row.goal) || 0), 0);
+    const plan = rows.reduce((into, row) => into + rowCost(row), 0);
+    const spend = spentOf(rows);
+    const sold = soldOf(rows);
+    const wantCps = goal > 0 ? plan / goal : null;
+    const realCps = sold > 0 ? spend / sold : null;
+    /* 목표보다 비싸면 그만큼을 곁에 적는다. 두 값이 다 있을 때만 — 한쪽이 비면
+       '몇 % 높다' 가 거짓말이 된다. */
+    const gap = (wantCps !== null && realCps !== null && wantCps > 0)
+      ? `목표 대비 ${realCps >= wantCps ? '+' : ''}${(((realCps / wantCps) - 1) * 100).toFixed(0)}%`
+      : '총 광고비 ÷ 실판매량';
+    return `<div class="er-cat">
+      <div class="er-cat-name">${escape(name)}<small>${num(rows.length)}줄</small></div>
+      <div class="bg-stats">
+        ${statBox('총 광고비', money(spend), '실사용비 · 안 적었으면 붙인 파일의 집행 광고비')}
+        ${statBox('목표수량', goal ? `${num(goal)}대` : dash, '월별 예산에 적은 목표의 합')}
+        ${statBox('실판매량', sold ? `${num(sold)}대` : dash, '적은 총 판매수 · 없으면 단계별 · 파일')}
+        ${statBox('목표 CPS', wantCps === null ? dash : won(Math.round(wantCps)), '계획 광고비 ÷ 목표수량')}
+        ${statBox('실 CPS', realCps === null ? dash : won(Math.round(realCps)), gap)}
+      </div>
+    </div>`;
+  };
+
+  const catCard = () => {
+    const rows = allPlanRows();
+    const bucket = {};
+    rows.forEach((row) => {
+      const name = catOf(row.sku);
+      if (!bucket[name]) bucket[name] = [];
+      bucket[name].push(row);
+    });
+    // 정해 둔 차례대로 (그 밖은 맨 뒤 · 줄이 있을 때만)
+    const names = SKU_TREE.map(([one]) => one).filter((one) => bucket[one])
+      .concat(bucket[ETC_CAT] ? [ETC_CAT] : []);
+    if (!names.length) return '';
+    return `<div class="tool-card er-cats">
+      <div class="tool-list-head"><h3>카테고리별
+        <small>${escape(names.join(' · '))}</small></h3></div>
+      ${names.map((name) => catBlock(name, bucket[name])).join('')}
+    </div>`;
+  };
+
   const skuCard = (name) => {
     const rows = rowsOf(name);
     const sum = planSum(rows);
@@ -13835,6 +13932,7 @@ if (eventReport) {
 ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니다 — 시트 값이 오면 바뀝니다'}`}</p>
         ${fileNote ? `<p class="perf-note">${fileNote}</p>` : ''}
       </div>
+      ${catCard()}
       <div class="tool-card">
         <div class="bg-stats">
           ${statBox('프로모션', `${num(whole.rows)}줄`, `${escape(monthName(month))} · SKU ${num(names.length)}개`)}

@@ -1912,3 +1912,12 @@ html.is-gated,html.is-gated body{overflow:hidden}
   padding:3px 10px;font:600 11px 'Noto Sans KR',sans-serif;color:#6f6f68;cursor:pointer}
 .er-ads-go:hover{border-color:#c9c8c1;color:#37352f}
 .er-detail .tr-cuts{margin-top:2px}
+
+/* 카테고리별 (더 플렌더 · 생활가전) */
+.er-cats .tool-list-head{margin:0 0 8px}
+.er-cat{padding:9px 0 0;border-top:1px dashed #eeede8}
+.er-cat:first-of-type{padding-top:2px;border-top:0}
+.er-cat+.er-cat{margin-top:9px}
+.er-cat-name{display:flex;align-items:baseline;gap:7px;margin-bottom:6px;
+  font:700 12.5px 'Noto Sans KR',sans-serif;color:#37352f}
+.er-cat-name small{font-weight:400;font-size:10.5px;color:#a5a49f}
