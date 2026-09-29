@@ -13077,6 +13077,41 @@ if (eventReport) {
 
   let open = '';                   // 펼친 줄 (프로모션 줄 id)
   let openMedia = '';              // '줄id|단계|매체' — 펼친 매체 하나
+  let openAds = '';                // 발행 소재를 펼친 프로모션 (매체에 물어본다)
+  const adsGot = {};               // 프로모션명 → { status, rows, notes, range }
+
+  /* ── 브랜드검색 제외 ────────────────────────────────────────────
+     브랜드검색은 정액(CPT) 상품이라 광고비가 **계약 금액**이다. 행사에 얹혀 있으면
+     그 행사의 CPS 가 브검비만큼 통째로 커진다 — 그래서 빼고 볼 수 있게 한다.
+
+     **광고비만 뺀다.** 전환 · 매출 · 노출 · 클릭은 그대로 둔다 (적어 주신 대로다).
+     그러면 ROAS · CPS 가 그만큼 좋게 보이므로, 얼마를 뺐는지 박스 아래에 적어 둔다 —
+     빼고 본 숫자를 안 뺀 숫자와 견주면 틀린 말을 하게 된다.
+
+     **보는 사람 것이라 시트에 담지 않는다** (월별 예산의 브검비 얹어보기와 같은 규칙).
+     팀이 함께 보는 값이 아니라 지금 내가 어떻게 볼지를 고른 것이다. */
+  const BRAND_SOURCE = 'naverSa';
+  const NO_BRAND_KEY = 'minix-event-no-brand';
+  const isBrandRow = (row) => String(row.source || '') === BRAND_SOURCE
+    || String(row.sourceName || '').indexOf('브랜드검색') >= 0;
+  const brandSpend = (rows) => rows.filter(isBrandRow)
+    .reduce((sum, row) => sum + (Number(row.spend) || 0), 0);
+
+  let noBrand = [];                // 브검을 뺀 채로 보는 프로모션들 (달|프로모션명)
+  const readNoBrand = () => {
+    try {
+      const kept = JSON.parse(window.localStorage.getItem(NO_BRAND_KEY) || '[]');
+      noBrand = Array.isArray(kept) ? kept.filter((one) => typeof one === 'string') : [];
+    } catch (error) { noBrand = []; }
+  };
+  const noBrandKey = (promo) => `${month}|${promo}`;
+  const isNoBrand = (promo) => noBrand.indexOf(noBrandKey(promo)) >= 0;
+  const setNoBrand = (promo, on) => {
+    const key = noBrandKey(promo);
+    noBrand = on ? noBrand.concat(noBrand.indexOf(key) < 0 ? [key] : [])
+      : noBrand.filter((one) => one !== key);
+    try { window.localStorage.setItem(NO_BRAND_KEY, JSON.stringify(noBrand)); } catch (error) { /* 거들기다 */ }
+  };
 
   const today = new Date();
   const thisMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
@@ -13455,9 +13490,17 @@ if (eventReport) {
 
   const wholeBox = (promo, alarm) => {
     const one = wholeOf(promo);
+    const brand = brandSpend(rowsFor(promo));
+    const off = isNoBrand(promo);
+    /* 체크를 켜면 **광고비에서만** 브검 몫을 뺀다. 전환 · 매출은 그대로다.
+       그래서 셈한 칸(CPS · ROAS · CPC · CPM)이 모두 그 광고비로 다시 셈해진다. */
+    const shown = off ? { ...one, spend: Math.max(one.spend - brand, 0) } : one;
     return `<div class="bg-stats er-hero">
-      ${METRICS.map((each) => statBox(metricName(each, alarm), each.cell(one, alarm), '')).join('')}
-    </div>`;
+      ${METRICS.map((each) => statBox(metricName(each, alarm), each.cell(shown, alarm), '')).join('')}
+    </div>
+    ${off ? `<p class="perf-note er-brand-note">브랜드검색 광고비 <b>${money(brand)}</b> 을 뺀 값입니다
+      — 전환 · 매출 · 노출 · 클릭은 그대로라 <b>ROAS 는 높게, CPS 는 낮게</b> 보입니다.
+      브검을 넣은 다른 행사와 나란히 견주지 마세요.</p>` : ''}`;
   };
 
   /* ── ② 사전알림 ────────────────────────────────────────────────
@@ -13582,6 +13625,7 @@ if (eventReport) {
      광고가 보고하는 전환은 어트리뷰션이 붙은 값이라 실제로 팔린 수와 다르다. */
   const typedBar = (promo) => {
     const one = typedOf(promo);
+    const brand = brandSpend(rowsFor(promo));   // 브검이 섞인 행사에만 체크를 낸다
     const box = (key, name, hint) => `<label class="er-typed" title="${escape(hint)}" data-er="skip">${escape(name)}
       <input type="text" inputmode="numeric" data-er="typed" data-key="${key}"
         data-channel="${escape(promo)}" value="${escape(numText(one[key]))}" placeholder="—"></label>`;
@@ -13591,8 +13635,104 @@ if (eventReport) {
       <label class="er-typed er-alarm" data-er="skip"
         title="사전알림을 받은 행사면 켜 주세요 — 아래 표의 CPS 가 CPA 로 바뀌고 사전알림 칸이 열립니다">
         <input type="checkbox" data-er="alarm" data-channel="${escape(promo)}"${one.alarm ? ' checked' : ''}>사전알림</label>
+      ${brand ? `<label class="er-typed er-alarm" data-er="skip"
+        title="브랜드검색은 정액(CPT) 이라 광고비가 계약 금액입니다. 켜면 종합결과의 광고비에서만 뺍니다">
+        <input type="checkbox" data-er="nobrand" data-channel="${escape(promo)}"${isNoBrand(promo) ? ' checked' : ''}>브랜드검색 제외
+        <small>${money(brand)}</small></label>` : ''}
       ${one.alarm ? '<span class="er-typed-note">사전알림 행사라 아래 표는 <b>CPA</b>(광고비 ÷ 결과) 로 셉니다</span>' : ''}
     </div>`;
+  };
+
+  /* ── 발행 소재 ──────────────────────────────────────────────────
+     전매체 파일에는 **광고그룹 줄까지만** 들어 있다. 어떤 소재를 발행했는지는
+     담겨 있지 않아, 파일에 실린 매체 · 계정 · 광고그룹 번호로 **그때 물어본다.**
+     그래서 파일이 작게 유지되고 미리보기도 늘 최신이다.
+
+     대신 매체를 다녀오느라 몇 초 걸린다 — 그래서 **누를 때만** 묻고,
+     한 번 받아 둔 것은 다시 묻지 않는다 ([다시 묻기] 를 누르면 새로 받는다). */
+  const spotsOf = (promo) => {
+    const out = [];
+    rowsFor(promo).forEach((row) => {
+      if (!row.account || !row.id) return;
+      const mark = `${row.source}|${row.account}|${row.id}`;
+      if (!out.some((one) => one.mark === mark)) {
+        out.push({ mark: mark, source: row.source, sourceName: row.sourceName,
+          account: row.account, adset: row.id, name: row.adset });
+      }
+    });
+    return out;
+  };
+
+  /* 물어볼 기간. 붙인 파일이 덮는 기간을 통째로 감싼다.
+     파일에 기간이 안 적혀 있으면 월별 예산의 광고기간을 쓴다. */
+  const rangeFor = (promo, row) => {
+    let since = '';
+    let until = '';
+    packsOf(promo).forEach((one) => {
+      if (one.range.since && (!since || one.range.since < since)) since = one.range.since;
+      if (one.range.until && (!until || one.range.until > until)) until = one.range.until;
+    });
+    return { since: since || String((row && row.since) || ''),
+      until: until || String((row && row.until) || '') };
+  };
+
+  const askCreatives = (promo, row, again) => {
+    if (adsGot[promo] && !again) return;
+    const spots = spotsOf(promo);
+    const range = rangeFor(promo, row);
+
+    // 왜 못 묻는지 먼저 말해 준다 — 빈 칸만 나오면 까닭을 알 수 없다
+    const stop = (why) => {
+      adsGot[promo] = { status: 'ready', rows: [], notes: [why], range: range };
+      render();
+    };
+    if (!spots.length) {
+      stop(packsOf(promo).length
+        ? '붙인 파일에 광고그룹 번호가 없습니다 — 전매체에서 파일을 다시 내려받아 주세요.'
+        : '이 행사에 붙은 파일이 없습니다 — 전매체 파일을 먼저 붙여 주세요.');
+      return;
+    }
+    if (!range.since || !range.until) {
+      stop('물어볼 기간을 알 수 없습니다 — 파일에 조회 기간이 없고, 월별 예산에도 광고기간이 비어 있습니다.');
+      return;
+    }
+
+    adsGot[promo] = { status: 'loading', rows: [], notes: [], range: range };
+    render();
+
+    const notes = [];
+    Promise.all(spots.map((one) => askSheet({ action: `${one.source}Creatives`,
+      account: one.account, adset: one.adset, since: range.since, until: range.until })
+      .then((found) => (found.creatives || []).map((each) => ({ ...each, sourceName: one.sourceName })))
+      .catch((reason) => {
+        notes.push(`${one.sourceName} · ${one.name} — ${reason.message}`);
+        return [];
+      }))).then((packs) => {
+      const rows = packs.reduce((into, each) => into.concat(each), []);
+      adsGot[promo] = { status: 'ready', rows: rows, notes: notes, range: range };
+      render();
+    });
+  };
+
+  const adsBlock = (promo) => {
+    const pack = adsGot[promo];
+    if (!pack) return '<p class="perf-note">누르면 매체에 물어봅니다 (몇 초 걸립니다).</p>';
+    if (pack.status === 'loading') return '<p class="perf-note">매체에서 받는 중… (몇 초 걸립니다)</p>';
+    const shown = pack.rows.slice()
+      .sort((a, b) => (Number(b.spend) || 0) - (Number(a.spend) || 0)).slice(0, 36);
+    const notes = pack.notes.map((one) => `<p class="perf-note bg-note-bad">${escape(one)}</p>`).join('');
+    if (!shown.length) {
+      return `${notes}<p class="perf-note">받아 온 소재가 없습니다 (그 기간에 돈 소재가 없거나, 매체가 소재를 주지 않습니다).</p>`;
+    }
+    return `${notes}<div class="tr-cuts">${shown.map((one) => `<figure class="tr-cut">
+      ${one.thumbnail ? `<img src="${escape(one.thumbnail)}" alt="" loading="lazy">` : '<span class="tr-cut-none">미리보기 없음</span>'}
+      <figcaption>
+        <b>${escape(one.name || one.id)}</b>
+        <small>${escape(one.sourceName || '')}</small>
+        <em>${money(one.spend)} · 전환 ${one.purchase ? num(one.purchase) : 0}
+          · ROAS ${one.spend ? perfRoas(ratio(one.revenue, one.spend) || 0) : dash}</em>
+      </figcaption>
+    </figure>`).join('')}</div>`;
   };
 
   const detailCard = (row, alarm) => {
@@ -13614,6 +13754,14 @@ if (eventReport) {
       ${phaseTable(promo, alarm)}
       <h5 class="er-h">단계별 매체성과 <small>매체를 누르면 캠페인까지 펼칩니다</small></h5>
       ${mediaTable(row.id, promo, alarm)}
+      <h5 class="er-h">발행 소재
+        <small>파일에 실린 번호로 매체에 그때 물어봅니다 (몇 초 걸립니다)</small>
+        <button type="button" class="er-ads-go" data-er="ads" data-channel="${escape(promo)}"
+          data-row="${escape(row.id)}">${openAds === promo ? '접기' : '소재 보기'}</button>
+        ${openAds === promo && adsGot[promo] && adsGot[promo].status === 'ready'
+    ? `<button type="button" class="er-ads-go" data-er="adsRedo" data-channel="${escape(promo)}"
+        data-row="${escape(row.id)}">다시 묻기</button>` : ''}</h5>
+      ${openAds === promo ? adsBlock(promo) : ''}
     </div>`;
   };
 
@@ -13745,6 +13893,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     fresh = false;
     restoreFiles();     // 다른 화면에서 저장한 파일이 있으면 그때 따라온다
     if (!trendGot) readTrend();   // 담아 둔 적어 둔 값 (새 값이 오면 바뀐다)
+    readNoBrand();                // 브검을 뺀 채로 보던 행사들
     /* 담아 둔 판이 있으면 **먼저 그린다.** 시트를 기다리는 몇 초 동안 빈 화면을
        보지 않아도 되고, 대개 그 값이 이미 맞다 (다르면 곧 바뀐다). */
     const kept = readKept(month);
@@ -13828,6 +13977,11 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       putTyped(promo, one, null);
       return;
     }
+    if (what === 'nobrand') {
+      setNoBrand(hit.dataset.channel, hit.checked);
+      render();   // 종합결과가 그 자리에서 다시 셈해진다
+      return;
+    }
     if (what === 'typed' || what === 'alarm') {
       const promo = hit.dataset.channel;
       const one = { ...typedOf(promo) };
@@ -13893,9 +14047,18 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       document.querySelector('[data-view="월별 예산"]')?.click();
       return;
     }
+    if (what === 'ads' || what === 'adsRedo') {
+      const promo = hit.dataset.channel;
+      const line = allPlanRows().filter((one) => String(one.id) === hit.dataset.row)[0] || null;
+      if (what === 'ads' && openAds === promo) { openAds = ''; render(); return; }
+      openAds = promo;
+      askCreatives(promo, line, what === 'adsRedo');
+      render();
+      return;
+    }
     // 적는 칸 · 파일 단추를 눌러도 줄이 접히지 않게
     if (what === 'skip' || what === 'typed' || what === 'alarm' || what === 'phase'
-      || what === 'one' || what === 'file') return;
+      || what === 'nobrand' || what === 'one' || what === 'file') return;
     if (what === 'media') {
       openMedia = openMedia === hit.dataset.key ? '' : hit.dataset.key;
       render();
@@ -13903,7 +14066,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     }
     if (what === 'pick') {
       open = open === hit.dataset.row ? '' : hit.dataset.row;
-      openMedia = '';   // 다른 줄을 펼치면 매체도 닫는다
+      openMedia = '';   // 다른 줄을 펼치면 매체 · 소재도 닫는다
+      openAds = '';
       render();
     }
   });
