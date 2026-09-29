@@ -1925,3 +1925,9 @@ html.is-gated,html.is-gated body{overflow:hidden}
 /* 달성률 — 짠 것보다 더 썼으면 표를 낸다 */
 .er-rate{color:#6f6f68}
 .er-rate.is-over{color:#c0392b;font-weight:700}
+
+/* 전매체 — 갈라 받기 단추 · 행사별 결과의 합침 알림 */
+.perf-files{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
+.perf-files small{margin-right:2px;font-size:10.5px;color:#a5a49f}
+.perf-files .tool-copy-all{padding:4px 9px;font-size:11px}
+.er-merge{margin-bottom:8px}

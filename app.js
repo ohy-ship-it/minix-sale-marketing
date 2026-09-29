@@ -9771,9 +9771,53 @@ if (mediaPerformance) {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const salesDownload = () => jsonDownload(
-    `세일즈용_${(crossFor || '검색').replace(/[\\/:*?"<>|]/g, '')}.json`, salesPayload(),
-  );
+  /* ── 파일을 갈라 받는다 ─────────────────────────────────────────
+     한 파일에 다 담아 주면 받는 쪽에서 다시 갈라야 한다. 자주 쓰는 갈래로 미리 나눈다:
+       단계통합   사전 · 당일 · 사후 · 상시를 한 파일에 (지금까지의 세일즈용 파일과 같다)
+       사전 · 당일 · 사후   그 단계만
+       브랜드검색  네이버 브랜드검색 줄만 (정액이라 따로 떼어 보는 일이 많다)
+
+     **여러 개를 받아 행사별 결과에 같이 넣어도 된다.** 받는 쪽이 같은 단계 · 같은
+     기간의 같은 광고그룹을 한 번만 세도록 해 두었다 (단계통합 + 사전 을 같이 넣어도
+     광고비가 두 배가 되지 않는다). */
+  const FILE_KINDS = ['단계통합', '사전', '당일', '사후', BRAND_SEARCH];
+  const isBrandRow = (one) => String(one && one.source) === 'naverSa';
+
+  const crossPayload = (kind) => {
+    const base = salesPayload();
+    if (!kind || kind === '단계통합') return base;
+    if (kind === BRAND_SEARCH) {
+      const mine = (rows) => (rows || []).filter(isBrandRow);
+      return { ...base, pick: kind,
+        note: `${base.note} 네이버 브랜드검색 줄만 담았습니다.`,
+        searched: mine(base.searched),
+        phases: base.phases.map((one) => ({ ...one, rows: mine(one.rows) }))
+          .filter((one) => one.rows.length) };
+    }
+    /* 한 단계만 담을 때는 조회 기간 줄(searched) 을 빼 둔다 — 그것까지 담으면
+       받는 쪽에서 그 단계와 조회 기간이 겹쳐 같은 광고비가 두 번 보인다. */
+    return { ...base, pick: kind,
+      note: `${base.note} '${kind}' 단계만 담았습니다.`,
+      searched: [],
+      phases: base.phases.filter((one) => one.name === kind) };
+  };
+
+  // 그 갈래로 받을 것이 있나 (없는 단추는 눌러도 빈 파일만 나온다)
+  const crossHas = (kind) => {
+    if (!kind || kind === '단계통합') return !!crossFlat().length;
+    if (kind === BRAND_SEARCH) {
+      return crossFlat().some((one) => isBrandRow(salesRow(one.key, one.row)));
+    }
+    return phaseDone().indexOf(kind) >= 0;
+  };
+
+  const crossFileName = (kind) => {
+    const period = currentRange();
+    return `전매체_${safeName(crossFor || '검색')}_${safeName(kind || '단계통합')}`
+      + `_${period.since}_${period.until}.json`;
+  };
+
+  const salesDownload = (kind) => jsonDownload(crossFileName(kind), crossPayload(kind));
 
   const mixCard = () => {
     const all = productFiles();
@@ -9991,9 +10035,12 @@ if (mediaPerformance) {
         <div class="tool-list-actions">
           <button type="button" class="tool-copy-all" data-perf="cross-excel"${found ? '' : ' disabled'}>
             <i data-lucide="sheet"></i>엑셀 받기</button>
-          <button type="button" class="tool-copy-all" data-perf="cross-sales"${found ? '' : ' disabled'}
-            title="세일즈 워크스페이스 '행사별 결과 → 매체결과' 에 올리는 파일입니다 (우리 화면과 똑같이 보입니다)">
-            <i data-lucide="share-2"></i>세일즈용 파일</button>
+          <span class="perf-files"><small>파일 받기</small>
+            ${FILE_KINDS.map((kind) => `<button type="button" class="tool-copy-all"
+              data-perf="cross-file" data-kind="${escapeHtml(kind)}"${crossHas(kind) ? '' : ' disabled'}
+              title="${crossHas(kind) ? `${escapeHtml(kind)} 파일을 받습니다 — 행사별 결과 · 판매채널 추이에 그대로 붙일 수 있습니다`
+    : `${escapeHtml(kind)} 로 받을 줄이 없습니다`}">
+              <i data-lucide="download"></i>${escapeHtml(kind)}</button>`).join('')}</span>
         </div>
       </div>
       <div class="perf-filter perf-cross-prod">
@@ -10463,6 +10510,8 @@ if (mediaPerformance) {
       else loadAccounts();
       return;
     }
+    const fileGo = event.target.closest('[data-perf="cross-file"]');
+    if (fileGo) { salesDownload(fileGo.dataset.kind); return; }
     if (event.target.closest('[data-perf="cross-sales"]')) { salesDownload(); return; }
     if (event.target.closest('[data-perf="cross-excel"]')) {
       const period = currentRange();
@@ -13270,14 +13319,33 @@ if (eventReport) {
       rows: paid(own.length ? rowsIn(one.body) : rowsIn(one.body).filter((row) => mineRow(row, channel))),
     })).sort((a, b) => String(a.range.since).localeCompare(String(b.range.since)));
   };
-  const rowsFor = (channel) => packsOf(channel).reduce((all, one) => all.concat(one.rows), []);
 
-  /* 파일마다 단계가 따로 적혀 있으므로, 붙인 파일을 모두 훑어 단계 이름으로 모은다
-     (주차별로 여러 개를 붙였으면 같은 단계끼리 합쳐진다). */
+  /* ── 파일 여러 개를 하나로 합친다 ────────────────────────────────
+     파일을 갈라 받을 수 있게 해 두었으니 (단계통합 · 사전 · 당일 · 사후 · 브랜드검색),
+     그 여럿을 한꺼번에 붙이는 일이 생긴다. 그러면 같은 줄이 두 파일에 다 들어 있다 —
+     단계통합의 사전 줄과 사전 파일의 그 줄은 **같은 줄**이다.
+
+     그래서 '단계 이름 · 그 단계의 기간 · 매체 · 계정 · 광고그룹' 이 같으면 한 번만 센다.
+     기간을 열쇠에 넣는 까닭: 주차마다 따로 받아 붙이면 같은 광고그룹이 여러 번 나오는데,
+     그건 **다른 기간의 다른 광고비**라 더해야 맞다 (겹친 것이 아니다).
+
+     번호가 없는 옛 파일은 광고그룹 이름으로 가린다 — 이름도 없으면 겹친 줄을 못 가려
+     그대로 둔다 (조용히 지우는 것보다 낫다).
+
+     합친 뒤에는 몇 줄을 겹쳐 세지 않았는지 화면에 적어 준다. 숫자가 갑자기 줄면
+     사람은 어딘가 잘못된 줄 알기 때문이다. */
+  const rowMark = (phase, row) => [phase.name, phase.since, phase.until,
+    row.source, row.account, row.id || row.adset].join('|');
+
+  let dupDrop = 0;         // 이번에 겹쳐서 안 센 줄 수 (화면에 적는다)
+
+  /* 붙인 파일을 모두 훑어 단계별로 모은다. 파일이 하나든 다섯이든 같은 길이다. */
   const phasePacks = (channel) => {
     const own = byChannel[channel] || [];
     const mine = own.length ? own : files;
     const bucket = {};
+    const seen = {};
+    let dropped = 0;
     mine.forEach((file) => {
       phasesIn(file.body).forEach((each) => {
         const rows = paid(own.length ? (each.rows || [])
@@ -13288,15 +13356,39 @@ if (eventReport) {
         const one = bucket[name];
         if (each.since && (!one.since || each.since < one.since)) one.since = each.since;
         if (each.until && (!one.until || each.until > one.until)) one.until = each.until;
-        one.rows = one.rows.concat(rows);
+        rows.forEach((row) => {
+          const mark = rowMark({ name: name, since: each.since, until: each.until }, row);
+          if (row.id || row.adset) {
+            if (seen[mark]) { dropped += 1; return; }   // 다른 파일에 있던 그 줄이다
+            seen[mark] = true;
+          }
+          one.rows.push(row);
+        });
       });
     });
+    dupDrop = dropped;
     return Object.keys(bucket).sort((a, b) => {
       const one = PHASE_ORDER.indexOf(a);
       const two = PHASE_ORDER.indexOf(b);
       return (one < 0 ? 99 : one) - (two < 0 ? 99 : two);
     }).map((name) => bucket[name]);
   };
+
+  // 합친 줄 전체 (매체별 · 집행 광고비 · 소재 묻기가 같이 쓴다)
+  const rowsFor = (channel) => phasePacks(channel)
+    .reduce((all, one) => all.concat(one.rows), []);
+
+  // 붙인 파일이 몇 개이고 몇 줄을 겹쳐 세지 않았나 (펼친 판 맨 위에 적는다)
+  const mergeNote = (channel) => {
+    const own = byChannel[channel] || [];
+    const many = own.length || files.length;
+    if (many < 2) return '';
+    rowsFor(channel);   // dupDrop 을 채운다
+    return `<p class="perf-note er-merge">파일 <b>${num(many)}개</b>를 합쳤습니다.
+      ${dupDrop ? `같은 단계 · 같은 기간의 같은 광고그룹 <b>${num(dupDrop)}줄</b>은 겹쳐 있어 한 번만 셌습니다.`
+    : '겹치는 줄은 없었습니다.'}</p>`;
+  };
+
 
   /* 판매량 — 행사별 결과가 세는 그 값(구매 수)이다.
      conv(= 전매체의 '결과') 는 그 줄의 **목표 전환**이라 줄마다 뜻이 다르다 —
@@ -13753,6 +13845,7 @@ if (eventReport) {
     }
     const twins = twinsOf(promo);
     return `<div class="er-detail">
+      ${mergeNote(promo)}
       ${twins.length > 1 ? `<p class="perf-note">이 달에 <b>${escape(promo)}</b> 로 적힌 줄이
         ${num(twins.length)}개입니다 (${escape(twins.map((one) => one.sku || '(SKU 없음)').join(' · '))}).
         전매체 파일에는 SKU 가 없어 <b>판매채널 단위로</b> 셉니다 — 아래 숫자는 그 줄들을 합친 값입니다.</p>` : ''}
