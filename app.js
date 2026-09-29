@@ -13080,7 +13080,39 @@ if (eventReport) {
 
   const today = new Date();
   const thisMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-  month = thisMonth;
+
+  /* ── 기다리지 않게 하는 세 가지 ──────────────────────────────────
+     이 웹앱은 팀이 실행 줄 하나를 같이 쓴다. 한 번 다녀오는 데만 1.5~4초가 걸려서,
+     **요청 수가 곧 기다리는 시간**이다. 처음에는 네 번 다녀왔다 —
+       ① 이번 달 예산 ② 추이 → 더 늦은 달이 있으면 ③ 그 달 예산 ④ 추이 (또)
+     그래서 셋을 고쳤다:
+       · 지난번에 본 달을 적어 두고 **그 달로 먼저 연다** (②③④ 의 되풀이가 없어진다)
+       · 예산은 달마다 브라우저에 담아 두고 **먼저 그린다** (시트 값이 오면 바뀐다)
+       · 추이(적어 둔 값 · 매출채널 표)는 **달과 상관없는 값**이라 한 번만 받는다
+     담는 자리는 월별 예산과 같다 — 거기서 짜 두면 이 화면이 그대로 받아 쓴다. */
+  const LAST_KEY = 'minix-budget-last-month';
+  const keptKey = (want) => `minix-budget:${want}`;
+  const lastMonth = () => {
+    try {
+      const kept = String(window.localStorage.getItem(LAST_KEY) || '');
+      return /^\d{4}-\d{2}$/.test(kept) ? kept : '';
+    } catch { return ''; }
+  };
+  const keepLast = (want) => {
+    try { window.localStorage.setItem(LAST_KEY, want); } catch { /* 거들기다 */ }
+  };
+  const readKept = (want) => {
+    try {
+      const raw = window.localStorage.getItem(keptKey(want));
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) { return null; }   // 담아 두기는 거들기다. 안 되면 그냥 기다린다
+  };
+  const keepBudget = (want, budget) => {
+    try { window.localStorage.setItem(keptKey(want), JSON.stringify(budget)); } catch (error) { /* 거들기다 */ }
+  };
+
+  month = lastMonth() || thisMonth;
+  let fresh = false;        // 지금 보는 판이 시트에서 온 것인가 (아니면 담아 둔 옛 판)
 
   const monthName = (ym) => `${Number(String(ym).slice(0, 4))}년 ${Number(String(ym).slice(5, 7))}월`;
   const dayText = (value) => String(value || '').slice(5).replace('-', '/');
@@ -13301,7 +13333,62 @@ if (eventReport) {
   const preNum = (value) => (value === '' || value === null || value === undefined
     ? null : Number(value));
 
-  // ── 그리기 ──────────────────────────────────────────────────────
+  /* 적어 둔 값 · 매출채널 표는 **달과 상관없이 통째로** 온다 (모든 달이 한 번에).
+     그래서 달을 바꿀 때마다 다시 받을 이유가 없다 — 화면을 여는 길에 한 번만 받는다.
+     브라우저에도 담아 둔다. 다음에 열 때 그 값으로 바로 그리고, 새 값이 오면 바뀐다. */
+  const TREND_KEY = 'minix-event-trend-v1';
+  let trendGot = false;     // 이 화면에서 시트의 추이를 받았나
+
+  const useTrend = (trend) => {
+    manual = {};
+    (trend.manual || []).forEach((one) => {
+      manual[`${one.month}|${one.promo}`] = {
+        channel: String(one.channel || ''),
+        sales: one.sales === undefined || one.sales === null ? '' : one.sales,
+        rev: one.rev === undefined || one.rev === null ? '' : one.rev,
+        alarm: !!one.alarm,
+        ask: one.ask === undefined || one.ask === null ? '' : one.ask,
+        buy: one.buy === undefined || one.buy === null ? '' : one.buy,
+        sessions: one.sessions === undefined || one.sessions === null ? '' : one.sessions,
+        formIn: one.formIn === undefined || one.formIn === null ? '' : one.formIn,
+        phases: (one.phases && typeof one.phases === 'object') ? one.phases : {},
+      };
+    });
+    salesMap = trend.sales || [];
+    channelAds = trend.channelAds || [];
+  };
+
+  const readTrend = () => {
+    try {
+      const raw = window.localStorage.getItem(TREND_KEY);
+      const kept = raw ? JSON.parse(raw) : null;
+      if (!kept || typeof kept !== 'object') return false;
+      useTrend(kept);
+      return true;
+    } catch (error) { return false; }
+  };
+
+  const pullTrend = (again) => {
+    if (trendGot && !again) return;   // 이미 갖고 있다 (달을 바꿔도 같은 값이다)
+    askSheet({ action: 'budgetTrend' })
+      .then((trend) => {
+        trendGot = true;
+        useTrend(trend);
+        try {
+          window.localStorage.setItem(TREND_KEY, JSON.stringify({
+            manual: trend.manual || [], sales: trend.sales || [], channelAds: trend.channelAds || [],
+          }));
+        } catch (error) { /* 거들기다 */ }
+        if (status === 'ready') render();
+      })
+      .catch((reason) => {
+        // 적어 둔 값을 못 읽어도 예산 줄은 그대로 보여 준다 (거들기지 본체가 아니다)
+        error = `적어 둔 값을 읽지 못했습니다 — ${reason.message}`;
+        if (status === 'ready') render();
+      });
+  };
+
+  // ── 그리기 ─────────────────────────────────────────────────────
   const monthPick = () => `<select data-er="month">${(months.length ? months : [month])
     .slice().reverse().map((one) => `<option value="${escape(one)}"
       ${one === month ? 'selected' : ''}>${escape(monthName(one))}</option>`).join('')}</select>`;
@@ -13596,7 +13683,8 @@ if (eventReport) {
   }).join('')}</div>` : ''}
         <p class="perf-note${error ? ' bg-note-bad' : ''}">${error ? escape(error)
     : `${saved.at ? `월별 예산 마지막 저장 ${escape(new Date(saved.at).toLocaleString('ko-KR'))}${saved.by ? ` · ${escape(saved.by)}` : ''}`
-      : '아직 저장한 적이 없는 달입니다.'} · 붙인 파일과 적은 값은 <b>판매채널 추이</b>와 같은 자리를 씁니다.`}</p>
+      : '아직 저장한 적이 없는 달입니다.'} · 붙인 파일과 적은 값은 <b>판매채널 추이</b>와 같은 자리를 씁니다.
+${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니다 — 시트 값이 오면 바뀝니다'}`}</p>
         ${fileNote ? `<p class="perf-note">${fileNote}</p>` : ''}
       </div>
       <div class="tool-card">
@@ -13652,59 +13740,53 @@ if (eventReport) {
   });
 
   // ── 읽기 ────────────────────────────────────────────────────────
-  const load = () => {
-    status = 'loading';
+  const load = (again) => {
     error = '';
+    fresh = false;
     restoreFiles();     // 다른 화면에서 저장한 파일이 있으면 그때 따라온다
+    if (!trendGot) readTrend();   // 담아 둔 적어 둔 값 (새 값이 오면 바뀐다)
+    /* 담아 둔 판이 있으면 **먼저 그린다.** 시트를 기다리는 몇 초 동안 빈 화면을
+       보지 않아도 되고, 대개 그 값이 이미 맞다 (다르면 곧 바뀐다). */
+    const kept = readKept(month);
+    if (kept) {
+      plan = (kept.plan && typeof kept.plan === 'object') ? kept.plan : { skus: [], rows: [] };
+      saved = { at: kept.updatedAt || '', by: kept.updatedBy || '' };
+      status = 'ready';
+    } else {
+      status = 'loading';
+    }
     render();
-    const mine = month;
-    /* 예산(그 달의 줄)과 추이(적어 둔 값 · 매출채널 표)를 함께 읽는다.
-       추이 쪽은 서버가 담아 두므로 보통 곧바로 온다. 한쪽이 넘어져도 나머지는 그린다. */
-    Promise.all([
-      askSheet({ action: 'budgetGet', month }),
-      askSheet({ action: 'budgetTrend' }).catch((reason) => ({ trouble: reason.message })),
-    ]).then(([body, trend]) => {
-      if (mine !== month) return;      // 그새 다른 달로 옮겼다
-      months = body.months || [];
-      /* 처음 열 때는 **가장 늦게 짜 둔 달**을 편다 (월별 예산과 같은 규칙).
-         그 뒤에는 옮기지 않는다 — 안 그러면 지난달을 골라도 도로 튕겨 나온다. */
-      const newest = months.length ? months.slice().sort()[months.length - 1] : '';
-      if (opening) {
-        opening = false;
-        if (newest && newest !== month) { month = newest; load(); return; }
-      }
-      const found = body.budget || {};
-      plan = (found.plan && typeof found.plan === 'object') ? found.plan : { skus: [], rows: [] };
-      saved = { at: found.updatedAt || '', by: found.updatedBy || '' };
 
-      if (trend && !trend.trouble) {
-        manual = {};
-        (trend.manual || []).forEach((one) => {
-          manual[`${one.month}|${one.promo}`] = {
-            channel: String(one.channel || ''),
-            sales: one.sales === undefined || one.sales === null ? '' : one.sales,
-            rev: one.rev === undefined || one.rev === null ? '' : one.rev,
-            alarm: !!one.alarm,
-            ask: one.ask === undefined || one.ask === null ? '' : one.ask,
-            buy: one.buy === undefined || one.buy === null ? '' : one.buy,
-            sessions: one.sessions === undefined || one.sessions === null ? '' : one.sessions,
-            formIn: one.formIn === undefined || one.formIn === null ? '' : one.formIn,
-            phases: (one.phases && typeof one.phases === 'object') ? one.phases : {},
-          };
-        });
-        salesMap = trend.sales || [];
-        channelAds = trend.channelAds || [];
-      } else if (trend && trend.trouble) {
-        error = `적어 둔 값을 읽지 못했습니다 — ${trend.trouble}`;
-      }
-      status = 'ready';
-      render();
-    }).catch((reason) => {
-      if (mine !== month) return;
-      status = 'ready';
-      error = reason.message;
-      render();
-    });
+    const mine = month;
+    askSheet({ action: 'budgetGet', month })
+      .then((body) => {
+        if (mine !== month) return;      // 그새 다른 달로 옮겼다
+        months = body.months || [];
+        /* 처음 열 때는 **가장 늦게 짜 둔 달**을 편다 (월별 예산과 같은 규칙).
+           그 뒤에는 옮기지 않는다 — 안 그러면 지난달을 골라도 도로 튕겨 나온다.
+           지난번에 본 달로 먼저 열기 때문에 이 되풀이는 거의 일어나지 않는다. */
+        const newest = months.length ? months.slice().sort()[months.length - 1] : '';
+        if (newest) keepLast(newest);
+        if (opening) {
+          opening = false;
+          if (newest && newest !== month) { month = newest; load(); return; }
+        }
+        const found = body.budget || {};
+        plan = (found.plan && typeof found.plan === 'object') ? found.plan : { skus: [], rows: [] };
+        saved = { at: found.updatedAt || '', by: found.updatedBy || '' };
+        keepBudget(month, found);
+        fresh = true;
+        status = 'ready';
+        render();
+      })
+      .catch((reason) => {
+        if (mine !== month) return;
+        status = 'ready';
+        error = reason.message;
+        render();
+      });
+
+    pullTrend(again);   // 달과 상관없는 값이라 한 번만 (다시 읽기는 새로 받는다)
   };
 
   /* 한 줄을 통째로 보낸다. 칸 하나만 보내면 서버가 나머지를 읽어 와 다시 써야 하는데,
@@ -13791,7 +13873,7 @@ if (eventReport) {
     const hit = event.target.closest('[data-er]');
     if (!hit) return;
     const what = hit.dataset.er;
-    if (what === 'reload') { opening = false; load(); return; }
+    if (what === 'reload') { opening = false; load(true); return; }
     if (what === 'save') { saveFiles(); return; }
     if (what === 'drop') { files = []; fileNote = ''; open = ''; render(); return; }
     if (what === 'dropone') {
