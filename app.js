@@ -13454,6 +13454,7 @@ if (eventReport) {
     ? mediaOf(row).map((one) => `<span class="bg-kind is-on">${escape(one)}</span>`).join('')
     : dash}</td>
       <td class="perf-num bg-cost"><span${rowManual(row) ? ' class="is-manual" title="수기로 적은 금액입니다"' : ''}>${cost ? won(cost) : dash}</span></td>
+      <td class="perf-num er-rate${cost && used > cost ? ' is-over' : ''}">${cost ? perfPercent(used / cost) : dash}</td>
       <td class="perf-num bg-used">${used ? won(used) : dash}</td>
       ${got ? `<td class="perf-num">${money(got.spend)}</td>
         <td class="perf-num">${got.buy ? num(got.buy) : dash}</td>
@@ -13470,8 +13471,17 @@ if (eventReport) {
       ? `<tr class="er-more"><td colspan="${HEAD.length}">${detailCard(row, alarm)}</td></tr>` : ''}`;
   };
 
+  /* 달성률은 **광고비와 실사용비 사이**에 둔다 — 짠 돈과 나간 돈을 나란히 놓고
+     그 사이에서 바로 읽히게. 100% 를 넘으면 표를 낸다 (짠 것보다 더 썼다). */
   const HEAD = ['판매채널', '구분', '파트', '라이브일정', '광고기간', '목표수량', '목표 CPS',
-    '진행광고매체', '광고비', '실사용비', '집행 광고비', '판매량', 'ROAS', '파일'];
+    '진행광고매체', '광고비', '달성률', '실사용비', '집행 광고비', '판매량', 'ROAS', '파일'];
+  /* 이름만으로는 무엇을 무엇으로 나눈 값인지 알 수 없는 칸에 한 줄 적어 둔다.
+     (같은 표에 광고비 · 실사용비 · 집행 광고비가 나란히 있어 더 그렇다) */
+  const HEAD_NOTE = {
+    '달성률': '실사용비 ÷ 광고비',
+    '광고비': 'CPS×목표수량',
+    '집행 광고비': '붙인 파일',
+  };
   const HEAD_NUM_FROM = 5;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
   /* ── ① 종합결과 ────────────────────────────────────────────────
@@ -13878,7 +13888,8 @@ if (eventReport) {
         ${statBox('잔여', sum.cost || sum.used ? won(sum.cost - sum.used) : '—', '광고비 − 실사용비')}
       </div>
       <div class="tool-table-wrap"><table class="tool-table bg-table er-table">
-        <thead><tr>${HEAD.map((label, at) => `<th${at >= HEAD_NUM_FROM ? ' class="perf-num"' : ''}>${escape(label)}</th>`).join('')}</tr></thead>
+        <thead><tr>${HEAD.map((label, at) => `<th${at >= HEAD_NUM_FROM ? ' class="perf-num"' : ''}>${escape(label)}${HEAD_NOTE[label]
+    ? `<small>${escape(HEAD_NOTE[label])}</small>` : ''}</th>`).join('')}</tr></thead>
         <tbody>${rows.length ? rows.map(line).join('')
     : `<tr><td colspan="${HEAD.length}" class="bg-none">적어 둔 프로모션이 없습니다.</td></tr>`}</tbody>
       </table></div>

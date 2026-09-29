@@ -1832,7 +1832,7 @@ html.is-gated,html.is-gated body{overflow:hidden}
 /* ── 행사별 결과 ──────────────────────────────────────────────────
    줄을 누르면 아래로 펼친다. 판매채널 추이와 같은 모양을 쓴다 —
    두 화면이 같은 행사를 다루므로 눈에 다르게 보이면 안 된다. */
-.er-table{min-width:1720px}
+.er-table{min-width:1860px}
 .er-table th,.er-table td{white-space:nowrap}
 .er-table tbody tr.er-row{cursor:pointer}
 .er-table tbody tr.er-row:hover{background:#faf9f6}
@@ -1921,3 +1921,7 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .er-cat-name{display:flex;align-items:baseline;gap:7px;margin-bottom:6px;
   font:700 12.5px 'Noto Sans KR',sans-serif;color:#37352f}
 .er-cat-name small{font-weight:400;font-size:10.5px;color:#a5a49f}
+
+/* 달성률 — 짠 것보다 더 썼으면 표를 낸다 */
+.er-rate{color:#6f6f68}
+.er-rate.is-over{color:#c0392b;font-weight:700}
