@@ -13871,25 +13871,66 @@ if (eventReport) {
     });
   };
 
+  /* ── 소재 카드 ────────────────────────────────────────────────
+     **영상 소재는 눌러서 영상을 본다.** 미리보기만 열면 표지 그림 한 장이라,
+     무엇을 내보냈는지 알 수가 없다.
+       유튜브  구글 · 유튜브 소재는 11자 글자 번호다 → watch?v=
+       메타    숫자 번호다 → facebook.com/watch/?v=
+     영상이 아니거나 번호가 없으면 미리보기 그림을 연다 (지금까지와 같다).
+     네이버 GFA · 카카오는 영상 번호를 주지 않아 늘 그림이다. */
+  const adVideo = (one) => {
+    const id = String((one && one.video) || '').trim();
+    if (!id) return '';
+    if (/^\d{10,}$/.test(id)) return `https://www.facebook.com/watch/?v=${id}`;
+    if (/^[\w-]{11}$/.test(id)) return `https://www.youtube.com/watch?v=${id}`;
+    return '';
+  };
+  const adLink = (one) => adVideo(one) || String((one && one.thumbnail) || '');
+
+  /* 줄 세우기. 보이는 칸으로만 세운다 — 카드에 없는 값으로 세우면
+     왜 이 차례인지 알 수가 없다. */
+  const AD_SORTS = [
+    ['buy', '전환순', (one) => Number(one.purchase) || 0],
+    ['imp', '노출순', (one) => Number(one.impressions) || 0],
+    ['spend', '광고비순', (one) => Number(one.spend) || 0],
+    ['clk', '클릭순', (one) => Number(one.linkClicks || one.clicks) || 0],
+    ['roas', 'ROAS순', (one) => ((Number(one.spend) || 0) > 0
+      ? (Number(one.revenue) || 0) / Number(one.spend) : 0)],
+  ];
+  let adsSort = 'spend';
+
   const adsBlock = (promo) => {
     const pack = adsGot[promo];
     if (!pack) return '<p class="perf-note">누르면 매체에 물어봅니다 (몇 초 걸립니다).</p>';
     if (pack.status === 'loading') return '<p class="perf-note">매체에서 받는 중… (몇 초 걸립니다)</p>';
+    const pick = AD_SORTS.filter((one) => one[0] === adsSort)[0] || AD_SORTS[2];
     const shown = pack.rows.slice()
-      .sort((a, b) => (Number(b.spend) || 0) - (Number(a.spend) || 0)).slice(0, 36);
+      .sort((a, b) => pick[2](b) - pick[2](a)).slice(0, 36);
     const notes = pack.notes.map((one) => `<p class="perf-note bg-note-bad">${escape(one)}</p>`).join('');
     if (!shown.length) {
       return `${notes}<p class="perf-note">받아 온 소재가 없습니다 (그 기간에 돈 소재가 없거나, 매체가 소재를 주지 않습니다).</p>`;
     }
-    return `${notes}<div class="tr-cuts">${shown.map((one) => `<figure class="tr-cut">
-      ${one.thumbnail ? `<img src="${escape(one.thumbnail)}" alt="" loading="lazy">` : '<span class="tr-cut-none">미리보기 없음</span>'}
+    const bar = `<div class="er-sorts"><small>차례</small>
+      ${AD_SORTS.map(([key, name]) => `<button type="button" data-er="adsort" data-sort="${key}"
+        class="${key === adsSort ? 'is-on' : ''}">${escape(name)}</button>`).join('')}</div>`;
+    return `${notes}${bar}<div class="tr-cuts">${shown.map((one) => {
+    const link = adLink(one);
+    const video = adVideo(one);
+    const shot = one.thumbnail ? `<img src="${escape(one.thumbnail)}" alt="" loading="lazy">`
+      : `<span class="tr-cut-none">${video ? '영상 — 눌러서 봅니다' : '미리보기 없음'}</span>`;
+    return `<figure class="tr-cut${video ? ' is-video' : ''}">
+      ${link ? `<a href="${escape(link)}" target="_blank" rel="noopener"
+        title="${video ? '영상을 새 탭에서 엽니다' : '미리보기를 크게 봅니다'}">${shot}
+        ${video ? '<span class="tr-cut-play"><i data-lucide="play"></i>영상</span>' : ''}</a>` : shot}
       <figcaption>
         <b>${escape(one.name || one.id)}</b>
         <small>${escape(one.sourceName || '')}</small>
         <em>${money(one.spend)} · 전환 ${one.purchase ? num(one.purchase) : 0}
           · ROAS ${one.spend ? perfRoas(ratio(one.revenue, one.spend) || 0) : dash}</em>
+        <em class="tr-cut-more">노출 ${one.impressions ? num(one.impressions) : dash}
+          · 클릭 ${(one.linkClicks || one.clicks) ? num(one.linkClicks || one.clicks) : dash}</em>
       </figcaption>
-    </figure>`).join('')}</div>`;
+    </figure>`; }).join('')}</div>`;
   };
 
   const detailCard = (row, alarm) => {
@@ -14442,6 +14483,11 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       document.querySelector('[data-view="월별 예산"]')?.click();
       return;
     }
+    if (what === 'adsort') {
+      adsSort = hit.dataset.sort;
+      render();   // 받아 둔 것을 다시 세우기만 한다 (매체에 다시 묻지 않는다)
+      return;
+    }
     if (what === 'ads' || what === 'adsRedo') {
       const promo = hit.dataset.channel;
       const line = allPlanRows().filter((one) => String(one.id) === hit.dataset.row)[0] || null;
@@ -14453,6 +14499,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     }
     // 적는 칸 · 파일 단추를 눌러도 줄이 접히지 않게
     if (what === 'skip' || what === 'typed' || what === 'alarm' || what === 'phase'
+      || what === 'adsort'
       || what === 'nobrand' || what === 'one' || what === 'file') return;
     if (what === 'media') {
       openMedia = openMedia === hit.dataset.key ? '' : hit.dataset.key;

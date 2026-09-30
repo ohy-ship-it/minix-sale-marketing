@@ -1947,3 +1947,17 @@ html.is-gated,html.is-gated body{overflow:hidden}
 
 /* 올린 파일 지우기 — 되돌릴 수 없는 단추라 눈에 띄게 */
 .er-drop:hover{border-color:#e4b8b4;background:#fdf4f3;color:#c0392b}
+
+/* 발행 소재 — 줄 세우기 · 영상 소재 */
+.er-sorts{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin:2px 0 8px}
+.er-sorts small{margin-right:3px;font-size:10.5px;color:#a5a49f}
+.er-sorts button{border:1px solid var(--line,#e6e5e0);border-radius:6px;background:#fff;
+  padding:4px 10px;font:600 11px 'Noto Sans KR',sans-serif;color:#6f6f68;cursor:pointer}
+.er-sorts button:hover{border-color:#c9c8c1;color:#37352f}
+.er-sorts button.is-on{border-color:#2f2f2b;background:#2f2f2b;color:#fff}
+.tr-cut a{display:block;position:relative}
+.tr-cut-play{position:absolute;left:6px;bottom:6px;display:inline-flex;align-items:center;gap:3px;
+  padding:3px 7px;border-radius:999px;background:rgba(0,0,0,.62);color:#fff;font-size:10px;font-weight:700}
+.tr-cut-play svg{width:11px}
+.tr-cut.is-video img{filter:brightness(.94)}
+.tr-cut-more{color:#a5a49f}
