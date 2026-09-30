@@ -1710,6 +1710,7 @@ function handleAction_(payload) {
     if (payload.action === 'kakaoAccounts') return { ok: true, accounts: kakaoAccounts_() };
     if (payload.action === 'kakaoReport') return kakaoReport_(payload);
     if (payload.action === 'metaCreatives') return metaCreatives_(payload);
+    if (payload.action === 'manyCreatives') return manyCreatives_(payload);
     if (payload.action === 'googleCreatives') return adsCreatives_(payload);
     if (payload.action === 'kakaoCreatives') return kakaoCreatives_(payload);
     if (payload.action === 'metaBreakdown') return metaBreakdown_(payload);
@@ -3336,6 +3337,99 @@ function checkGoogleAds() {
   return message;
 }
 
+/* ── 여러 광고그룹의 소재를 한 번에 ───────────────────────────────────
+   행사별 결과의 [소재 보기] 는 붙인 파일에 실린 광고그룹마다 하나씩 물었다.
+   한 행사에 광고그룹이 열댓 개면 이 웹앱을 열댓 번 다녀오는 셈인데,
+   **아무 일도 안 하는 왕복 하나가 1.5~4초**다 (직접 재 봤다). 기다림의 대부분이
+   매체가 아니라 그 왕복이었다.
+
+   그래서 한 번에 받는다. 같은 매체 · 같은 계정끼리 묶어 **계정마다 한 번만**
+   매체에 묻는다 — 광고그룹 열두 개가 한 계정이면 매체 호출도 열둘에서 하나가 된다.
+   카카오처럼 보고서에 5.5초 간격이 걸린 매체는 그 간격도 한 번으로 끝난다.
+
+   한 매체가 넘어져도 나머지는 그대로 준다 (까닭은 note 에 적어 올린다).        */
+var MANY_CREATIVE_JOBS = 60;     // 한 번에 받을 광고그룹 수 (6분 제한 안에 들게)
+
+// payload.adsets(목록) 또는 payload.adset(하나) 을 같은 모양으로 편다
+function manyIds_(payload) {
+  var raw = (payload && payload.adsets) || null;
+  if (!raw || Object.prototype.toString.call(raw) !== '[object Array]') return [];
+  var out = [];
+  raw.forEach(function (one) {
+    var id = String(one === null || one === undefined ? '' : one).trim();
+    if (id && out.indexOf(id) < 0) out.push(id);
+  });
+  return out;
+}
+
+// 고른 id 만 남긴다. 매체가 거르기를 못 알아들어도 엉뚱한 줄이 섞이지 않게 하는 빗장이다.
+function manyKeep_(rows, ids, field) {
+  if (!ids.length) return rows;
+  var want = {};
+  ids.forEach(function (id) { want[String(id)] = true; });
+  return rows.filter(function (row) { return !!want[String(row && row[field])]; });
+}
+
+function manyCreatives_(payload) {
+  var jobs = (payload && payload.jobs) || [];
+  if (!jobs.length) throw new Error('물어볼 광고그룹이 없습니다.');
+  var since = String((payload && payload.since) || '');
+  var until = String((payload && payload.until) || '');
+
+  // 매체 × 계정으로 묶는다 (한 묶음이 매체 호출 한 번이다)
+  var packs = {};
+  var order = [];
+  var asked = 0;
+  jobs.forEach(function (one) {
+    var source = String((one && one.source) || '').trim();
+    var account = String((one && one.account) || '').trim();
+    var adset = String((one && one.adset) || '').trim();
+    if (!source || !adset) return;
+    if (asked >= MANY_CREATIVE_JOBS) return;
+    var key = source + '|' + account;
+    if (!packs[key]) {
+      packs[key] = { source: source, account: account, adsets: [],
+        name: String((one && one.sourceName) || source) };
+      order.push(key);
+    }
+    if (packs[key].adsets.indexOf(adset) < 0) { packs[key].adsets.push(adset); asked += 1; }
+  });
+
+  var rows = [];
+  var notes = [];
+  if (asked < jobs.length) {
+    notes.push('광고그룹이 너무 많아 앞의 ' + asked + '개만 물었습니다 (' + jobs.length + '개 중).');
+  }
+
+  order.forEach(function (key) {
+    var pack = packs[key];
+    var ask = { account: pack.account, adsets: pack.adsets,
+      since: since, until: until, refresh: !!(payload && payload.refresh),
+      attribution: payload && payload.attribution };
+    var body = null;
+    try {
+      if (pack.source === 'meta') body = metaCreatives_(ask);
+      else if (pack.source === 'google') body = adsCreatives_(ask);
+      else if (pack.source === 'kakao') body = kakaoCreatives_(ask);
+      else if (pack.source === 'naver') body = naverCreatives_(ask);
+      else if (pack.source === 'naverSa') body = naverSaCreatives_(ask);
+      else { notes.push(pack.name + ' — 모르는 매체입니다: ' + pack.source); return; }
+    } catch (error) {
+      notes.push(pack.name + ' — ' + String((error && error.message) || error));
+      return;
+    }
+    ((body && body.creatives) || []).forEach(function (one) {
+      one.sourceName = pack.name;
+      one.source = pack.source;
+      rows.push(one);
+    });
+    if (body && body.notice) notes.push(pack.name + ' — ' + body.notice);
+  });
+
+  return { ok: true, rows: rows, notes: notes, packs: order.length, adsets: asked,
+    range: { since: since, until: until }, fetchedAt: new Date().toISOString() };
+}
+
 // ── 소재별 결과 ────────────────────────────────────────────────────
 // 캠페인 · 광고그룹을 고르면 그 안의 광고(소재)를 성과와 함께 돌려준다.
 // 두 매체가 같은 모양으로 답한다: { id, name, thumbnail, spend, impressions, clicks, linkClicks, results … }
@@ -3389,11 +3483,15 @@ function metaCreatives_(payload) {
   }
 
   // 고른 자리로 좁혀 묻는다. 광고그룹 > 캠페인 > 계정 차례.
-  var scope = String(payload.adset || payload.campaign || account).trim();
+  /* 광고그룹을 여럿 받으면 **계정에 한 번만** 묻고 거르기(filtering)로 좁힌다.
+     하나씩 물으면 그 수만큼 메타를 다녀온다. */
+  var many = manyIds_(payload);
+  var scope = many.length ? account
+    : String(payload.adset || payload.campaign || account).trim();
   var window = META_WINDOWS.indexOf(String(payload.attribution || '')) >= 0
     ? String(payload.attribution) : '';
   var cache = CacheService.getScriptCache();
-  var key = ['metaAds', scope, since, until, window || 'default'].join('|');
+  var key = ['metaAds', scope, many.join(','), since, until, window || 'default'].join('|');
   if (!payload.refresh) {
     var hit = cacheGet_(cache, key);
     if (hit) {
@@ -3404,7 +3502,7 @@ function metaCreatives_(payload) {
   }
 
   var range = JSON.stringify({ since: since, until: until });
-  var rows = graphAll_('/' + scope + '/insights', {
+  var ask = {
     level: 'ad',
     fields: 'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,'
       + 'reach,frequency,'
@@ -3414,7 +3512,14 @@ function metaCreatives_(payload) {
     time_range: range,
     limit: 200,
     use_unified_attribution_setting: 'true', action_attribution_windows: META_WINDOWS.join(',')
-  }, 8);
+  };
+  if (many.length) {
+    ask.filtering = JSON.stringify([{ field: 'adset.id', operator: 'IN', value: many }]);
+  }
+  var rows = graphAll_('/' + scope + '/insights', ask, 8);
+  /* 거르기를 못 알아들었을 때를 대비해 여기서 한 번 더 거른다 —
+     조용히 계정 전체가 오면 남의 행사 소재가 섞인다. */
+  rows = manyKeep_(rows, many, 'adset_id');
 
   var creatives = rows.map(function (row) {
     return metrics_(row, {
@@ -3561,8 +3666,12 @@ function adsCreatives_(payload) {
 
   var campaign = String(payload.campaign || '').replace(/[^0-9]/g, '');
   var adGroup = String(payload.adset || '').replace(/[^0-9]/g, '');
+  // 광고그룹을 여럿 받으면 한 질의로 묶는다 (GAQL 의 IN)
+  var many = manyIds_(payload).map(function (one) {
+    return String(one).replace(/[^0-9]/g, '');
+  }).filter(function (one) { return !!one; });
   var cache = CacheService.getScriptCache();
-  var key = ['adsAds', customer, campaign, adGroup, since, until].join('|');
+  var key = ['adsAds', customer, campaign, adGroup, many.join(','), since, until].join('|');
   if (!payload.refresh) {
     var hit = cacheGet_(cache, key);
     if (hit) {
@@ -3574,7 +3683,8 @@ function adsCreatives_(payload) {
 
   var where = ' WHERE segments.date BETWEEN "' + since + '" AND "' + until + '"'
     + (campaign ? ' AND campaign.id = ' + campaign : '')
-    + (adGroup ? ' AND ad_group.id = ' + adGroup : '');
+    + (many.length ? ' AND ad_group.id IN (' + many.join(',') + ')'
+      : (adGroup ? ' AND ad_group.id = ' + adGroup : ''));
 
   // 그 기간에 실제로 돈 광고만 본다. (노출 0 인 줄까지 오면 목록이 빈 카드로 덮인다)
   var rows = adsQuery_(customer,
@@ -4328,9 +4438,14 @@ function kakaoCreatives_(payload) {
 
   var campaign = String(payload.campaign || '').replace(/[^0-9]/g, '');
   var adGroup = String(payload.adset || '').replace(/[^0-9]/g, '');
+  // 광고그룹을 여럿 받으면 한 번에 본다 (보고서는 원래 40개까지 묶어 묻는다)
+  var many = manyIds_(payload);
+  var wantMany = {};
+  many.forEach(function (one) { wantMany[String(one)] = true; });
   var window = kakaoWindow_(payload.attribution);
   var cache = CacheService.getScriptCache();
-  var key = ['kakaoAds', account, campaign, adGroup, when.since, when.until, window].join('|');
+  var key = ['kakaoAds', account, campaign, adGroup, many.join(','),
+    when.since, when.until, window].join('|');
   if (!payload.refresh) {
     var hit = cacheGet_(cache, key);
     if (hit) {
@@ -4356,6 +4471,7 @@ function kakaoCreatives_(payload) {
   var picked = report.adsets.filter(function (row) {
     if (crmCampaign[row.campaignId]) return false;
     if (row.message) return false;
+    if (many.length) return !!wantMany[String(row.id)];
     if (adGroup) return row.id === adGroup;
     if (campaign) return row.campaignId === campaign;
     return true;
@@ -5609,10 +5725,15 @@ function naverCreatives_(payload) {
   var when = naverDates_(payload);
   var campaign = String(payload.campaign || '').replace(/[^0-9]/g, '');
   var adset = String(payload.adset || '').replace(/[^0-9]/g, '');
+  // 광고그룹을 여럿 받으면 시트를 한 번만 훑어 그것들을 다 준다
+  var many = manyIds_(payload);
+  var wantMany = {};
+  many.forEach(function (one) { wantMany[String(one)] = true; });
 
   // 성과 쪽과 같이 담아 둔다. 여기도 시트를 통째로 훑어 10초쯤 걸린다.
   var cache = CacheService.getScriptCache();
-  var key = ['naverAds', naverStamp_(false), account, campaign, adset, when.since, when.until].join('|');
+  var key = ['naverAds', naverStamp_(false), account, campaign, adset, many.join(','),
+    when.since, when.until].join('|');
   if (!payload.refresh) {
     var hit = cacheGet_(cache, key);
     if (hit) {
@@ -5631,6 +5752,7 @@ function naverCreatives_(payload) {
     row.video = '';   // GFA 소재는 이미지만 적재한다 (동영상 소재도 표지 이미지가 온다)
     return row;
   }).filter(function (row) {
+    if (many.length) return !!wantMany[String(row.adsetId)];
     if (adset) return row.adsetId === adset;
     if (campaign) return row.campaignId === campaign;
     return true;
@@ -6512,6 +6634,10 @@ function naverSaCreatives_(payload) {
   var got = saGather_(when.since, when.until, !!payload.refresh);
   var wantGroup = String((payload && payload.adset) || '');
   var wantCampaign = String((payload && payload.campaign) || '');
+  // 광고그룹을 여럿 받으면 한 번에 본다 (짜임새는 이미 담아 둔 것을 쓴다)
+  var many = manyIds_(payload);
+  var wantMany = {};
+  many.forEach(function (one) { wantMany[String(one)] = true; });
 
   var groupOf = {};
   got.groups.forEach(function (one) { groupOf[one.id] = one; });
@@ -6553,6 +6679,7 @@ function naverSaCreatives_(payload) {
 
   rows = saSort_(rows.filter(function (row) {
     if (!all && !saAlive_(row)) return false;   // 몇 해 전에 멈춘 소재는 빼고 본다
+    if (many.length) return !!wantMany[String(row.adsetId)];
     // 매체별 성과에서 넘어올 때는 광고그룹(= 그쪽 화면의 캠페인) 번호로 걸러 준다
     if (wantGroup) return row.adsetId === wantGroup;
     if (wantCampaign) return row.adsetId === wantCampaign || row.campaignId === wantCampaign;

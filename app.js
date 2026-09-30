@@ -13813,7 +13813,12 @@ if (eventReport) {
      그래서 파일이 작게 유지되고 미리보기도 늘 최신이다.
 
      대신 매체를 다녀오느라 몇 초 걸린다 — 그래서 **누를 때만** 묻고,
-     한 번 받아 둔 것은 다시 묻지 않는다 ([다시 묻기] 를 누르면 새로 받는다). */
+     한 번 받아 둔 것은 다시 묻지 않는다 ([다시 묻기] 를 누르면 새로 받는다).
+
+     묻는 것은 **한 번**이다. 예전에는 광고그룹마다 따로 물었는데, 한 행사에
+     광고그룹이 열댓 개면 이 웹앱을 열댓 번 다녀왔다 — 아무 일도 안 하는 왕복 하나가
+     1.5~4초라 기다림의 대부분이 거기였다. 이제 목록을 통째로 보내면 시트 쪽에서
+     같은 매체 · 같은 계정끼리 묶어 **계정마다 한 번만** 매체에 묻는다. */
   const spotsOf = (promo) => {
     const out = [];
     rowsFor(promo).forEach((row) => {
@@ -13861,10 +13866,33 @@ if (eventReport) {
       return;
     }
 
-    adsGot[promo] = { status: 'loading', rows: [], notes: [], range: range };
+    adsGot[promo] = { status: 'loading', rows: [], notes: [], range: range,
+      spots: spots.length };
     render();
 
-    const notes = [];
+    const done = (rows, notes) => {
+      if (!adsGot[promo] || adsGot[promo].range !== range) return;   // 그 사이 다른 것을 눌렀다
+      adsGot[promo] = { status: 'ready', rows: rows, notes: notes, range: range };
+      render();
+    };
+
+    askSheet({ action: 'manyCreatives', since: range.since, until: range.until,
+      refresh: !!again,
+      jobs: spots.map((one) => ({ source: one.source, sourceName: one.sourceName,
+        account: one.account, adset: one.adset })) })
+      .then((body) => done(body.rows || [], body.notes || []))
+      .catch((reason) => {
+        /* 시트가 아직 옛 판이면 이 길을 모른다. 그때는 예전처럼 하나씩 묻는다 —
+           느릴 뿐 답은 같다. 배포하고 나면 저절로 빠른 길로 간다. */
+        if (/모르는 요청/.test(reason.message)) { askOneByOne(promo, spots, range, done); return; }
+        done([], [reason.message]);
+      });
+  };
+
+  /* 옛 길 — 광고그룹마다 하나씩 묻는다. 시트를 새 판으로 배포하기 전까지의 길이다. */
+  const askOneByOne = (promo, spots, range, done) => {
+    const notes = ['시트가 아직 옛 판이라 광고그룹마다 따로 물었습니다 —'
+      + ' Apps Script 를 새 버전으로 다시 배포하면 한 번에 받아 훨씬 빠릅니다.'];
     Promise.all(spots.map((one) => askSheet({ action: `${one.source}Creatives`,
       account: one.account, adset: one.adset, since: range.since, until: range.until })
       .then((found) => (found.creatives || []).map((each) => ({ ...each, sourceName: one.sourceName })))
@@ -13872,9 +13900,7 @@ if (eventReport) {
         notes.push(`${one.sourceName} · ${one.name} — ${reason.message}`);
         return [];
       }))).then((packs) => {
-      const rows = packs.reduce((into, each) => into.concat(each), []);
-      adsGot[promo] = { status: 'ready', rows: rows, notes: notes, range: range };
-      render();
+      done(packs.reduce((into, each) => into.concat(each), []), notes);
     });
   };
 
@@ -13909,7 +13935,11 @@ if (eventReport) {
   const adsBlock = (promo) => {
     const pack = adsGot[promo];
     if (!pack) return '<p class="perf-note">누르면 매체에 물어봅니다 (몇 초 걸립니다).</p>';
-    if (pack.status === 'loading') return '<p class="perf-note">매체에서 받는 중… (몇 초 걸립니다)</p>';
+    if (pack.status === 'loading') {
+      return `<p class="perf-note">매체에서 받는 중…
+        ${pack.spots > 1 ? `광고그룹 ${num(pack.spots)}곳을 한 번에 묻고 있습니다`
+    : '몇 초 걸립니다'}</p>`;
+    }
     const pick = AD_SORTS.filter((one) => one[0] === adsSort)[0] || AD_SORTS[2];
     const shown = pack.rows.slice()
       .sort((a, b) => pick[2](b) - pick[2](a)).slice(0, 36);
