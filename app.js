@@ -9013,7 +9013,7 @@ if (mediaPerformance) {
   };
 
   const detailTable = (key, rows) => `<div class="tool-table-wrap"><table class="tool-table perf-table perf-sub">
-    <thead><tr><th>${PERF_BREAKDOWNS[key]}</th>${metricHeads(alarm)}</tr></thead>
+    <thead><tr><th>${PERF_BREAKDOWNS[key]}</th>${metricHeads()}</tr></thead>
     <tbody>${rows.map((row) => `<tr>
       <td class="perf-name"><span>${escapeHtml(perfLabel(row.name))}${row.series
         ? ` · ${escapeHtml(perfLabel(row.series))}` : ''}</span></td>${metricCells(row)}
@@ -9171,7 +9171,7 @@ if (mediaPerformance) {
       </div>
       ${filters(listed, live.length, listed.length)}
       ${live.length ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
-        <thead><tr><th>캠페인 · 광고그룹</th><th>예산</th>${metricHeads(alarm)}<th></th></tr></thead>
+        <thead><tr><th>캠페인 · 광고그룹</th><th>예산</th>${metricHeads()}<th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>` : `<p class="tool-empty">${query || picked.length ? '찾는 캠페인이 없습니다.' : '지금 켜져 있는 캠페인이 없습니다.'}</p>`}
       ${resting.length ? `<p class="perf-resting">이 기간에 돌았지만 지금 꺼져 있는 캠페인 ${count(resting.length)}개
