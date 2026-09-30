@@ -14386,6 +14386,7 @@ if (eventReport) {
     const plan = rows.reduce((into, row) => into + rowCost(row), 0);
     const spend = spentOf(rows);
     const sold = soldOf(rows);
+    const rev = revOf(rows);
     const wantCps = goal > 0 ? plan / goal : null;
     const realCps = sold > 0 ? spend / sold : null;
     /* 목표보다 비싸면 그만큼을 곁에 적는다. 두 값이 다 있을 때만 — 한쪽이 비면
@@ -14397,6 +14398,7 @@ if (eventReport) {
       <div class="er-cat-name">${escape(name)}<small>${num(rows.length)}줄</small></div>
       <div class="bg-stats">
         ${statBox('총 광고비', money(spend), '실사용비 · 안 적었으면 붙인 파일의 집행 광고비')}
+        ${statBox('총매출금', rev ? won(rev) : dash, '적은 총 매출 · 없으면 파일의 판매전환값')}
         ${statBox('목표수량', goal ? `${num(goal)}대` : dash, '월별 예산에 적은 목표의 합')}
         ${statBox('실판매량', sold ? `${num(sold)}대` : dash, '적은 총 판매수 · 없으면 단계별 · 파일')}
         ${statBox('목표 CPS', wantCps === null ? dash : won(Math.round(wantCps)), '계획 광고비 ÷ 목표수량')}
