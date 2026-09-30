@@ -13303,7 +13303,10 @@ if (eventReport) {
       noBrand = Array.isArray(kept) ? kept.filter((one) => typeof one === 'string') : [];
     } catch (error) { noBrand = []; }
   };
-  const noBrandKey = (promo) => `${month}|${chanOf(promo)}`;
+  /* 브검 제외도 **줄마다** 둔다 — 적는 칸과 같은 까닭이다.
+     (같은 판매채널 줄이 둘인데 한쪽에서 끄면 다른 쪽 종합결과까지 바뀌었다)
+     이 값만은 시트에 안 담는다 — 보는 사람이 잠깐 빼고 보는 것이라 그 브라우저 것이다. */
+  const noBrandKey = (promo) => `${month}|${chanOf(promo)}|${promo}`;
   const isNoBrand = (promo) => noBrand.indexOf(noBrandKey(promo)) >= 0;
   const setNoBrand = (promo, on) => {
     const key = noBrandKey(promo);
