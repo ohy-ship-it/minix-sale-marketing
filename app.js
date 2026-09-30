@@ -13968,9 +13968,13 @@ if (eventReport) {
       const mark = `${one.source}|${one.account}`;
       if (kinds.indexOf(mark) < 0) kinds.push(mark);
     });
+    /* 묶음들을 한꺼번에 던지므로 기다림은 합이 아니라 **가장 느린 하나**다 */
+    const start = Date.now();
+    const eta = kinds.reduce((most, mark) => Math.max(most, adsGuess(mark.split('|')[0])), 0);
     adsGot[promo] = { status: 'loading', rows: [], notes: [], range: range,
-      spots: spots.length, packs: kinds.length };
+      spots: spots.length, packs: kinds.length, left: kinds.length, start: start, eta: eta };
     render();
+    adsClock();
 
     const done = (rows, notes) => {
       if (!adsGot[promo] || adsGot[promo].range !== range) return;   // 그 사이 다른 것을 눌렀다
@@ -13999,15 +14003,20 @@ if (eventReport) {
     let left = packs.length;
     const rows = [];
     const notes = [];
+    const waits = {};   // 아직 안 온 묶음 → 얼마나 걸릴 것 같은가
+    packs.forEach((pack, at) => { waits[at] = adsGuess(pack.source); });
     const paint = () => {
       if (!adsGot[promo] || adsGot[promo].range !== range) return;   // 그 사이 다른 것을 눌렀다
+      const rest = Object.keys(waits).reduce((most, at) => Math.max(most, waits[at]), 0);
       adsGot[promo] = { status: left ? 'loading' : 'ready',
         rows: rows.slice(), notes: notes.slice(), range: range,
-        spots: spots.length, packs: packs.length, left: left };
+        spots: spots.length, packs: packs.length, left: left,
+        start: start, eta: Math.max(rest, Math.round((Date.now() - start) / 1000)) };
       render();
+      if (left) adsClock(); else adsTock();
     };
 
-    packs.forEach((pack) => askSheet({ action: 'manyCreatives',
+    packs.forEach((pack, at) => askSheet({ action: 'manyCreatives',
       since: range.since, until: range.until, refresh: !!again,
       jobs: pack.adsets.map((id) => ({ source: pack.source, sourceName: pack.sourceName,
         account: pack.account, adset: id })) })
@@ -14021,6 +14030,8 @@ if (eventReport) {
       })
       .then(() => {
         left -= 1;
+        adsLearn(pack.source, (Date.now() - start) / 1000);   // 다음번 어림이 더 맞아진다
+        delete waits[at];
         /* 시트가 아직 옛 판이면 이 길을 모른다. 다 돌아온 뒤 예전처럼 하나씩 묻는다 —
            느릴 뿐 답은 같다. 배포하고 나면 저절로 빠른 길로 간다. */
         if (!left && old) { askOneByOne(promo, spots, range, done); return; }
@@ -14071,15 +14082,81 @@ if (eventReport) {
   ];
   let adsSort = 'spend';
 
+  /* ── 얼마나 남았나 ──────────────────────────────────────────────
+     매체마다 걸리는 시간이 아주 다르다 — 메타는 몇 초, 브랜드검색은 서른 초가 넘는다.
+     그래서 「몇 초 걸립니다」 한마디로는 기다리는 사람이 아무것도 알 수 없다.
+     **지난번에 실제로 걸린 시간**을 매체마다 이 브라우저에 담아 두고 그것으로 센다
+     (처음 보는 매체는 아래 어림값으로 시작해, 한 번 다녀오면 제 값으로 바뀐다). */
+  const ADS_SECS = { meta: 8, google: 9, kakao: 12, naver: 16, naverGfa: 20, naverSa: 35 };
+  const ADS_MEMO = 'minix-event-ads-secs';
+  const adsMemo = () => {
+    try { return JSON.parse(localStorage.getItem(ADS_MEMO) || '{}') || {}; } catch (e) { return {}; }
+  };
+  const adsGuess = (source) => Number(adsMemo()[source]) || ADS_SECS[source] || 12;
+  const adsLearn = (source, secs) => {
+    if (!(secs > 0) || secs > 600) return;   // 창을 덮어 뒀거나 하는 값은 안 배운다
+    const memo = adsMemo();
+    const had = Number(memo[source]) || 0;
+    memo[source] = Math.round(had ? (had + secs) / 2 : secs);   // 지난번과 반반 — 한 번 느렸다고 확 튀지 않게
+    try { localStorage.setItem(ADS_MEMO, JSON.stringify(memo)); } catch (e) { /* 담을 자리가 없어도 그만이다 */ }
+  };
+
+  /* 기다리는 줄 한 칸. 남은 초 · 지난 초 · 어디가 남았는지 · 막대 하나. */
+  const waitLine = (pack) => {
+    const gone = Math.max(0, Math.round((Date.now() - (pack.start || Date.now())) / 1000));
+    const eta = Number(pack.eta) || 0;
+    const left = Math.max(0, eta - gone);
+    const over = eta && gone > eta + 10;
+    const bar = eta ? Math.min(97, Math.round((gone / eta) * 100)) : 0;
+    const where = pack.packs > 1
+      ? `매체 ${num(pack.packs)}곳 가운데 ${num(pack.left === undefined ? pack.packs : pack.left)}곳이 남았습니다`
+      : `광고그룹 ${num(pack.spots || 1)}곳을 묻고 있습니다`;
+    const say = over ? `생각보다 오래 걸립니다 — 조금만 더` : (left ? `약 ${num(left)}초 남았습니다` : '거의 다 됐습니다');
+    return `<b>매체에서 받는 중… ${say}</b>
+      <small>${num(gone)}초 지남 · ${where}</small>
+      <span class="er-wait-bar"><i style="width:${over ? 97 : bar}%"></i></span>`;
+  };
+
+  /* 1초마다 그 한 칸만 고쳐 쓴다 — 화면을 통째로 다시 그리면 적던 칸의 커서가 튄다. */
+  let adsTimer = 0;
+  const adsTock = () => {
+    const pack = adsGot[openAds];
+    const box = document.querySelector('#er-ads-wait');
+    if (!pack || pack.status !== 'loading' || !box) {
+      if (adsTimer) clearInterval(adsTimer);
+      adsTimer = 0;
+      return;
+    }
+    box.innerHTML = waitLine(pack);
+  };
+  const adsClock = () => { if (!adsTimer && typeof setInterval === 'function') adsTimer = setInterval(adsTock, 1000); };
+
+  /* 눌러야 오는 것이라 **눌러 달라고 눈에 띄게** 말한다.
+     전에는 작은 회색 글씨 단추 하나뿐이라 그런 것이 있는 줄도 몰랐다. */
+  const adsCall = (promo, row) => {
+    const spots = spotsOf(promo);
+    if (!spots.length) {
+      return `<p class="perf-note">${packsOf(promo).length
+        ? '붙인 파일에 광고그룹 번호가 없어 소재를 못 물어봅니다 — 전매체에서 파일을 다시 내려받아 주세요.'
+        : '붙인 파일이 없어 소재를 못 물어봅니다 — 위 📎 로 전매체 파일을 먼저 붙여 주세요.'}</p>`;
+    }
+    const kinds = {};
+    spots.forEach((one) => { kinds[one.source] = adsGuess(one.source); });
+    const eta = Object.keys(kinds).reduce((most, key) => Math.max(most, kinds[key]), 0);
+    return `<button type="button" class="er-ads-call" data-er="ads"
+      data-channel="${escape(promo)}" data-row="${escape(row.id)}">
+      <b>발행 소재 보기</b>
+      <small>어떤 소재가 나갔는지 매체에 지금 물어봅니다 —
+        광고그룹 ${num(spots.length)}곳 · 보통 ${num(eta)}초쯤 걸립니다</small></button>`;
+  };
+
   const adsBlock = (promo) => {
     const pack = adsGot[promo];
-    if (!pack) return '<p class="perf-note">누르면 매체에 물어봅니다 (몇 초 걸립니다).</p>';
+    if (!pack) return '<p class="perf-note">매체에 물어보는 중입니다…</p>';
     /* 받는 중이어도 **온 것은 그린다.** 매체 하나가 느리다고 이미 받은 소재까지
        못 보고 있을 까닭이 없다. 위에 아직 몇 곳이 오는 중인지 적어 둔다. */
     const waiting = pack.status === 'loading'
-      ? `<p class="perf-note">매체에서 받는 중…
-        ${pack.packs > 1 ? `매체 ${num(pack.packs)}곳 가운데 ${num(pack.left || 0)}곳이 남았습니다`
-    : `광고그룹 ${num(pack.spots || 1)}곳을 묻고 있습니다`}</p>`
+      ? `<p class="perf-note er-wait" id="er-ads-wait">${waitLine(pack)}</p>`
       : '';
     if (pack.status === 'loading' && !pack.rows.length) return waiting;
     const pick = AD_SORTS.filter((one) => one[0] === adsSort)[0] || AD_SORTS[2];
@@ -14153,13 +14230,13 @@ if (eventReport) {
       <h5 class="er-h">단계별 매체성과 <small>매체를 누르면 캠페인까지 펼칩니다</small></h5>
       ${mediaTable(row.id, promo, alarm)}
       <h5 class="er-h">발행 소재
-        <small>파일에 실린 번호로 매체에 그때 물어봅니다 (몇 초 걸립니다)</small>
-        <button type="button" class="er-ads-go" data-er="ads" data-channel="${escape(promo)}"
-          data-row="${escape(row.id)}">${openAds === promo ? '접기' : '소재 보기'}</button>
+        <small>파일에 실린 번호로 매체에 그때 물어봅니다</small>
+        ${openAds === promo ? `<button type="button" class="er-ads-go" data-er="ads"
+          data-channel="${escape(promo)}" data-row="${escape(row.id)}">접기</button>` : ''}
         ${openAds === promo && adsGot[promo] && adsGot[promo].status === 'ready'
     ? `<button type="button" class="er-ads-go" data-er="adsRedo" data-channel="${escape(promo)}"
         data-row="${escape(row.id)}">다시 묻기</button>` : ''}</h5>
-      ${openAds === promo ? adsBlock(promo) : ''}
+      ${openAds === promo ? adsBlock(promo) : adsCall(promo, row)}
     </div>`;
   };
 

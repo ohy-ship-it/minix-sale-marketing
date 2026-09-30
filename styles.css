@@ -1975,3 +1975,22 @@ html.is-gated,html.is-gated body{overflow:hidden}
 
 /* 행사별 결과에서 줄마다 적고 있는 채널 — 여기 값은 그 합이라 읽기만 한다 */
 .tr-typed.is-sum input{background:#f5f4f1;color:#8a8983;cursor:default}
+
+/* 발행 소재 — 눌러야 오는 것이라 눌러 달라고 눈에 띄게 말한다 */
+.er-ads-call{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;
+  margin:2px 0 4px;padding:12px 14px;text-align:left;cursor:pointer;
+  border:1px solid #e3ded2;border-radius:10px;background:linear-gradient(#fffdf8,#fdfaf2)}
+.er-ads-call b{font:700 12.5px 'Noto Sans KR',sans-serif;color:#b0521f}
+.er-ads-call b:before{content:'▸ ';color:var(--orange,#f15a24)}
+.er-ads-call small{font-size:10.5px;color:#8d8b82;line-height:1.5}
+.er-ads-call:hover{border-color:var(--orange,#f15a24);background:#fffaf3}
+.er-ads-call:hover b{color:#8f3f14}
+
+/* 기다리는 동안 — 몇 초 남았는지 */
+.er-wait{display:flex;flex-direction:column;gap:4px;margin:2px 0 8px;padding:10px 12px;
+  border:1px solid #e6ecf3;border-radius:9px;background:#f8fafd}
+.er-wait b{font:700 12px 'Noto Sans KR',sans-serif;color:#2f5fa8}
+.er-wait small{font-size:10.5px;color:#8d8b82}
+.er-wait-bar{display:block;height:4px;border-radius:3px;background:#e2e8f0;overflow:hidden}
+.er-wait-bar i{display:block;height:100%;border-radius:3px;background:#5b8de0;
+  transition:width .9s linear}
