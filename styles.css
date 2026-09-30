@@ -1113,6 +1113,8 @@ span.bg-kind{cursor:default}
 .bg-row-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}
 .bg-row-tools small{font-size:11px;color:#a5a49f}
 .bg-channel{width:132px}
+.bg-event{width:150px}
+td.bg-event{color:#6f6f68}
 .bg-group{width:104px}
 .bg-live{white-space:nowrap}
 .bg-live input{width:130px}

@@ -15410,6 +15410,21 @@ if (budgetPlanView) {
   const groupDatalist = () => `<datalist id="${GROUP_LIST}">${groupNames()
     .map((one) => `<option value="${escape(one)}"></option>`).join('')}</datalist>`;
 
+  /* 행사명은 정해 둔 목록이 없다 — 달마다 새로 생긴다. 대신 한 행사가 판매채널
+     여러 줄에 걸치므로 **이 달에 이미 적어 둔 이름**을 목록으로 깔아 준다.
+     글자가 하나만 달라도 다른 행사가 되니, 두 번째 줄부터는 골라 쓰는 편이 안전하다. */
+  const EVENT_LIST = 'bg-events';
+  const eventNames = () => {
+    const out = [];
+    plan.rows.forEach((row) => {
+      const one = String(row.event || '').trim();
+      if (one && out.indexOf(one) < 0) out.push(one);
+    });
+    return out.sort((a, b) => a.localeCompare(b));
+  };
+  const eventDatalist = () => `<datalist id="${EVENT_LIST}">${eventNames()
+    .map((one) => `<option value="${escape(one)}"></option>`).join('')}</datalist>`;
+
   const dash = '<span class="tool-blank">—</span>';
 
   /* 프로모션 줄의 차례. 담아 둔 배열 차례가 곧 보이는 차례다.
@@ -15465,6 +15480,7 @@ if (budgetPlanView) {
         <td>${escape(row.group || '') || dash}</td>
         <td>${escape(row.kind || '') || dash}</td>
         <td class="perf-name"><span>${escape(row.channel || '') || dash}</span></td>
+        <td class="bg-event">${escape(row.event || '') || dash}</td>
         <td class="bg-live">${escape(row.live || '') || dash}</td>
         <td class="bg-span">${span}</td>
         <td class="perf-num">${row.goal ? num(row.goal) : dash}</td>
@@ -15486,6 +15502,8 @@ if (budgetPlanView) {
     `<option${one === row.kind ? ' selected' : ''}>${escape(one)}</option>`).join('')}</select></td>
       <td><input list="${CHANNEL_LIST}" class="bg-channel" data-bg="channel" data-row="${id}"
         value="${escape(row.channel || '')}" placeholder="고르거나 직접"></td>
+      <td><input list="${EVENT_LIST}" class="bg-event" data-bg="event" data-row="${id}"
+        value="${escape(row.event || '')}" placeholder="행사명"></td>
       <td class="bg-live"><input type="date" data-bg="live" data-row="${id}" value="${escape(row.live || '')}"></td>
       <td class="bg-span"><input type="date" data-bg="since" data-row="${id}" value="${escape(row.since || '')}"><i>~</i><input type="date" data-bg="until" data-row="${id}" value="${escape(row.until || '')}"></td>
       <td class="perf-num"><input type="text" class="bg-num" data-bg="goal" data-row="${id}" value="${escape(row.goal ? commaNum(row.goal) : '')}" placeholder="0"></td>
@@ -15513,7 +15531,7 @@ if (budgetPlanView) {
     const spare = sum.budget - sum.planned;   // 예산에서 아직 안 짠 돈
     const rows = rowsOf(sku.name);
     const name = escape(sku.name);
-    const wide = (hasBrand(sku.name) ? 11 : 10) + (editing ? 2 : 0);
+    const wide = (hasBrand(sku.name) ? 12 : 11) + (editing ? 2 : 0);
     return `<div class="tool-card bg-sku" data-sku="${name}">
       <div class="bg-sku-head">
         <span class="bg-sku-name">${name}</span>
@@ -15551,7 +15569,7 @@ if (budgetPlanView) {
       <div class="tool-table-wrap"><table class="tool-table bg-table">
         <thead><tr>
           ${editing ? '<th class="bg-grip"></th>' : ''}
-          <th>구분</th><th>파트</th><th>판매채널</th><th>라이브일정</th><th>광고기간</th>
+          <th>구분</th><th>파트</th><th>판매채널</th><th>행사명</th><th>라이브일정</th><th>광고기간</th>
           <th class="perf-num">목표수량</th><th class="perf-num">목표 CPS</th><th>진행광고매체</th>
           ${hasBrand(sku.name) ? `<th class="perf-num">브검비<small>${withBrand ? '얹어 보는 중' : '합계 밖'}</small></th>` : ''}
           <th class="perf-num">광고비<small>${editing ? '비우면 CPS×목표수량' : 'CPS×목표수량'}</small></th>
@@ -15596,7 +15614,7 @@ if (budgetPlanView) {
     : `<small>넣어 둔 SKU 를 카테고리 구분 없이 한 판에 폅니다. 값을 고치려면 위 <b>수정하기</b> 를 누르시면 됩니다.</small>`}
       </div>
     </div>
-    ${editing ? channelDatalist() + groupDatalist() : ''}
+    ${editing ? channelDatalist() + groupDatalist() + eventDatalist() : ''}
     ${plan.skus.length ? plan.skus.map(skuPanel).join('')
     : `<div class="tool-card page-todo"><h3>SKU 를 먼저 넣으세요</h3>
       <ul><li>${editing ? '위 <b>상세 SKU</b> 에서 이 달에 돌릴 상품을 고르면 그 SKU 의 프로모션 표가 열립니다.'
@@ -16238,7 +16256,7 @@ if (budgetPlanView) {
     }
     if (what === 'add') {
       plan.rows.push({
-        id: uid(), sku: hit.dataset.sku, group: '', kind: '온라인', channel: '', live: '', media: [],
+        id: uid(), sku: hit.dataset.sku, group: '', kind: '온라인', channel: '', event: '', live: '', media: [],
         since: '', until: '', goal: 0, cps: 0, brand: 0, cost: 0, used: 0,
       });
       render();
@@ -16334,8 +16352,8 @@ if (budgetPlanView) {
     }
     const row = plan.rows.find((one) => one.id === hit.dataset.row);
     if (!row) return;
-    if (what === 'group' || what === 'kind' || what === 'channel' || what === 'live'
-      || what === 'since' || what === 'until') {
+    if (what === 'group' || what === 'kind' || what === 'channel' || what === 'event'
+      || what === 'live' || what === 'since' || what === 'until') {
       row[what] = hit.value;
       save();
     }
