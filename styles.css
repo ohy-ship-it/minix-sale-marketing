@@ -1934,3 +1934,13 @@ html.is-gated,html.is-gated body{overflow:hidden}
 
 /* 월별 예산 — 파일로 실사용비 채우기 */
 .bg-cross{position:relative;cursor:pointer}
+
+/* ── 판매채널 칸 밑에 빈 줄이 생기던 것 ───────────────────────────────
+   td 를 display:flex 로 두면 표가 칸 높이를 셀 때 어긋나, 글자 아래로 한 줄이
+   더 생긴 것처럼 보인다 (KOL 표에서 겪고 .kol-sub 에서 이미 한 번 고친 자리다).
+   칸은 table-cell 로 두고, 앞에 붙는 화살표만 글자 옆에 세운다. */
+.bg-table td.perf-name{display:table-cell;min-width:0;white-space:nowrap}
+.er-table td.er-name{display:table-cell;white-space:nowrap}
+.er-table td.er-name svg{margin-right:4px;vertical-align:-2px}
+.er-split td.er-mname{display:table-cell;white-space:nowrap}
+.er-split td.er-mname svg{margin-right:4px;vertical-align:-2px}
