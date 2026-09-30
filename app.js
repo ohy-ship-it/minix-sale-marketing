@@ -13664,6 +13664,22 @@ if (eventReport) {
   const statBox = (label, value, hint) => `<span class="bg-stat">
     <small>${escape(label)}</small><b>${value}</b>${hint ? `<em>${hint}</em>` : ''}</span>`;
 
+  /* ── 실 CPA — 한 대 파는 데 든 돈 ─────────────────────────────
+     목표 CPS 는 짜 놓은 값이고, 이것은 **실제로 든 값**이다. 두 칸이 나란히 있어야
+     싸게 팔았는지 비싸게 팔았는지가 한눈에 보인다.
+       집행 광고비 ÷ 판매량   (판매량은 적은 총 판매수가 이긴다 — wholeOf 와 같다)
+     사전알림 줄만 나누는 밑이 다르다. 그런 행사는 신청을 받는 것이 목표라 구매가
+     거의 안 잡힌다 — 판매량으로 나누면 「한 건에 수십만 원」 처럼 보인다.
+     (단계별 · 매체별 표가 CPS 를 CPA 로 바꿔 세는 것과 같은 규칙이다) */
+  const cpaOf = (shown, got, alarm) => {
+    if (!got || !got.spend) return dash;
+    const base = alarm ? Number(got.conv) || 0 : Number(shown.buy) || 0;
+    return base ? won(Math.round(got.spend / base)) : dash;
+  };
+  const cpaWhy = (key, alarm) => (alarm
+    ? '사전알림 행사라 집행 광고비 ÷ 결과 로 셌습니다'
+    : `집행 광고비 ÷ 판매량${soldTyped(key) ? ' (수기로 적은 총 판매수로 셌습니다)' : ''}`);
+
   const line = (row) => {
     const cost = rowCost(row);
     const used = rowUsed(row);
@@ -13701,9 +13717,10 @@ if (eventReport) {
       ${got ? `<td class="perf-num">${money(got.spend)}</td>
         <td class="perf-num"><span${soldTyped(key)
     ? ` class="is-manual" title="수기로 적은 총 판매수입니다 (붙인 파일이 센 구매 수는 ${num(got.buy)})"` : ''}>${shown.buy || soldTyped(key) ? num(shown.buy) : dash}</span></td>
+        <td class="perf-num" title="${escape(cpaWhy(key, alarm))}">${cpaOf(shown, got, alarm)}</td>
         <td class="perf-num"><span${revTyped(key)
     ? ' class="is-manual" title="수기로 적은 총 매출로 셈한 ROAS 입니다"' : ''}>${got.spend ? perfRoas(ratio(shown.rev, got.spend) || 0) : dash}</span></td>`
-    : `<td class="er-none" colspan="3">파일을 붙이면 채워집니다</td>`}
+    : `<td class="er-none" colspan="4">파일을 붙이면 채워집니다</td>`}
       <td class="er-own" data-er="skip">
         <label class="er-pick" title="${escape(row.sku || '이 줄')} 의 전매체 파일 (이 줄에만 붙습니다 · 주차마다 하나씩)">
           <i data-lucide="${own.length ? 'file-check' : 'paperclip'}"></i>${own.length ? `${own.length}개` : '파일'}
@@ -13721,7 +13738,7 @@ if (eventReport) {
      판매량은 손으로 적은 총판매수가 있으면 그것, 없으면 붙인 파일이 센 구매 수다.
      목표를 넘기면 표를 낸다 — 좋은 쪽이라 붉게 쓰지 않는다. */
   const HEAD = ['판매채널', '구분', '파트', '라이브일정', '광고기간', '목표수량', '목표 CPS',
-    '진행광고매체', '광고비', '달성률', '실사용비', '집행 광고비', '판매량', 'ROAS', '파일'];
+    '진행광고매체', '광고비', '달성률', '실사용비', '집행 광고비', '판매량', '실 CPA', 'ROAS', '파일'];
   /* 이름만으로는 무엇을 무엇으로 나눈 값인지 알 수 없는 칸에 한 줄 적어 둔다.
      (같은 표에 광고비 · 실사용비 · 집행 광고비가 나란히 있어 더 그렇다) */
   const HEAD_NOTE = {
@@ -13729,6 +13746,7 @@ if (eventReport) {
     '광고비': 'CPS×목표수량',
     '집행 광고비': '붙인 파일',
     '판매량': '적은 총 판매수 · 없으면 파일',
+    '실 CPA': '집행 광고비 ÷ 판매량',
   };
   const HEAD_NUM_FROM = 5;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
