@@ -13848,10 +13848,19 @@ if (eventReport) {
      대신 매체를 다녀오느라 몇 초 걸린다 — 그래서 **누를 때만** 묻고,
      한 번 받아 둔 것은 다시 묻지 않는다 ([다시 묻기] 를 누르면 새로 받는다).
 
-     묻는 것은 **한 번**이다. 예전에는 광고그룹마다 따로 물었는데, 한 행사에
-     광고그룹이 열댓 개면 이 웹앱을 열댓 번 다녀왔다 — 아무 일도 안 하는 왕복 하나가
-     1.5~4초라 기다림의 대부분이 거기였다. 이제 목록을 통째로 보내면 시트 쪽에서
-     같은 매체 · 같은 계정끼리 묶어 **계정마다 한 번만** 매체에 묻는다. */
+     묻는 것은 **매체 · 계정마다 한 번**이다.
+
+     처음에는 광고그룹마다 따로 물었다 — 한 행사에 광고그룹이 열댓 개면 이 웹앱을
+     열댓 번 다녀오는데, 아무 일도 안 하는 왕복 하나가 1.5~4초라 그것이 기다림의
+     대부분이었다. 그래서 같은 매체 · 같은 계정끼리 묶었다 (manyCreatives).
+
+     그런데 묶음까지 **한 요청에 다 실으면 도로 느려진다.** 시트 쪽은 한 요청 안에서
+     차례로 도는데, 매체마다 제 값이 있다 — 네이버 GFA 는 성과 시트를 통째로 훑고
+     (10초 안팎), 카카오는 보고서에 5.5초 간격이 걸려 있다. 묶어 보내면 그 값이
+     **더해지고**, 나눠 보내면 브라우저가 한꺼번에 던져 **가장 느린 하나**로 끝난다.
+
+     그래서 묶기는 하되 **묶음마다 따로** 던진다. 광고그룹 열둘이 메타 하나 ·
+     네이버 하나면 요청은 둘이고, 기다림은 둘 중 느린 쪽이다. */
   const spotsOf = (promo) => {
     const out = [];
     rowsFor(promo).forEach((row) => {
@@ -13899,8 +13908,13 @@ if (eventReport) {
       return;
     }
 
+    const kinds = [];
+    spots.forEach((one) => {
+      const mark = `${one.source}|${one.account}`;
+      if (kinds.indexOf(mark) < 0) kinds.push(mark);
+    });
     adsGot[promo] = { status: 'loading', rows: [], notes: [], range: range,
-      spots: spots.length };
+      spots: spots.length, packs: kinds.length };
     render();
 
     const done = (rows, notes) => {
@@ -13909,17 +13923,54 @@ if (eventReport) {
       render();
     };
 
-    askSheet({ action: 'manyCreatives', since: range.since, until: range.until,
-      refresh: !!again,
-      jobs: spots.map((one) => ({ source: one.source, sourceName: one.sourceName,
-        account: one.account, adset: one.adset })) })
-      .then((body) => done(body.rows || [], body.notes || []))
+    /* 매체 · 계정으로 묶는다. 묶음 하나가 요청 하나다 — 브라우저가 한꺼번에 던지므로
+       기다림은 묶음들의 합이 아니라 **가장 느린 하나**다. */
+    const packs = [];
+    const where = {};
+    spots.forEach((one) => {
+      const mark = `${one.source}|${one.account}`;
+      if (where[mark] === undefined) {
+        where[mark] = packs.length;
+        packs.push({ source: one.source, sourceName: one.sourceName,
+          account: one.account, adsets: [] });
+      }
+      packs[where[mark]].adsets.push(one.adset);
+    });
+
+    /* 도착하는 대로 그린다. 매체마다 제 값이 달라 (메타 몇 초 · 네이버 GFA 는 성과
+       시트를 통째로 훑어 열 몇 초) 다 기다리면 가장 느린 하나에 모두가 묶인다.
+       먼저 온 것부터 보여 주고, 아직 몇 곳이 오는 중인지 위에 적어 둔다. */
+    let old = false;   // 시트가 옛 판이라 이 길을 모른다
+    let left = packs.length;
+    const rows = [];
+    const notes = [];
+    const paint = () => {
+      if (!adsGot[promo] || adsGot[promo].range !== range) return;   // 그 사이 다른 것을 눌렀다
+      adsGot[promo] = { status: left ? 'loading' : 'ready',
+        rows: rows.slice(), notes: notes.slice(), range: range,
+        spots: spots.length, packs: packs.length, left: left };
+      render();
+    };
+
+    packs.forEach((pack) => askSheet({ action: 'manyCreatives',
+      since: range.since, until: range.until, refresh: !!again,
+      jobs: pack.adsets.map((id) => ({ source: pack.source, sourceName: pack.sourceName,
+        account: pack.account, adset: id })) })
+      .then((body) => {
+        (body.rows || []).forEach((one) => rows.push(one));
+        (body.notes || []).forEach((one) => notes.push(one));
+      })
       .catch((reason) => {
-        /* 시트가 아직 옛 판이면 이 길을 모른다. 그때는 예전처럼 하나씩 묻는다 —
+        if (/모르는 요청/.test(reason.message)) old = true;
+        else notes.push(`${pack.sourceName || pack.source} — ${reason.message}`);
+      })
+      .then(() => {
+        left -= 1;
+        /* 시트가 아직 옛 판이면 이 길을 모른다. 다 돌아온 뒤 예전처럼 하나씩 묻는다 —
            느릴 뿐 답은 같다. 배포하고 나면 저절로 빠른 길로 간다. */
-        if (/모르는 요청/.test(reason.message)) { askOneByOne(promo, spots, range, done); return; }
-        done([], [reason.message]);
-      });
+        if (!left && old) { askOneByOne(promo, spots, range, done); return; }
+        paint();
+      }));
   };
 
   /* 옛 길 — 광고그룹마다 하나씩 묻는다. 시트를 새 판으로 배포하기 전까지의 길이다. */
@@ -13968,15 +14019,19 @@ if (eventReport) {
   const adsBlock = (promo) => {
     const pack = adsGot[promo];
     if (!pack) return '<p class="perf-note">누르면 매체에 물어봅니다 (몇 초 걸립니다).</p>';
-    if (pack.status === 'loading') {
-      return `<p class="perf-note">매체에서 받는 중…
-        ${pack.spots > 1 ? `광고그룹 ${num(pack.spots)}곳을 한 번에 묻고 있습니다`
-    : '몇 초 걸립니다'}</p>`;
-    }
+    /* 받는 중이어도 **온 것은 그린다.** 매체 하나가 느리다고 이미 받은 소재까지
+       못 보고 있을 까닭이 없다. 위에 아직 몇 곳이 오는 중인지 적어 둔다. */
+    const waiting = pack.status === 'loading'
+      ? `<p class="perf-note">매체에서 받는 중…
+        ${pack.packs > 1 ? `매체 ${num(pack.packs)}곳 가운데 ${num(pack.left || 0)}곳이 남았습니다`
+    : `광고그룹 ${num(pack.spots || 1)}곳을 묻고 있습니다`}</p>`
+      : '';
+    if (pack.status === 'loading' && !pack.rows.length) return waiting;
     const pick = AD_SORTS.filter((one) => one[0] === adsSort)[0] || AD_SORTS[2];
     const shown = pack.rows.slice()
       .sort((a, b) => pick[2](b) - pick[2](a)).slice(0, 36);
-    const notes = pack.notes.map((one) => `<p class="perf-note bg-note-bad">${escape(one)}</p>`).join('');
+    const notes = waiting
+      + pack.notes.map((one) => `<p class="perf-note bg-note-bad">${escape(one)}</p>`).join('');
     if (!shown.length) {
       return `${notes}<p class="perf-note">받아 온 소재가 없습니다 (그 기간에 돈 소재가 없거나, 매체가 소재를 주지 않습니다).</p>`;
     }
