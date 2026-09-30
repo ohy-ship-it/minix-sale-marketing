@@ -1204,7 +1204,11 @@ document.querySelectorAll('.tree-group').forEach((group) => {
 
 // 전용 화면을 가진 메뉴 (그 외에는 대시보드를 보여준다)
 const VIEWS = {
-  '판매채널 추이': { section: '#event-result', hash: '#event' },
+  /* 판매채널 추이는 **메뉴에서 내렸다.** 화면 조각(#event-result)도 그 코드도
+     그대로 두었고, 시트(추이판매채널)는 손대지 않았다 — 거기 담긴 판매수 · 매출 ·
+     사전알림을 **행사별 결과가 지금도 읽고 쓴다.** 다시 올리려면 이 줄과
+     index.html 의 메뉴 단추를 되살리면 된다.
+       '판매채널 추이': { section: '#event-result', hash: '#event' }, */
   '행사별 결과': { section: '#event-report', hash: '#event-report-view' },
   '콘텐츠 일정': { section: '#content-schedule', hash: '#content-cal' },
   '광고소재 기획': { section: '#creative-board', hash: '#creative-planning' },
@@ -1319,6 +1323,10 @@ const openViewOnce = (section, run) => {
 
 const openedView = Object.entries(VIEWS).find(([, entry]) => window.location.hash.startsWith(entry.hash));
 if (openedView) document.querySelector(`button[data-view='${openedView[0]}']`)?.click();
+/* 주소에 아무것도 없이 들어오면 **월별 예산**을 연다. 예전에는 대시보드가 열리면서
+   메뉴는 엉뚱한 곳(판매채널 추이)에 불이 들어와 있었다 — 보이는 화면과 눌린 메뉴가
+   달랐다. 대시보드는 주소에 #dashboard 를 달면 그대로 열린다. */
+else document.querySelector(`button[data-view='월별 예산']`)?.click();
 
 // 다른 워크스페이스가 이 화면을 틀(iframe)로 끌어다 쓸 때는, 부모가 주소의 해시만 바꿔
 // 화면을 옮긴다 (같은 문서라 다시 읽히지 않는다). 그래서 해시가 바뀌면 그 화면으로 옮겨 준다.
@@ -10038,7 +10046,7 @@ if (mediaPerformance) {
           <span class="perf-files"><small>파일 받기</small>
             ${FILE_KINDS.map((kind) => `<button type="button" class="tool-copy-all"
               data-perf="cross-file" data-kind="${escapeHtml(kind)}"${crossHas(kind) ? '' : ' disabled'}
-              title="${crossHas(kind) ? `${escapeHtml(kind)} 파일을 받습니다 — 행사별 결과 · 판매채널 추이에 그대로 붙일 수 있습니다`
+              title="${crossHas(kind) ? `${escapeHtml(kind)} 파일을 받습니다 — 행사별 결과에 그대로 붙일 수 있습니다`
     : `${escapeHtml(kind)} 로 받을 줄이 없습니다`}">
               <i data-lucide="download"></i>${escapeHtml(kind)}</button>`).join('')}</span>
         </div>
@@ -14272,7 +14280,7 @@ if (eventReport) {
       ${twins.length > 1 ? `<p class="perf-note">이 달에 <b>${escape(channel)}</b> 로 적힌 줄이
         ${num(twins.length)}개입니다 (${escape(kinNames(twins))}).
         <b>붙인 파일도 적는 칸도 아래 숫자도 이 줄(${escape(row.sku || 'SKU 없음')})의 것</b>입니다 —
-        다른 줄과 같이 움직이지 않습니다. (판매채널 추이 화면은 그 줄들을 합쳐 봅니다)</p>` : ''}
+        다른 줄과 같이 움직이지 않습니다. (위 SKU 판 · 카테고리별이 그 줄들을 합쳐 봅니다)</p>` : ''}
       ${typedBar(promo)}
       <h5 class="er-h">종합결과</h5>
       ${wholeBox(promo, alarm)}
@@ -14629,7 +14637,7 @@ if (eventReport) {
   }).join('')}</div>` : ''}
         <p class="perf-note${error ? ' bg-note-bad' : ''}">${error ? escape(error)
     : `${saved.at ? `월별 예산 마지막 저장 ${escape(new Date(saved.at).toLocaleString('ko-KR'))}${saved.by ? ` · ${escape(saved.by)}` : ''}`
-      : '아직 저장한 적이 없는 달입니다.'} · 적은 값은 <b>판매채널 추이</b>와 같은 자리를 씁니다.\n        · 붙인 파일은 <b>저장</b> 을 눌러야 시트에 담겨 다른 사람에게도 보입니다.
+      : '아직 저장한 적이 없는 달입니다.'} · 적은 값은 시트의 <b>추이판매채널</b> 탭에 담깁니다.\n        · 붙인 파일은 <b>저장</b> 을 눌러야 시트에 담겨 다른 사람에게도 보입니다.
 ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니다 — 시트 값이 오면 바뀝니다'}`}</p>
         ${fileNote ? `<p class="perf-note">${fileNote}</p>` : ''}
       </div>
