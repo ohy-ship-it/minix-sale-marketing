@@ -13261,7 +13261,7 @@ if (eventReport) {
       noBrand = Array.isArray(kept) ? kept.filter((one) => typeof one === 'string') : [];
     } catch (error) { noBrand = []; }
   };
-  const noBrandKey = (promo) => `${month}|${promo}`;
+  const noBrandKey = (promo) => `${month}|${chanOf(promo)}`;
   const isNoBrand = (promo) => noBrand.indexOf(noBrandKey(promo)) >= 0;
   const setNoBrand = (promo, on) => {
     const key = noBrandKey(promo);
@@ -13356,6 +13356,23 @@ if (eventReport) {
     .filter((row) => String(row.channel || '').trim() === String(channel || '').trim());
   const kinNames = (kin) => kin.map((one) => one.sku || '(SKU 없음)').join(' · ');
 
+  /* ── 붙인 파일은 **줄마다 따로** ───────────────────────────────
+     예전에는 판매채널 이름으로 담았다. 그러면 같은 판매채널로 적힌 줄
+     (더 플렌더MAX · 더 플렌더mini)이 한 자리를 같이 써서, 한 줄에서 지우면
+     다른 줄에서도 없어졌다. 이제 줄마다 자리를 둔다 — 열쇠는 그 줄의 번호다.
+
+     광고그룹 이름을 판매채널에 맞출 때는 여전히 **채널 이름**이 필요하다
+     (공용 파일은 채널로 걸러 붙인다). 그래서 번호로 그 줄을 되짚어 채널을 꺼낸다.
+     모르는 열쇠면 그 열쇠를 채널 이름으로 본다 — 예전에 채널로 담아 둔 파일과
+     다른 화면에서 온 열쇠가 그대로 통한다. */
+  const slotOf = (row) => String((row && row.id) || '');
+  const rowOfSlot = (key) => allPlanRows()
+    .filter((one) => String(one.id) === String(key))[0] || null;
+  const chanOf = (key) => {
+    const one = rowOfSlot(key);
+    return one ? String(one.channel || '') : String(key || '');
+  };
+
   // ── 전매체 파일을 프로모션에 붙인다 ──────────────────────────────
   /* 광고그룹 이름은 '[행사]_타겟팅_매출채널' 이라 **마지막 토막이 매출채널**이다.
      설정 탭의 행사채널 → 매출채널 표로 되짚어 판매채널과 맞춘다.
@@ -13371,8 +13388,9 @@ if (eventReport) {
   const rangeIn = perfRangeIn;
   const paid = perfPaid;
 
-  const packsOf = (channel) => {
-    const own = byChannel[channel] || [];
+  const packsOf = (key) => {
+    const own = byChannel[key] || [];
+    const channel = chanOf(key);   // 공용 파일을 걸러 붙일 때 쓴다
     const mine = own.length ? own : files;
     return mine.map((one) => ({
       name: one.name,
@@ -13401,8 +13419,9 @@ if (eventReport) {
   let dupDrop = 0;         // 이번에 겹쳐서 안 센 줄 수 (화면에 적는다)
 
   /* 붙인 파일을 모두 훑어 단계별로 모은다. 파일이 하나든 다섯이든 같은 길이다. */
-  const phasePacks = (channel) => {
-    const own = byChannel[channel] || [];
+  const phasePacks = (key) => {
+    const own = byChannel[key] || [];
+    const channel = chanOf(key);   // 공용 파일을 걸러 붙일 때 쓴다
     const mine = own.length ? own : files;
     const bucket = {};
     const seen = {};
@@ -13500,7 +13519,10 @@ if (eventReport) {
 
   // ── 사람이 적는 값 (판매채널 추이와 같은 자리에 담긴다) ──────────────
   const numText = (value) => (value === '' || value === null || value === undefined ? '' : num(value));
-  const typedOf = (promo) => ({ ...BLANK_MANUAL, ...(manual[`${month}|${promo}`] || {}) });
+  /* 열쇠가 줄 번호로 와도 **판매채널 이름**으로 찾는다 — 이 값은 판매채널 하나에
+     적는 값이고, 시트와 판매채널 추이도 그 이름으로 담고 있다. */
+  const typedOf = (promo) => ({ ...BLANK_MANUAL,
+    ...(manual[`${month}|${chanOf(promo)}`] || {}) });
   const isAlarm = (promo) => !!typedOf(promo).alarm;
 
   /* 단계마다 손으로 적은 판매수 · 매출. **적어 둔 값이 있으면 그것으로 센다** —
@@ -13591,15 +13613,18 @@ if (eventReport) {
     const id = escape(row.id);
     const at = row.since || row.until
       ? `${escape(row.since || '')} ~ ${escape(row.until || '')}` : dash;
-    const own = byChannel[row.channel] || [];
-    const mine = (own.length || files.length) ? rowsFor(row.channel) : [];
+    const key = slotOf(row);            // 붙인 파일은 **이 줄**의 것이다
+    const own = byChannel[key] || [];
+    const mine = (own.length || files.length) ? rowsFor(key) : [];
     const got = mine.length ? sumOf(mine) : null;
-    const alarm = isAlarm(row.channel);
-    const sold = soldFor(row.channel);   // 달성률 — 목표수량과 견줄 값
-    /* 같은 판매채널로 적힌 줄들. 전매체 파일에는 SKU 가 없어 **판매채널 단위로** 세므로,
-       파일도 적은 값도 그 줄들이 함께 쓴다 — 한 줄에서 지우면 나머지에서도 없어진다.
-       칸이 줄마다 있어 그 줄만의 것처럼 보이던 것을 여기서 드러낸다. */
+    const alarm = isAlarm(key);
     const kin = twinsOf(row.channel);
+    /* 달성률만은 **판매채널 단위**다. 실판매량은 사람이 판매채널 하나에 적는 값이라
+       (판매처에서 센 수다) 줄로 가를 근거가 없다. 그래서 목표수량도 그 채널 줄들의
+       합으로 견준다 — 한쪽만 목표로 나누면 두 줄 다 200% 처럼 보인다. */
+    const flock = kin.length ? kin : [row];
+    const sold = soldOf(flock);
+    const goal = flock.reduce((into, one) => into + (Number(one.goal) || 0), 0);
     return `<tr class="er-row${open === row.id ? ' is-open' : ''}" data-er="pick" data-row="${id}">
       <td class="er-name"><i data-lucide="chevron-right"></i>${escape(row.channel || '') || dash}</td>
       <td>${escape(row.group || '') || dash}</td>
@@ -13612,23 +13637,21 @@ if (eventReport) {
     ? mediaOf(row).map((one) => `<span class="bg-kind is-on">${escape(one)}</span>`).join('')
     : dash}</td>
       <td class="perf-num bg-cost"><span${rowManual(row) ? ' class="is-manual" title="수기로 적은 금액입니다"' : ''}>${cost ? won(cost) : dash}</span></td>
-      <td class="perf-num er-rate${row.goal && sold >= Number(row.goal) ? ' is-good' : ''}">${row.goal ? perfPercent(sold / Number(row.goal)) : dash}</td>
+      <td class="perf-num er-rate${goal && sold >= goal ? ' is-good' : ''}"
+        title="${kin.length > 1 ? `판매채널 ${escape(row.channel || '')} 전체 — 실판매량 ${num(sold)} ÷ 목표수량 합 ${num(goal)}` : ''}">${goal ? perfPercent(sold / goal) : dash}</td>
       <td class="perf-num bg-used">${used ? won(used) : dash}</td>
       ${got ? `<td class="perf-num">${money(got.spend)}</td>
         <td class="perf-num">${got.buy ? num(got.buy) : dash}</td>
         <td class="perf-num">${got.spend ? perfRoas(ratio(got.rev, got.spend) || 0) : dash}</td>`
     : `<td class="er-none" colspan="3">파일을 붙이면 채워집니다</td>`}
       <td class="er-own" data-er="skip">
-        <label class="er-pick" title="${kin.length > 1
-    ? `이 파일은 판매채널 ‘${escape(row.channel || '')}’ 의 것입니다 — 같은 판매채널로 적힌 ${num(kin.length)}줄(${escape(kinNames(kin))})이 함께 씁니다`
-    : '이 행사만 담긴 전매체 파일 (주차마다 하나씩 붙일 수 있습니다)'}">
+        <label class="er-pick" title="${escape(row.sku || '이 줄')} 의 전매체 파일 (이 줄에만 붙습니다 · 주차마다 하나씩)">
           <i data-lucide="${own.length ? 'file-check' : 'paperclip'}"></i>${own.length ? `${own.length}개` : '파일'}
-          <input type="file" accept=".json,application/json" multiple data-er="one" data-channel="${escape(row.channel || '')}" hidden>
+          <input type="file" accept=".json,application/json" multiple data-er="one" data-channel="${escape(key)}" hidden>
         </label>
-        ${kin.length > 1 ? `<span class="er-kin" title="${escape(kinNames(kin))} 가 같은 판매채널이라 파일 · 적은 값 · 숫자를 함께 씁니다">함께 ${num(kin.length)}</span>` : ''}
-        ${own.length ? `<button type="button" class="er-off" data-er="offone" data-channel="${escape(row.channel || '')}"
-          title="${kin.length > 1 ? `이 판매채널에 붙인 파일을 다 지웁니다 — ${escape(kinNames(kin))} 에서 같이 없어집니다`
-    : '이 행사에 붙인 파일을 지웁니다 (담아 둔 것까지)'}"><i data-lucide="x"></i></button>` : ''}
+        ${kin.length > 1 ? `<span class="er-kin" title="${escape(kinNames(kin))} 가 같은 판매채널입니다 — 파일은 줄마다 따로지만, 적는 칸(판매수 · 매출 · 사전알림)과 달성률은 판매채널 하나로 셉니다">채널 ${num(kin.length)}줄</span>` : ''}
+        ${own.length ? `<button type="button" class="er-off" data-er="offone" data-channel="${escape(key)}"
+          title="이 줄에 붙인 파일을 지웁니다 (담아 둔 것까지)"><i data-lucide="x"></i></button>` : ''}
       </td>
     </tr>${open === row.id
       ? `<tr class="er-more"><td colspan="${HEAD.length}">${detailCard(row, alarm)}</td></tr>` : ''}`;
@@ -13985,9 +14008,8 @@ if (eventReport) {
   const ownFiles = (promo) => {
     const own = byChannel[promo] || [];
     if (!own.length) return '';
-    const kin = twinsOf(promo);
-    return `<div class="er-files er-own-files"><small>이 행사에 붙인 파일${kin.length > 1
-    ? ` — ${escape(kinNames(kin))} 가 함께 씁니다` : ''}</small>
+    const mine = rowOfSlot(promo);
+    return `<div class="er-files er-own-files"><small>${escape((mine && mine.sku) || '이 줄')} 에 붙인 파일</small>
       ${own.map((one, at) => {
     const range = rangeIn(one.body);
     return `<span class="tr-chip"><b>${escape(span(range.since, range.until)) || '기간 없음'}</b>
@@ -13998,18 +14020,21 @@ if (eventReport) {
   };
 
   const detailCard = (row, alarm) => {
-    const promo = String(row.channel || '');
-    if (!promo) {
+    const promo = slotOf(row);              // 파일 · 숫자는 이 줄의 것
+    const channel = String(row.channel || '');   // 적는 칸은 판매채널 것
+    if (!channel) {
       return '<div class="er-detail"><p class="perf-note">판매채널이 비어 있어 파일을 붙일 수 없습니다 — '
         + '월별 예산에서 판매채널을 먼저 적어 주세요.</p></div>';
     }
-    const twins = twinsOf(promo);
+    const twins = twinsOf(channel);
     return `<div class="er-detail">
       ${ownFiles(promo)}
       ${mergeNote(promo)}
-      ${twins.length > 1 ? `<p class="perf-note">이 달에 <b>${escape(promo)}</b> 로 적힌 줄이
+      ${twins.length > 1 ? `<p class="perf-note">이 달에 <b>${escape(channel)}</b> 로 적힌 줄이
         ${num(twins.length)}개입니다 (${escape(kinNames(twins))}).
-        전매체 파일에는 SKU 가 없어 <b>판매채널 단위로</b> 셉니다 — 아래 숫자는 그 줄들을 합친 값입니다.</p>` : ''}
+        <b>붙인 파일과 아래 숫자는 이 줄(${escape(row.sku || 'SKU 없음')})의 것</b>이고,
+        적는 칸(판매수 · 매출 · 사전알림)과 달성률은 판매채널 하나로 셉니다 —
+        판매처에서 센 수라 줄로 가를 근거가 없습니다.</p>` : ''}
       ${typedBar(promo)}
       <h5 class="er-h">종합결과</h5>
       ${wholeBox(promo, alarm)}
@@ -14051,6 +14076,11 @@ if (eventReport) {
        ① 월별 예산에 적어 둔 실사용비가 있으면 그 값
        ② 없으면 붙인 전매체 파일의 집행 광고비
      둘 다 없으면 0 이다 (아직 아무것도 모르는 줄이다). */
+  /* 줄에 붙은 파일은 **줄마다** 센다. 그 줄에 붙은 것이 없고 공용 파일로만 잡히면
+     그 채널에 한 번만 센다 — 그러지 않으면 같은 광고비를 줄 수만큼 더하게 된다. */
+  const ownSpend = (rows) => rows.reduce((into, row) => into + sumOf(rowsFor(slotOf(row))).spend, 0);
+  const hasOwn = (row) => !!(byChannel[slotOf(row)] || []).length;
+
   const spentOf = (rows) => {
     const byCh = {};
     let sum = 0;
@@ -14062,7 +14092,9 @@ if (eventReport) {
     });
     Object.keys(byCh).forEach((ch) => {
       const used = byCh[ch].reduce((into, row) => into + rowUsed(row), 0);
-      sum += used || sumOf(rowsFor(ch)).spend;
+      if (used) { sum += used; return; }          // 월별 예산에 적어 둔 실사용비가 이긴다
+      const own = byCh[ch].filter(hasOwn);
+      sum += own.length ? ownSpend(own) : ownSpend(byCh[ch].slice(0, 1));
     });
     return sum;
   };
@@ -14070,23 +14102,26 @@ if (eventReport) {
   /* 실제로 팔린 수. 이것도 판매채널 단위다.
        ① 적어 둔 **총 판매수** 가 있으면 그 값 (판매처에서 센 수다)
        ② 없으면 단계별로 적은 판매수 · 붙인 파일의 판매량 (wholeOf 가 그 차례로 센다) */
-  /* 실판매량 — 손으로 적은 총판매수가 있으면 그것이 이기고, 없으면 붙인 파일이 센 구매 수다.
-     판매채널 하나가 행사 하나라 **채널 단위로** 센다 (같은 채널에 SKU 줄이 둘이어도 한 번). */
-  const soldFor = (channel) => {
-    const ch = String(channel || '').trim();
-    if (!ch) return 0;
-    const typed = typedOf(ch);
-    return typed.sales !== '' ? (Number(typed.sales) || 0) : wholeOf(ch).buy;
-  };
-
+  /* 실판매량.
+       ① 적어 둔 **총 판매수** 가 있으면 그 값 — 판매처에서 센 수이고 판매채널 하나에
+          한 번 적는다. 그래서 같은 채널 줄이 둘이어도 **한 번만** 센다.
+       ② 안 적었으면 붙인 파일이 센 구매 수. 파일은 줄마다 따로라 줄마다 더한다
+          (공용 파일로만 잡히면 그 채널에 한 번만 — 쓴 돈과 같은 규칙이다). */
   const soldOf = (rows) => {
-    const seen = [];
+    const byCh = {};
     let sum = 0;
     rows.forEach((row) => {
       const ch = String(row.channel || '').trim();
-      if (!ch || seen.indexOf(ch) >= 0) return;
-      seen.push(ch);
-      sum += soldFor(ch);
+      if (!ch) return;
+      if (!byCh[ch]) byCh[ch] = [];
+      byCh[ch].push(row);
+    });
+    Object.keys(byCh).forEach((ch) => {
+      const typed = typedOf(ch);
+      if (typed.sales !== '') { sum += Number(typed.sales) || 0; return; }
+      const own = byCh[ch].filter(hasOwn);
+      (own.length ? own : byCh[ch].slice(0, 1))
+        .forEach((row) => { sum += wholeOf(slotOf(row)).buy; });
     });
     return sum;
   };
@@ -14185,21 +14220,24 @@ if (eventReport) {
   let filling = false;
 
   // 채울 것이 있나 (파일이 붙어 있고, 그 채널 줄이 하나뿐인 것)
+  /* 파일이 줄마다 따로 붙으므로 **줄마다** 채운다. 같은 판매채널 줄이 둘이어도
+     줄에 파일이 붙어 있으면 가를 수 있다 (예전에는 통째로 건너뛰었다).
+     다만 그 줄에 붙은 것이 없고 **공용 파일로만** 잡히는데 같은 채널 줄이 여럿이면
+     그대로 둔다 — 그 광고비를 어느 줄 몫으로 넣을지 알 수 없어서다. */
   const fillPlan = () => {
-    const byCh = {};
+    const ready = [];
+    const many = [];
     allPlanRows().forEach((row) => {
       const ch = String(row.channel || '').trim();
       if (!ch) return;
-      if (!byCh[ch]) byCh[ch] = [];
-      byCh[ch].push(row);
-    });
-    const ready = [];
-    const many = [];
-    Object.keys(byCh).forEach((ch) => {
-      const got = spendFor(ch);
-      if (!got.rows) return;                      // 이 채널에 붙은 파일이 없다
-      if (byCh[ch].length > 1) { many.push(ch); return; }
-      ready.push({ channel: ch, row: byCh[ch][0], ...got });
+      const key = slotOf(row);
+      const got = spendFor(key);
+      if (!got.rows) return;                      // 이 줄에 잡히는 파일이 없다
+      if (!(byChannel[key] || []).length && twinsOf(ch).length > 1) {
+        if (many.indexOf(ch) < 0) many.push(ch);
+        return;
+      }
+      ready.push({ channel: ch, row: row, ...got });
     });
     return { ready: ready, many: many };
   };
@@ -14208,15 +14246,15 @@ if (eventReport) {
     const plan0 = fillPlan();
     if (!plan0.ready.length) {
       fileNote = plan0.many.length
-        ? `채울 줄이 없습니다 — <b>${escape(plan0.many.join(' · '))}</b> 은 같은 판매채널 줄이 여럿이라 건드리지 않았습니다.`
+        ? `채울 줄이 없습니다 — <b>${escape(plan0.many.join(' · '))}</b> 은 같은 판매채널 줄이 여럿인데 공용 파일로만 잡혀, 어느 줄 몫인지 알 수 없습니다 (줄에 파일을 붙이면 채웁니다).`
         : '붙인 파일에서 이 달 판매채널을 찾지 못했습니다.';
       render();
       return;
     }
     const total = plan0.ready.reduce((sum, one) => sum + one.spend, 0);
     const brand = plan0.ready.reduce((sum, one) => sum + one.brand, 0);
-    const what = plan0.ready.map((one) => `${one.channel} ${won(one.spend)}`).join('\n');
-    if (!window.confirm(`${plan0.ready.length}개 판매채널의 실사용비를 붙인 파일로 채웁니다.\n\n`
+    const what = plan0.ready.map((one) => `${one.channel}${one.row.sku ? ` · ${one.row.sku}` : ''} ${won(one.spend)}`).join('\n');
+    if (!window.confirm(`${plan0.ready.length}줄의 실사용비를 붙인 파일로 채웁니다.\n\n`
       + `${what}\n\n합계 ${won(total)}`
       + (brand ? `\n(브랜드검색 ${won(brand)} 은 뺐습니다 — 고정비에 이미 있습니다)` : '')
       + '\n\n월별 예산에 그대로 저장됩니다. 채울까요?')) return;
@@ -14340,6 +14378,28 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
   };
 
   // 올려 둔 파일 수 (공용 + 행사마다 따로 붙인 것)
+  /* 예전 판은 파일을 **판매채널 이름**으로 담았다. 그 파일을 그 채널의 **첫 줄**로
+     옮긴다. 여러 줄에 같이 붙이지 않는 까닭: 그러면 같은 광고비를 두 번 세게 된다.
+     옮긴 것은 화면에 적어 준다 — 다른 줄에도 필요하면 사람이 다시 붙이면 된다.
+     이 달에 없는 채널 이름은 그대로 둔다 (달을 바꾸면 그 줄이 있을 수 있다). */
+  const fitFiles = () => {
+    const moved = [];
+    Object.keys(byChannel).forEach((key) => {
+      if (rowOfSlot(key)) return;               // 이미 줄 번호다
+      const kin = twinsOf(key);
+      if (!kin.length) return;
+      const to = slotOf(kin[0]);
+      if (!to || byChannel[to]) return;         // 그 줄에 이미 붙어 있으면 건드리지 않는다
+      byChannel[to] = byChannel[key];
+      delete byChannel[key];
+      moved.push(`${key} → ${kin[0].sku || '(SKU 없음)'}`);
+    });
+    if (moved.length) {
+      fileNote = `판매채널에 붙어 있던 파일을 줄로 옮겼습니다 — <b>${escape(moved.join(' · '))}</b>. 이제 파일은 줄마다 따로 붙습니다 (다른 줄에도 필요하면 그 줄에 붙여 주세요).`;
+    }
+    return moved;
+  };
+
   const fileCount = () => files.length + Object.keys(byChannel)
     .reduce((sum, key) => sum + (byChannel[key] || []).length, 0);
 
@@ -14406,6 +14466,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         Object.keys(byChannel).forEach((key) => { delete byChannel[key]; });
         Object.keys(body.byChannel || {}).forEach((key) => { byChannel[key] = body.byChannel[key]; });
         Object.keys(adsGot).forEach((key) => { delete adsGot[key]; });
+        fitFiles();        // 시트에서 온 것도 옛 열쇠일 수 있다
         keepFiles();
         if (body.note) fileNote = escape(body.note);
         render();
@@ -14443,6 +14504,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (kept) {
       plan = (kept.plan && typeof kept.plan === 'object') ? kept.plan : { skus: [], rows: [] };
       saved = { at: kept.updatedAt || '', by: kept.updatedBy || '' };
+      fitFiles();        // 예전에 채널로 담아 둔 파일을 줄로 옮긴다
       status = 'ready';
     } else {
       status = 'loading';
@@ -14467,6 +14529,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         plan = (found.plan && typeof found.plan === 'object') ? found.plan : { skus: [], rows: [] };
         saved = { at: found.updatedAt || '', by: found.updatedBy || '' };
         keepBudget(month, found);
+        fitFiles();        // 예전에 채널로 담아 둔 파일을 줄로 옮긴다
         fresh = true;
         status = 'ready';
         render();
@@ -14486,7 +14549,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
      그 사이에 남이 고치면 그 값을 덮는다. */
   const putTyped = (promo, one, hit) => {
     if (hit) hit.classList.add('is-saving');
-    askSheet({ action: 'trendChannelPut', month: month, promo: promo,
+    askSheet({ action: 'trendChannelPut', month: month, promo: chanOf(promo),
       channel: one.channel, sales: one.sales, rev: one.rev,
       alarm: one.alarm, ask: one.ask, buy: one.buy,
       sessions: one.sessions, formIn: one.formIn, phases: one.phases || {} })
@@ -14497,7 +14560,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       })
       .catch((reason) => {
         if (hit) hit.classList.remove('is-saving');
-        error = `적어 둔 값을 담지 못했습니다 (${promo}) — ${reason.message}`;
+        error = `적어 둔 값을 담지 못했습니다 (${chanOf(promo)}) — ${reason.message}`;
         render();
       });
   };
@@ -14516,7 +14579,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       was[hit.dataset.key] = String(hit.value || '').replace(/[,\s₩원]/g, '').trim();
       phases[name] = was;
       one.phases = phases;
-      manual[`${month}|${promo}`] = one;
+      manual[`${month}|${chanOf(promo)}`] = one;
       render();   // 적은 값으로 판매량 · CPS · ROAS 가 그 자리에서 다시 셈해진다
       putTyped(promo, one, null);
       return;
@@ -14531,7 +14594,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       const one = { ...typedOf(promo) };
       if (what === 'alarm') one.alarm = hit.checked;
       else one[hit.dataset.key] = String(hit.value || '').replace(/[,\s₩원]/g, '').trim();
-      manual[`${month}|${promo}`] = one;
+      manual[`${month}|${chanOf(promo)}`] = one;
       /* 체크는 바로 다시 그린다 (사전알림 칸이 나오고 CPS 가 CPA 로 바뀐다).
          글자 칸은 안 그린다 — change 는 빠져나올 때 와서, 그때 다시 그리면
          사람이 이어서 누른 곳이 사라져 그 누름이 삼켜진다. */
@@ -14567,18 +14630,6 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     }
   });
 
-  /* 같은 판매채널로 적힌 줄이 여럿이면 먼저 묻는다.
-     한 줄에서 지운 파일이 다른 SKU 줄에서도 없어지는데, 누르는 쪽에서는 그 줄만
-     건드리는 줄 안다 (더 플렌더MAX 에서 지웠더니 mini 에서도 없어졌다는 말이 그것이다).
-     한 줄뿐이면 묻지 않는다 — 놀랄 일이 없는데 묻는 것은 성가시기만 하다. */
-  const kinAsk = (channel, what) => {
-    const kin = twinsOf(channel);
-    if (kin.length < 2) return true;
-    return window.confirm(`${what}\n\n`
-      + `이 파일은 판매채널 「${channel}」 의 것이라 같은 판매채널로 적힌 ${kin.length}줄이 함께 씁니다:\n`
-      + `  ${kinNames(kin)}\n\n`
-      + '그 줄들에서 모두 없어집니다. 지울까요?');
-  };
 
   eventReport.addEventListener('click', (event) => {
     const hit = event.target.closest('[data-er]');
@@ -14604,7 +14655,6 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (what === 'offfile') {
       const channel = hit.dataset.channel;
       const own = byChannel[channel] || [];
-      if (!kinAsk(channel, `파일 ${(own[Number(hit.dataset.at)] || {}).name || ''} 을 뺍니다.`)) return;
       const gone = own.splice(Number(hit.dataset.at), 1)[0];
       if (!own.length) delete byChannel[channel];
       delete adsGot[channel];
@@ -14616,7 +14666,6 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (what === 'offone') {
       const channel = hit.dataset.channel;
       const many = (byChannel[channel] || []).length;
-      if (!kinAsk(channel, `${channel} 에 붙인 파일 ${many}개를 지웁니다.`)) return;
       delete byChannel[channel];
       delete adsGot[channel];
       saveFiles();
