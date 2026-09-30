@@ -1944,3 +1944,6 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .er-table td.er-name svg{margin-right:4px;vertical-align:-2px}
 .er-split td.er-mname{display:table-cell;white-space:nowrap}
 .er-split td.er-mname svg{margin-right:4px;vertical-align:-2px}
+
+/* 올린 파일 지우기 — 되돌릴 수 없는 단추라 눈에 띄게 */
+.er-drop:hover{border-color:#e4b8b4;background:#fdf4f3;color:#c0392b}

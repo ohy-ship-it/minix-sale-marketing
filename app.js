@@ -13612,7 +13612,7 @@ if (eventReport) {
           <i data-lucide="${own.length ? 'file-check' : 'paperclip'}"></i>${own.length ? `${own.length}개` : '파일'}
           <input type="file" accept=".json,application/json" multiple data-er="one" data-channel="${escape(row.channel || '')}" hidden>
         </label>
-        ${own.length ? `<button type="button" class="er-off" data-er="offone" data-channel="${escape(row.channel || '')}" title="이 행사 파일 다 빼기"><i data-lucide="x"></i></button>` : ''}
+        ${own.length ? `<button type="button" class="er-off" data-er="offone" data-channel="${escape(row.channel || '')}" title="이 행사에 붙인 파일을 지웁니다 (담아 둔 것까지)"><i data-lucide="x"></i></button>` : ''}
       </td>
     </tr>${open === row.id
       ? `<tr class="er-more"><td colspan="${HEAD.length}">${detailCard(row, alarm)}</td></tr>` : ''}`;
@@ -14176,7 +14176,9 @@ if (eventReport) {
             <i data-lucide="upload"></i>${files.length ? '파일 더 붙이기' : '전매체 파일 붙이기'}
             <input type="file" accept=".json,application/json" multiple data-er="file" hidden>
           </label>
-          ${files.length ? '<button type="button" class="tool-copy-all" data-er="drop"><i data-lucide="x"></i>파일 다 빼기</button>' : ''}
+          ${fileCount() ? `<button type="button" class="tool-copy-all er-drop" data-er="drop"
+            title="올려 둔 전매체 파일을 지웁니다 — 담아 둔 것까지 지워져 새로고침해도 돌아오지 않습니다">
+            <i data-lucide="trash-2"></i>올린 파일 지우기 (${num(fileCount())})</button>` : ''}
           <button type="button" class="tool-copy-all" data-er="save"
             title="붙인 파일을 이 브라우저에 담아 둡니다 (판매채널 추이와 같은 자리입니다)">
             <i data-lucide="save"></i>저장</button>
@@ -14191,7 +14193,7 @@ if (eventReport) {
     const range = rangeIn(one.body);
     return `<span class="tr-chip"><b>${escape(span(range.since, range.until)) || '기간 없음'}</b>
       <em>${escape(one.name)}</em>
-      <button type="button" data-er="dropone" data-at="${at}" title="이 파일 빼기"><i data-lucide="x"></i></button></span>`;
+      <button type="button" data-er="dropone" data-at="${at}" title="이 파일을 지웁니다 (담아 둔 것까지)"><i data-lucide="x"></i></button></span>`;
   }).join('')}</div>` : ''}
         <p class="perf-note${error ? ' bg-note-bad' : ''}">${error ? escape(error)
     : `${saved.at ? `월별 예산 마지막 저장 ${escape(new Date(saved.at).toLocaleString('ko-KR'))}${saved.by ? ` · ${escape(saved.by)}` : ''}`
@@ -14225,6 +14227,10 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     Object.keys(kept.byChannel || {}).forEach((key) => { byChannel[key] = kept.byChannel[key]; });
     savedAt = String(kept.at || '');
   };
+
+  // 올려 둔 파일 수 (공용 + 행사마다 따로 붙인 것)
+  const fileCount = () => files.length + Object.keys(byChannel)
+    .reduce((sum, key) => sum + (byChannel[key] || []).length, 0);
 
   const saveFiles = () => {
     const empty = !files.length && !Object.keys(byChannel).length;
@@ -14395,16 +14401,39 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (what === 'reload') { opening = false; load(true); return; }
     if (what === 'save') { saveFiles(); return; }
     if (what === 'fill') { fillUsed(); return; }
-    if (what === 'drop') { files = []; fileNote = ''; open = ''; render(); return; }
+    /* 지우기는 **담아 둔 것까지** 지운다 (saveFiles 가 비면 담아 둔 자리를 비운다).
+       화면에서만 빼면 새로고침할 때 도로 살아나, 지운 줄 알았던 파일로 숫자가
+       다시 채워진다. 그것이 가장 나쁘다. */
+    if (what === 'drop') {
+      const many = fileCount();
+      if (!window.confirm(`올려 둔 전매체 파일 ${many}개를 지웁니다.\n\n`
+        + '이 브라우저에 담아 둔 것까지 지워져 새로고침해도 돌아오지 않습니다.\n'
+        + '판매채널 추이도 같은 파일을 쓰므로 그쪽에서도 없어집니다.\n\n'
+        + '지울까요? (파일 자체는 내려받은 자리에 그대로 있습니다)')) return;
+      files = [];
+      Object.keys(byChannel).forEach((key) => { delete byChannel[key]; });
+      open = '';
+      openAds = '';
+      Object.keys(adsGot).forEach((key) => { delete adsGot[key]; });
+      saveFiles();
+      fileNote = `올려 둔 파일 <b>${num(many)}개</b>를 지웠습니다.`;
+      render();
+      return;
+    }
     if (what === 'dropone') {
-      files.splice(Number(hit.dataset.at), 1);
-      fileNote = '';
+      const gone = files.splice(Number(hit.dataset.at), 1)[0];
+      saveFiles();
+      fileNote = `<b>${escape((gone && gone.name) || '파일')}</b> 을 지웠습니다.`;
       render();
       return;
     }
     if (what === 'offone') {
-      delete byChannel[hit.dataset.channel];
-      fileNote = '';
+      const channel = hit.dataset.channel;
+      const many = (byChannel[channel] || []).length;
+      delete byChannel[channel];
+      delete adsGot[channel];
+      saveFiles();
+      fileNote = `<b>${escape(channel)}</b> 에 붙인 파일 ${num(many)}개를 지웠습니다.`;
       render();
       return;
     }
