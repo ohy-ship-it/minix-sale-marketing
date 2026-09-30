@@ -13594,6 +13594,7 @@ if (eventReport) {
     const mine = (own.length || files.length) ? rowsFor(row.channel) : [];
     const got = mine.length ? sumOf(mine) : null;
     const alarm = isAlarm(row.channel);
+    const sold = soldFor(row.channel);   // 달성률 — 목표수량과 견줄 값
     return `<tr class="er-row${open === row.id ? ' is-open' : ''}" data-er="pick" data-row="${id}">
       <td class="er-name"><i data-lucide="chevron-right"></i>${escape(row.channel || '') || dash}</td>
       <td>${escape(row.group || '') || dash}</td>
@@ -13606,7 +13607,7 @@ if (eventReport) {
     ? mediaOf(row).map((one) => `<span class="bg-kind is-on">${escape(one)}</span>`).join('')
     : dash}</td>
       <td class="perf-num bg-cost"><span${rowManual(row) ? ' class="is-manual" title="수기로 적은 금액입니다"' : ''}>${cost ? won(cost) : dash}</span></td>
-      <td class="perf-num er-rate${cost && used > cost ? ' is-over' : ''}">${cost ? perfPercent(used / cost) : dash}</td>
+      <td class="perf-num er-rate${row.goal && sold >= Number(row.goal) ? ' is-good' : ''}">${row.goal ? perfPercent(sold / Number(row.goal)) : dash}</td>
       <td class="perf-num bg-used">${used ? won(used) : dash}</td>
       ${got ? `<td class="perf-num">${money(got.spend)}</td>
         <td class="perf-num">${got.buy ? num(got.buy) : dash}</td>
@@ -13623,14 +13624,15 @@ if (eventReport) {
       ? `<tr class="er-more"><td colspan="${HEAD.length}">${detailCard(row, alarm)}</td></tr>` : ''}`;
   };
 
-  /* 달성률은 **광고비와 실사용비 사이**에 둔다 — 짠 돈과 나간 돈을 나란히 놓고
-     그 사이에서 바로 읽히게. 100% 를 넘으면 표를 낸다 (짠 것보다 더 썼다). */
+  /* 달성률은 **실판매량 ÷ 목표수량**이다 — 이 표가 묻는 것은 "얼마나 팔렸나" 라서다.
+     판매량은 손으로 적은 총판매수가 있으면 그것, 없으면 붙인 파일이 센 구매 수다.
+     목표를 넘기면 표를 낸다 — 좋은 쪽이라 붉게 쓰지 않는다. */
   const HEAD = ['판매채널', '구분', '파트', '라이브일정', '광고기간', '목표수량', '목표 CPS',
     '진행광고매체', '광고비', '달성률', '실사용비', '집행 광고비', '판매량', 'ROAS', '파일'];
   /* 이름만으로는 무엇을 무엇으로 나눈 값인지 알 수 없는 칸에 한 줄 적어 둔다.
      (같은 표에 광고비 · 실사용비 · 집행 광고비가 나란히 있어 더 그렇다) */
   const HEAD_NOTE = {
-    '달성률': '실사용비 ÷ 광고비',
+    '달성률': '판매량 ÷ 목표수량',
     '광고비': 'CPS×목표수량',
     '집행 광고비': '붙인 파일',
   };
@@ -13938,6 +13940,21 @@ if (eventReport) {
     </figure>`; }).join('')}</div>`;
   };
 
+  /* 그 행사에 붙인 파일. **지우기가 여기 있다** — 파일 하나하나를 그 줄 안에서 뺀다.
+     (주차마다 하나씩 붙이는 자리라, 한 주만 잘못 붙였을 때 그것만 뺄 수 있어야 한다) */
+  const ownFiles = (promo) => {
+    const own = byChannel[promo] || [];
+    if (!own.length) return '';
+    return `<div class="er-files er-own-files"><small>이 행사에 붙인 파일</small>
+      ${own.map((one, at) => {
+    const range = rangeIn(one.body);
+    return `<span class="tr-chip"><b>${escape(span(range.since, range.until)) || '기간 없음'}</b>
+      <em>${escape(one.name)}</em>
+      <button type="button" data-er="offfile" data-channel="${escape(promo)}" data-at="${at}"
+        title="이 파일만 뺍니다 (담아 둔 것까지)"><i data-lucide="x"></i></button></span>`;
+  }).join('')}</div>`;
+  };
+
   const detailCard = (row, alarm) => {
     const promo = String(row.channel || '');
     if (!promo) {
@@ -13946,6 +13963,7 @@ if (eventReport) {
     }
     const twins = twinsOf(promo);
     return `<div class="er-detail">
+      ${ownFiles(promo)}
       ${mergeNote(promo)}
       ${twins.length > 1 ? `<p class="perf-note">이 달에 <b>${escape(promo)}</b> 로 적힌 줄이
         ${num(twins.length)}개입니다 (${escape(twins.map((one) => one.sku || '(SKU 없음)').join(' · '))}).
@@ -14010,6 +14028,15 @@ if (eventReport) {
   /* 실제로 팔린 수. 이것도 판매채널 단위다.
        ① 적어 둔 **총 판매수** 가 있으면 그 값 (판매처에서 센 수다)
        ② 없으면 단계별로 적은 판매수 · 붙인 파일의 판매량 (wholeOf 가 그 차례로 센다) */
+  /* 실판매량 — 손으로 적은 총판매수가 있으면 그것이 이기고, 없으면 붙인 파일이 센 구매 수다.
+     판매채널 하나가 행사 하나라 **채널 단위로** 센다 (같은 채널에 SKU 줄이 둘이어도 한 번). */
+  const soldFor = (channel) => {
+    const ch = String(channel || '').trim();
+    if (!ch) return 0;
+    const typed = typedOf(ch);
+    return typed.sales !== '' ? (Number(typed.sales) || 0) : wholeOf(ch).buy;
+  };
+
   const soldOf = (rows) => {
     const seen = [];
     let sum = 0;
@@ -14017,8 +14044,7 @@ if (eventReport) {
       const ch = String(row.channel || '').trim();
       if (!ch || seen.indexOf(ch) >= 0) return;
       seen.push(ch);
-      const typed = typedOf(ch);
-      sum += typed.sales !== '' ? (Number(typed.sales) || 0) : wholeOf(ch).buy;
+      sum += soldFor(ch);
     });
     return sum;
   };
@@ -14222,9 +14248,6 @@ if (eventReport) {
             <i data-lucide="upload"></i>${files.length ? '파일 더 붙이기' : '전매체 파일 붙이기'}
             <input type="file" accept=".json,application/json" multiple data-er="file" hidden>
           </label>
-          ${fileCount() ? `<button type="button" class="tool-copy-all er-drop" data-er="drop"
-            title="올려 둔 전매체 파일을 지웁니다 — 담아 둔 것까지 지워져 새로고침해도 돌아오지 않습니다">
-            <i data-lucide="trash-2"></i>올린 파일 지우기 (${num(fileCount())})</button>` : ''}
           <button type="button" class="tool-copy-all" data-er="save"${pushing ? ' disabled' : ''}
             title="붙인 파일을 시트에 담습니다 — 다른 사람 컴퓨터에서도 보입니다">
             <i data-lucide="save"></i>${pushing ? '담는 중…' : '저장 (팀 공유)'}</button>
@@ -14511,27 +14534,26 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (what === 'fill') { fillUsed(); return; }
     /* 지우기는 **담아 둔 것까지** 지운다 (saveFiles 가 비면 담아 둔 자리를 비운다).
        화면에서만 빼면 새로고침할 때 도로 살아나, 지운 줄 알았던 파일로 숫자가
-       다시 채워진다. 그것이 가장 나쁘다. */
-    if (what === 'drop') {
-      const many = fileCount();
-      if (!window.confirm(`올려 둔 전매체 파일 ${many}개를 지웁니다.\n\n`
-        + '이 브라우저에 담아 둔 것까지 지워져 새로고침해도 돌아오지 않습니다.\n'
-        + '판매채널 추이도 같은 파일을 쓰므로 그쪽에서도 없어집니다.\n\n'
-        + '지울까요? (파일 자체는 내려받은 자리에 그대로 있습니다)')) return;
-      files = [];
-      Object.keys(byChannel).forEach((key) => { delete byChannel[key]; });
-      open = '';
-      openAds = '';
-      Object.keys(adsGot).forEach((key) => { delete adsGot[key]; });
-      saveFiles();
-      fileNote = `올려 둔 파일 <b>${num(many)}개</b>를 지웠습니다.`;
-      render();
-      return;
-    }
+       다시 채워진다. 그것이 가장 나쁘다.
+
+       지우는 자리는 **그 파일이 보이는 곳**이다 — 공용 파일은 위의 조각에서,
+       행사에 붙인 파일은 그 줄 안에서 하나씩. 한 단추로 통째로 지우던 것은 뺐다:
+       어느 줄의 파일이 없어지는지 모른 채 누르게 되기 때문이다. */
     if (what === 'dropone') {
       const gone = files.splice(Number(hit.dataset.at), 1)[0];
       saveFiles();
       fileNote = `<b>${escape((gone && gone.name) || '파일')}</b> 을 지웠습니다.`;
+      render();
+      return;
+    }
+    if (what === 'offfile') {
+      const channel = hit.dataset.channel;
+      const own = byChannel[channel] || [];
+      const gone = own.splice(Number(hit.dataset.at), 1)[0];
+      if (!own.length) delete byChannel[channel];
+      delete adsGot[channel];
+      saveFiles();
+      fileNote = `<b>${escape(channel)}</b> 에서 <b>${escape((gone && gone.name) || '파일')}</b> 을 뺐습니다.`;
       render();
       return;
     }

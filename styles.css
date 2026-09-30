@@ -1961,3 +1961,10 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .tr-cut-play svg{width:11px}
 .tr-cut.is-video img{filter:brightness(.94)}
 .tr-cut-more{color:#a5a49f}
+
+/* 달성률 — 목표수량 대비 실판매량. 넘기면 좋은 쪽이라 붉게 쓰지 않는다 */
+.er-rate.is-good{color:#2e7d5b;font-weight:700}
+
+/* 그 행사에 붙인 파일 (펼친 판 맨 위 · 하나씩 뺀다) */
+.er-own-files{margin:0 0 8px;align-items:center}
+.er-own-files>small{color:#8a8983;font-size:12px;margin-right:2px}
