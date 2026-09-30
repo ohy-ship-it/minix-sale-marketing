@@ -7613,7 +7613,17 @@ var TREND_CHANNEL_SHEET_NAME = '추이판매채널';
    이미 쌓인 줄이 밀려 엉뚱하게 읽힌다 (단계날짜 · 퍼포먼스일정에서 겪은 것과 같다). */
 var TREND_CHANNEL_HEADERS = ['달', '프로모션명', '판매채널', '수정자', '수정시각',
   '총판매수', '총매출', '사전알림', '알림신청수', '알림구매수', '단계별(JSON)',
-  '세션수', '신청폼진입'];
+  '세션수', '신청폼진입', '줄'];
+
+/* '줄' 은 행사별 결과의 **그 줄 번호**다 (월별 예산 프로모션 줄의 id).
+   같은 판매채널로 적힌 줄이 여럿일 때(더 플렌더MAX · mini 가 다 카카오) 판매수 ·
+   매출을 줄마다 가르려고 둔다 — 판매처에서 센 수는 SKU 마다 다르기 때문이다.
+
+   비어 있으면 **그 판매채널 전체 값**이다 (줄로 가르기 전에 적어 둔 것과,
+   판매채널 추이 화면에서 적는 값이 그렇다). 읽는 쪽에서 이렇게 가른다:
+     · 줄 번호가 붙은 줄이 하나라도 있으면 그것들만 본다 (빈 줄은 옛 총합이라 버린다)
+     · 하나도 없으면 빈 줄을 그 채널 값으로 본다
+   이렇게 두지 않으면 옛 총합과 줄별 값이 같이 세어져 두 배가 된다. */
 
 /* 단계(사전 · 당일 · 사후 · 상시)마다 손으로 적은 판매수 · 매출.
    칸을 여덟 개 더 붙이는 대신 한 칸에 JSON 으로 둔다 — 단계가 늘어도 시트를 안 고친다.
@@ -7685,7 +7695,8 @@ function trendChannelRows_(book) {
          신청완료 · 구매수는 위의 알림신청수(ask) · 알림구매수(buy) 를 그대로 쓴다 —
          같은 것을 두 칸에 두면 어느 쪽이 맞는지 알 수 없게 된다. */
       sessions: trendNum_(line[11]),    // 사전알림 페이지 세션수
-      formIn: trendNum_(line[12])       // 신청폼 진입
+      formIn: trendNum_(line[12]),      // 신청폼 진입
+      rowId: String(line[13] || '').trim()   // 그 줄의 것인가 (비면 판매채널 전체)
     });
   });
   return out;
@@ -7712,6 +7723,7 @@ function trendChannelPut_(payload) {
   var buy = trendNum_(payload && payload.buy);
   var sessions = trendNum_(payload && payload.sessions);
   var formIn = trendNum_(payload && payload.formIn);
+  var rowId = String((payload && payload.rowId) || '').trim();
   var phases = trendPhases_(payload && payload.phases);
   var anyPhase = Object.keys(phases).length > 0;
 
@@ -7722,10 +7734,13 @@ function trendChannelPut_(payload) {
     var last = sheet.getLastRow();
     var at = 0;
     if (last > 1) {
-      var have = sheet.getRange(2, 1, last - 1, 2).getValues();
+      /* 자리는 **달 · 프로모션명 · 줄** 셋이 다 같아야 그 줄이다.
+         줄을 안 보면 줄별 값이 판매채널 전체 값을 덮어쓴다. */
+      var have = sheet.getRange(2, 1, last - 1, TREND_CHANNEL_HEADERS.length).getValues();
       for (var i = 0; i < have.length; i++) {
         if (monthBudgetKey_(have[i][0]) !== month) continue;
         if (String(have[i][1]).trim() !== promo) continue;
+        if (String(have[i][13] || '').trim() !== rowId) continue;
         at = i + 2;
         break;
       }
@@ -7735,14 +7750,14 @@ function trendChannelPut_(payload) {
       && sessions === '' && formIn === '' && !anyPhase) {
       if (at) sheet.deleteRow(at);
       budgetStamp_(true);
-      return { ok: true, month: month, promo: promo, removed: !!at };
+      return { ok: true, month: month, promo: promo, rowId: rowId, removed: !!at };
     }
     if (!at) at = sheet.getLastRow() + 1;
     sheet.getRange(at, 1, 1, TREND_CHANNEL_HEADERS.length)
       .setValues([[month, promo, channel, who, new Date(), sales, rev, alarm, ask, buy,
-        anyPhase ? JSON.stringify(phases) : '', sessions, formIn]]);
+        anyPhase ? JSON.stringify(phases) : '', sessions, formIn, rowId]]);
     budgetStamp_(true);            // 담아 둔 추이를 버린다 (다음에 열면 새로 읽는다)
-    return { ok: true, month: month, promo: promo, channel: channel,
+    return { ok: true, month: month, promo: promo, channel: channel, rowId: rowId,
       sales: sales, rev: rev, alarm: alarm, ask: ask, buy: buy, phases: phases,
       sessions: sessions, formIn: formIn,
       savedAt: new Date().toISOString() };

@@ -1972,3 +1972,6 @@ html.is-gated,html.is-gated body{overflow:hidden}
 /* 같은 판매채널로 적힌 줄이 여럿 — 파일 · 적은 값 · 숫자를 함께 쓴다 */
 .er-kin{display:inline-block;margin-left:4px;padding:1px 5px;border-radius:9px;
   background:#f1f0ec;color:#8a8983;font-size:11px;font-weight:600;vertical-align:1px}
+
+/* 행사별 결과에서 줄마다 적고 있는 채널 — 여기 값은 그 합이라 읽기만 한다 */
+.tr-typed.is-sum input{background:#f5f4f1;color:#8a8983;cursor:default}

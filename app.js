@@ -12608,6 +12608,8 @@ if (eventResult) {
 
   const phaseTable = (channel) => {
     const alarm = isAlarm(channel);
+    // 줄로 갈린 채널은 여기서 안 적는다 (typedBar 와 같은 까닭)
+    const splitHere = !!typedOf(channel).split;
     const packs = phasePacks(channel);
     if (!packs.length) {
       return '<p class="perf-note">붙인 전매체 파일이 없습니다 — 전매체 검색에서 단계 날짜를 '
@@ -12637,10 +12639,10 @@ if (eventResult) {
           ${metricRow(one.sum, alarm)}
           <td class="perf-num"><input type="text" inputmode="numeric" class="tr-phase-in"
             data-tr="phase" data-key="sales" data-phase="${escape(one.name)}"
-            data-channel="${escape(channel)}" value="${escape(numText(one.typed.sales))}" placeholder="—"></td>
+            data-channel="${escape(channel)}" value="${escape(numText(one.typed.sales))}" placeholder="—"${splitHere ? ' readonly' : ''}></td>
           <td class="perf-num"><input type="text" inputmode="numeric" class="tr-phase-in"
             data-tr="phase" data-key="rev" data-phase="${escape(one.name)}"
-            data-channel="${escape(channel)}" value="${escape(numText(one.typed.rev))}" placeholder="—"></td>
+            data-channel="${escape(channel)}" value="${escape(numText(one.typed.rev))}" placeholder="—"${splitHere ? ' readonly' : ''}></td>
         </tr>`).join('')}</tbody>
       </table></div>
       ${packs.length === 1 && packs[0].name === '(단계 없음)'
@@ -12709,17 +12711,23 @@ if (eventResult) {
 
   const typedBar = (channel) => {
     const one = typedOf(channel);
-    const box = (key, name, hint) => `<label class="tr-typed" title="${escape(hint)}">${escape(name)}
+    /* 같은 판매채널로 적힌 줄이 여럿이면 **행사별 결과에서 줄마다** 적는다
+       (더 플렌더MAX 와 mini 는 판매처에서 센 수가 다르다). 여기 값은 그 줄들을
+       합친 것이라 읽기만 한다 — 여기서 적게 두면 줄 값이 그 한 칸에 눌려 사라진다. */
+    const split = !!one.split;
+    const box = (key, name, hint) => `<label class="tr-typed${split ? ' is-sum' : ''}"
+      title="${escape(split ? `${name} — 행사별 결과에서 줄마다 적은 값을 합친 것입니다 (여기서는 못 고칩니다)` : hint)}">${escape(name)}
       <input type="text" inputmode="numeric" data-tr="typed" data-key="${key}"
-        data-channel="${escape(channel)}" value="${escape(numText(one[key]))}" placeholder="—"></label>`;
+        data-channel="${escape(channel)}" value="${escape(numText(one[key]))}" placeholder="—"${split ? ' readonly' : ''}></label>`;
     return `<div class="tr-typed-bar">
       ${box('sales', '총 판매수', '판매처에서 센 실제 판매 건수 (광고가 보고한 전환수와 다릅니다)')}
       ${box('rev', '총 매출', '판매처에서 센 실제 매출 (광고가 보고한 판매전환값과 다릅니다)')}
-      <label class="tr-typed tr-alarm" title="사전알림을 받은 행사면 켜 주세요 — 아래 표의 CPS 가 CPA 로 바뀝니다">
-        <input type="checkbox" data-tr="alarm" data-channel="${escape(channel)}"${one.alarm ? ' checked' : ''}>사전알림</label>
+      <label class="tr-typed tr-alarm" title="${split ? '행사별 결과에서 줄마다 적고 있습니다 (여기서는 못 고칩니다)' : '사전알림을 받은 행사면 켜 주세요 — 아래 표의 CPS 가 CPA 로 바뀝니다'}">
+        <input type="checkbox" data-tr="alarm" data-channel="${escape(channel)}"${one.alarm ? ' checked' : ''}${split ? ' disabled' : ''}>사전알림</label>
       ${one.alarm ? box('ask', '사전알림 신청수', '사전알림을 신청한 사람 수') : ''}
       ${one.alarm ? box('buy', '사전알림 유저 구매수', '사전알림을 신청한 사람 중 실제로 산 수') : ''}
       ${one.alarm ? `<span class="tr-typed-note">사전알림 행사라 아래 표는 <b>CPA</b>(광고비 ÷ 결과) 로 셉니다</span>` : ''}
+      ${split ? `<span class="tr-typed-note">이 값은 <b>행사별 결과</b>에서 SKU 줄마다 적은 것을 합친 것입니다 — 고치려면 그 화면에서요.</span>` : ''}
     </div>`;
   };
 
@@ -12750,6 +12758,55 @@ if (eventResult) {
   /* 사람이 적어 둔 판매채널. 그 달에 적은 것이 없으면 **지난달 값을 이어받아** 보여 준다
      (프로모션은 달이 바뀌어도 대개 같은 채널에서 돈다). 이어받은 값은 옅게 적고,
      한 번 고치거나 그대로 저장하면 그 달 값으로 굳는다. */
+  /* 이 화면은 **판매채널 단위**다. 행사별 결과는 줄마다 적으므로
+     (더 플렌더MAX · mini 가 다 카카오면 줄이 둘) 여기서 합쳐 본다.
+
+     줄 번호가 붙은 줄이 하나라도 있으면 **그것들만** 센다 — 번호가 빈 줄은 줄로
+     가르기 전의 총합이라, 같이 세면 두 배가 된다.
+     '그렇다/아니다' 인 값(판매채널 이름 · 사전알림)은 하나라도 있으면 그것을 쓴다. */
+  const trendPlus = (a, b) => (a === '' ? b : (b === '' ? a : Number(a) + Number(b)));
+
+  const trendManual = (list) => {
+    const split = {};
+    (list || []).forEach((one) => {
+      if (one && one.rowId) split[`${one.month}|${one.promo}`] = true;
+    });
+    const out = {};
+    const tidy = (value) => (value === undefined || value === null ? '' : value);
+    (list || []).forEach((one) => {
+      const key = `${one.month}|${one.promo}`;
+      if (split[key] && !one.rowId) return;   // 줄로 가르기 전의 총합은 버린다
+      const fresh = {
+        channel: String(one.channel || ''),
+        sales: tidy(one.sales),
+        rev: tidy(one.rev),
+        alarm: !!one.alarm,
+        ask: tidy(one.ask),
+        buy: tidy(one.buy),
+        phases: (one.phases && typeof one.phases === 'object') ? { ...one.phases } : {},
+        /* 행사별 결과에서 적는 칸. 여기서는 안 보여 주지만 들고 있다 그대로
+           돌려보낸다 — 안 그러면 이 화면에서 한 글자만 고쳐도 그 값이 지워진다. */
+        sessions: tidy(one.sessions),
+        formIn: tidy(one.formIn),
+      };
+      fresh.split = !!split[key];   // 행사별 결과에서 줄마다 적고 있는 채널이다
+      const kept = out[key];
+      if (!kept) { out[key] = fresh; return; }
+      ['sales', 'rev', 'ask', 'buy', 'sessions', 'formIn'].forEach((name) => {
+        kept[name] = trendPlus(kept[name], fresh[name]);
+      });
+      kept.alarm = kept.alarm || fresh.alarm;
+      if (!kept.channel) kept.channel = fresh.channel;
+      Object.keys(fresh.phases).forEach((name) => {
+        const was = kept.phases[name] || { sales: '', rev: '' };
+        const got = fresh.phases[name] || {};
+        kept.phases[name] = { sales: trendPlus(tidy(was.sales), tidy(got.sales)),
+          rev: trendPlus(tidy(was.rev), tidy(got.rev)) };
+      });
+    });
+    return out;
+  };
+
   const manualNow = (promo) => manual[`${month}|${promo}`] || null;
 
   /* 판매채널만 이어받는다. 총판매수 · 총매출 · 사전알림은 **그 달의 값**이라
@@ -12903,22 +12960,7 @@ if (eventResult) {
     askSheet({ action: 'budgetTrend', refresh: !!fresh })
       .then((found) => {
         body = found;
-        manual = {};
-        (found.manual || []).forEach((one) => {
-          manual[`${one.month}|${one.promo}`] = {
-            channel: String(one.channel || ''),
-            sales: one.sales === undefined || one.sales === null ? '' : one.sales,
-            rev: one.rev === undefined || one.rev === null ? '' : one.rev,
-            alarm: !!one.alarm,
-            ask: one.ask === undefined || one.ask === null ? '' : one.ask,
-            buy: one.buy === undefined || one.buy === null ? '' : one.buy,
-            phases: (one.phases && typeof one.phases === 'object') ? one.phases : {},
-            /* 행사별 결과에서 적는 칸. 여기서는 안 보여 주지만 들고 있다 그대로
-               돌려보낸다 — 안 그러면 이 화면에서 한 글자만 고쳐도 그 값이 지워진다. */
-            sessions: one.sessions === undefined || one.sessions === null ? '' : one.sessions,
-            formIn: one.formIn === undefined || one.formIn === null ? '' : one.formIn,
-          };
-        });
+        manual = trendManual(found.manual || []);
         const months = found.months || [];
         if (!month || months.indexOf(month) < 0) month = months[months.length - 1] || '';
         status = 'ready';
@@ -13519,10 +13561,22 @@ if (eventReport) {
 
   // ── 사람이 적는 값 (판매채널 추이와 같은 자리에 담긴다) ──────────────
   const numText = (value) => (value === '' || value === null || value === undefined ? '' : num(value));
-  /* 열쇠가 줄 번호로 와도 **판매채널 이름**으로 찾는다 — 이 값은 판매채널 하나에
-     적는 값이고, 시트와 판매채널 추이도 그 이름으로 담고 있다. */
+  /* 적는 값(판매수 · 매출 · 사전알림)은 **그 줄**의 것이다.
+     같은 판매채널로 적힌 줄이 여럿일 때(더 플렌더MAX · mini 가 다 카카오) 판매처에서
+     센 수는 SKU 마다 다르다 — 한 칸에 적게 두면 두 줄이 같이 움직인다.
+
+     줄로 가르기 전에 적어 둔 값과, 판매채널 추이 화면에서 적는 값은 **줄 번호가
+     비어 있다** (그 판매채널 전체 값이다). 그 값은 그 채널의 **첫 줄**이 물려받는다 —
+     여러 줄이 같이 물려받으면 지우려던 그 일이 그대로 되풀이된다.
+     (파일을 줄로 옮길 때와 같은 규칙이다 — fitFiles 를 보라) */
+  const typedKey = (promo) => `${month}|${chanOf(promo)}|${promo}`;
+  const typedOld = (promo) => {
+    const kin = twinsOf(chanOf(promo));
+    if (!kin.length || slotOf(kin[0]) !== String(promo)) return null;   // 첫 줄만
+    return manual[`${month}|${chanOf(promo)}|`] || null;
+  };
   const typedOf = (promo) => ({ ...BLANK_MANUAL,
-    ...(manual[`${month}|${chanOf(promo)}`] || {}) });
+    ...(manual[typedKey(promo)] || typedOld(promo) || {}) });
   const isAlarm = (promo) => !!typedOf(promo).alarm;
 
   /* 단계마다 손으로 적은 판매수 · 매출. **적어 둔 값이 있으면 그것으로 센다** —
@@ -13552,7 +13606,7 @@ if (eventReport) {
   const useTrend = (trend) => {
     manual = {};
     (trend.manual || []).forEach((one) => {
-      manual[`${one.month}|${one.promo}`] = {
+      manual[`${one.month}|${one.promo}|${one.rowId || ''}`] = {
         channel: String(one.channel || ''),
         sales: one.sales === undefined || one.sales === null ? '' : one.sales,
         rev: one.rev === undefined || one.rev === null ? '' : one.rev,
@@ -13619,12 +13673,10 @@ if (eventReport) {
     const got = mine.length ? sumOf(mine) : null;
     const alarm = isAlarm(key);
     const kin = twinsOf(row.channel);
-    /* 달성률만은 **판매채널 단위**다. 실판매량은 사람이 판매채널 하나에 적는 값이라
-       (판매처에서 센 수다) 줄로 가를 근거가 없다. 그래서 목표수량도 그 채널 줄들의
-       합으로 견준다 — 한쪽만 목표로 나누면 두 줄 다 200% 처럼 보인다. */
-    const flock = kin.length ? kin : [row];
-    const sold = soldOf(flock);
-    const goal = flock.reduce((into, one) => into + (Number(one.goal) || 0), 0);
+    /* 달성률은 **그 줄**의 것이다 — 판매수도 목표수량도 줄마다 적으므로.
+       (예전에는 판매수가 판매채널 하나에 적히던 값이라 목표수량도 합쳐 견줬다) */
+    const sold = soldOf([row]);
+    const goal = Number(row.goal) || 0;
     return `<tr class="er-row${open === row.id ? ' is-open' : ''}" data-er="pick" data-row="${id}">
       <td class="er-name"><i data-lucide="chevron-right"></i>${escape(row.channel || '') || dash}</td>
       <td>${escape(row.group || '') || dash}</td>
@@ -13649,7 +13701,7 @@ if (eventReport) {
           <i data-lucide="${own.length ? 'file-check' : 'paperclip'}"></i>${own.length ? `${own.length}개` : '파일'}
           <input type="file" accept=".json,application/json" multiple data-er="one" data-channel="${escape(key)}" hidden>
         </label>
-        ${kin.length > 1 ? `<span class="er-kin" title="${escape(kinNames(kin))} 가 같은 판매채널입니다 — 파일은 줄마다 따로지만, 적는 칸(판매수 · 매출 · 사전알림)과 달성률은 판매채널 하나로 셉니다">채널 ${num(kin.length)}줄</span>` : ''}
+        ${kin.length > 1 ? `<span class="er-kin" title="${escape(kinNames(kin))} 가 같은 판매채널입니다 — 붙인 파일도 적는 칸(판매수 · 매출 · 사전알림)도 줄마다 따로입니다">채널 ${num(kin.length)}줄</span>` : ''}
         ${own.length ? `<button type="button" class="er-off" data-er="offone" data-channel="${escape(key)}"
           title="이 줄에 붙인 파일을 지웁니다 (담아 둔 것까지)"><i data-lucide="x"></i></button>` : ''}
       </td>
@@ -14087,9 +14139,8 @@ if (eventReport) {
       ${mergeNote(promo)}
       ${twins.length > 1 ? `<p class="perf-note">이 달에 <b>${escape(channel)}</b> 로 적힌 줄이
         ${num(twins.length)}개입니다 (${escape(kinNames(twins))}).
-        <b>붙인 파일과 아래 숫자는 이 줄(${escape(row.sku || 'SKU 없음')})의 것</b>이고,
-        적는 칸(판매수 · 매출 · 사전알림)과 달성률은 판매채널 하나로 셉니다 —
-        판매처에서 센 수라 줄로 가를 근거가 없습니다.</p>` : ''}
+        <b>붙인 파일도 적는 칸도 아래 숫자도 이 줄(${escape(row.sku || 'SKU 없음')})의 것</b>입니다 —
+        다른 줄과 같이 움직이지 않습니다. (판매채널 추이 화면은 그 줄들을 합쳐 봅니다)</p>` : ''}
       ${typedBar(promo)}
       <h5 class="er-h">종합결과</h5>
       ${wholeBox(promo, alarm)}
@@ -14157,11 +14208,11 @@ if (eventReport) {
   /* 실제로 팔린 수. 이것도 판매채널 단위다.
        ① 적어 둔 **총 판매수** 가 있으면 그 값 (판매처에서 센 수다)
        ② 없으면 단계별로 적은 판매수 · 붙인 파일의 판매량 (wholeOf 가 그 차례로 센다) */
-  /* 실판매량.
-       ① 적어 둔 **총 판매수** 가 있으면 그 값 — 판매처에서 센 수이고 판매채널 하나에
-          한 번 적는다. 그래서 같은 채널 줄이 둘이어도 **한 번만** 센다.
-       ② 안 적었으면 붙인 파일이 센 구매 수. 파일은 줄마다 따로라 줄마다 더한다
-          (공용 파일로만 잡히면 그 채널에 한 번만 — 쓴 돈과 같은 규칙이다). */
+  /* 실판매량. **줄마다** 센다 — 적는 칸도 붙인 파일도 줄마다 따로라서다.
+       ① 그 줄에 적어 둔 **총 판매수** 가 있으면 그 값 (판매처에서 센 수다)
+       ② 안 적었으면 그 줄에 붙인 파일이 센 구매 수
+     다만 그 줄에 붙은 파일이 없어 **공용 파일로만** 잡히면 같은 판매채널 줄들이
+     모두 같은 파일을 보게 된다 — 그때는 그 채널에 한 번만 센다 (쓴 돈과 같은 규칙). */
   const soldOf = (rows) => {
     const byCh = {};
     let sum = 0;
@@ -14172,10 +14223,15 @@ if (eventReport) {
       byCh[ch].push(row);
     });
     Object.keys(byCh).forEach((ch) => {
-      const typed = typedOf(ch);
-      if (typed.sales !== '') { sum += Number(typed.sales) || 0; return; }
-      const own = byCh[ch].filter(hasOwn);
-      (own.length ? own : byCh[ch].slice(0, 1))
+      const rest = [];
+      byCh[ch].forEach((row) => {
+        const typed = typedOf(slotOf(row));
+        if (typed.sales !== '') { sum += Number(typed.sales) || 0; return; }
+        rest.push(row);
+      });
+      if (!rest.length) return;
+      const own = rest.filter(hasOwn);
+      (own.length ? own : rest.slice(0, 1))
         .forEach((row) => { sum += wholeOf(slotOf(row)).buy; });
     });
     return sum;
@@ -14604,7 +14660,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
      그 사이에 남이 고치면 그 값을 덮는다. */
   const putTyped = (promo, one, hit) => {
     if (hit) hit.classList.add('is-saving');
-    askSheet({ action: 'trendChannelPut', month: month, promo: chanOf(promo),
+    askSheet({ action: 'trendChannelPut', month: month, promo: chanOf(promo), rowId: promo,
       channel: one.channel, sales: one.sales, rev: one.rev,
       alarm: one.alarm, ask: one.ask, buy: one.buy,
       sessions: one.sessions, formIn: one.formIn, phases: one.phases || {} })
@@ -14634,7 +14690,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       was[hit.dataset.key] = String(hit.value || '').replace(/[,\s₩원]/g, '').trim();
       phases[name] = was;
       one.phases = phases;
-      manual[`${month}|${chanOf(promo)}`] = one;
+      manual[typedKey(promo)] = one;
       render();   // 적은 값으로 판매량 · CPS · ROAS 가 그 자리에서 다시 셈해진다
       putTyped(promo, one, null);
       return;
@@ -14649,7 +14705,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       const one = { ...typedOf(promo) };
       if (what === 'alarm') one.alarm = hit.checked;
       else one[hit.dataset.key] = String(hit.value || '').replace(/[,\s₩원]/g, '').trim();
-      manual[`${month}|${chanOf(promo)}`] = one;
+      manual[typedKey(promo)] = one;
       /* 체크는 바로 다시 그린다 (사전알림 칸이 나오고 CPS 가 CPA 로 바뀐다).
          글자 칸은 안 그린다 — change 는 빠져나올 때 와서, 그때 다시 그리면
          사람이 이어서 누른 곳이 사라져 그 누름이 삼켜진다. */
