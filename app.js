@@ -13715,12 +13715,14 @@ if (eventReport) {
         title="${kin.length > 1 ? `판매채널 ${escape(row.channel || '')} 전체 — 실판매량 ${num(sold)} ÷ 목표수량 합 ${num(goal)}` : ''}">${goal ? perfPercent(sold / goal) : dash}</td>
       <td class="perf-num bg-used">${used ? won(used) : dash}</td>
       ${got ? `<td class="perf-num">${money(got.spend)}</td>
+        <td class="perf-num"><span${revTyped(key)
+    ? ` class="is-manual" title="수기로 적은 총 매출입니다 (붙인 파일의 판매전환값은 ${money(got.rev)})"` : ''}>${shown.rev || revTyped(key) ? money(shown.rev) : dash}</span></td>
         <td class="perf-num"><span${soldTyped(key)
     ? ` class="is-manual" title="수기로 적은 총 판매수입니다 (붙인 파일이 센 구매 수는 ${num(got.buy)})"` : ''}>${shown.buy || soldTyped(key) ? num(shown.buy) : dash}</span></td>
         <td class="perf-num" title="${escape(cpaWhy(key, alarm))}">${cpaOf(shown, got, alarm)}</td>
         <td class="perf-num"><span${revTyped(key)
     ? ' class="is-manual" title="수기로 적은 총 매출로 셈한 ROAS 입니다"' : ''}>${got.spend ? perfRoas(ratio(shown.rev, got.spend) || 0) : dash}</span></td>`
-    : `<td class="er-none" colspan="4">파일을 붙이면 채워집니다</td>`}
+    : `<td class="er-none" colspan="5">파일을 붙이면 채워집니다</td>`}
       <td class="er-own" data-er="skip">
         <label class="er-pick" title="${escape(row.sku || '이 줄')} 의 전매체 파일 (이 줄에만 붙습니다 · 주차마다 하나씩)">
           <i data-lucide="${own.length ? 'file-check' : 'paperclip'}"></i>${own.length ? `${own.length}개` : '파일'}
@@ -13738,13 +13740,14 @@ if (eventReport) {
      판매량은 손으로 적은 총판매수가 있으면 그것, 없으면 붙인 파일이 센 구매 수다.
      목표를 넘기면 표를 낸다 — 좋은 쪽이라 붉게 쓰지 않는다. */
   const HEAD = ['판매채널', '구분', '파트', '라이브일정', '광고기간', '목표수량', '목표 CPS',
-    '진행광고매체', '광고비', '달성률', '실사용비', '집행 광고비', '판매량', '실 CPA', 'ROAS', '파일'];
+    '진행광고매체', '광고비', '달성률', '실사용비', '집행 광고비', '총매출', '판매량', '실 CPA', 'ROAS', '파일'];
   /* 이름만으로는 무엇을 무엇으로 나눈 값인지 알 수 없는 칸에 한 줄 적어 둔다.
      (같은 표에 광고비 · 실사용비 · 집행 광고비가 나란히 있어 더 그렇다) */
   const HEAD_NOTE = {
     '달성률': '판매량 ÷ 목표수량',
     '광고비': 'CPS×목표수량',
     '집행 광고비': '붙인 파일',
+    '총매출': '적은 총 매출 · 없으면 파일',
     '판매량': '적은 총 판매수 · 없으면 파일',
     '실 CPA': '집행 광고비 ÷ 판매량',
   };
