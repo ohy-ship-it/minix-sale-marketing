@@ -14353,6 +14353,34 @@ if (eventReport) {
     return sum;
   };
 
+  /* 실매출금. 실판매수(soldOf)와 **한 글자도 다르지 않은 규칙**이다 —
+     적어 둔 총 매출이 이기고, 안 적었으면 붙인 파일의 판매전환값이며,
+     그 줄에 붙은 파일이 없어 공용 파일로만 잡히면 그 채널에 한 번만 센다.
+     (두 값이 다른 규칙으로 세어지면 ROAS 가 조용히 어긋난다) */
+  const revOf = (rows) => {
+    const byCh = {};
+    let sum = 0;
+    rows.forEach((row) => {
+      const ch = String(row.channel || '').trim();
+      if (!ch) return;
+      if (!byCh[ch]) byCh[ch] = [];
+      byCh[ch].push(row);
+    });
+    Object.keys(byCh).forEach((ch) => {
+      const rest = [];
+      byCh[ch].forEach((row) => {
+        const typed = typedOf(slotOf(row));
+        if (typed.rev !== '') { sum += Number(typed.rev) || 0; return; }
+        rest.push(row);
+      });
+      if (!rest.length) return;
+      const own = rest.filter(hasOwn);
+      (own.length ? own : rest.slice(0, 1))
+        .forEach((row) => { sum += wholeOf(slotOf(row)).rev; });
+    });
+    return sum;
+  };
+
   const catBlock = (name, rows) => {
     const goal = rows.reduce((into, row) => into + (Number(row.goal) || 0), 0);
     const plan = rows.reduce((into, row) => into + rowCost(row), 0);
@@ -14396,20 +14424,30 @@ if (eventReport) {
     </div>`;
   };
 
+  /* ── SKU 판 머리의 여섯 칸 ─────────────────────────────────────
+     줄 수를 세던 자리였다 (총 갯수 · 완료갯수). 줄 수는 바로 옆에 「n줄」 로
+     이미 적혀 있어 두 번 말하는 셈이었고, 정작 **얼마 쓰고 얼마 팔았나**는
+     줄을 하나하나 눈으로 더해야 알 수 있었다. 그래서 그것으로 바꾼다.
+     아래 표 · 카테고리별과 **같은 셈**을 쓴다 (spentOf · soldOf · revOf) —
+     한 화면 안에서 위아래가 다른 수를 말하면 어느 쪽도 못 믿는다. */
   const skuCard = (name) => {
     const rows = rowsOf(name);
     const sum = planSum(rows);
+    const spend = spentOf(rows);
+    const sold = soldOf(rows);
+    const rev = revOf(rows);
     return `<div class="tool-card bg-sku">
       <div class="bg-sku-head">
         <span class="bg-sku-name">${escape(name) || '(SKU 없음)'}</span>
         <small class="bg-sku-cat">${num(sum.rows)}줄</small>
       </div>
       <div class="bg-stats">
-        ${statBox('총 갯수', `${num(sum.rows)}건`, '프로모션 줄 수')}
-        ${statBox('완료갯수', `${num(sum.done)}건`, '실사용비를 적은 줄')}
-        ${statBox('광고비', sum.cost ? won(sum.cost) : '—', 'CPS × 목표수량')}
-        ${statBox('실사용비', sum.used ? won(sum.used) : '—', sum.used ? '' : '아직 안 적었습니다')}
-        ${statBox('잔여', sum.cost || sum.used ? won(sum.cost - sum.used) : '—', '광고비 − 실사용비')}
+        ${statBox('예상광고비', sum.cost ? won(sum.cost) : dash, '목표 CPS × 목표수량')}
+        ${statBox('실광고비', spend ? won(spend) : dash, '실사용비 · 안 적었으면 붙인 파일의 집행 광고비')}
+        ${statBox('실판매수', sold ? `${num(sold)}대` : dash, '적은 총 판매수 · 없으면 파일')}
+        ${statBox('실매출금', rev ? won(rev) : dash, '적은 총 매출 · 없으면 파일')}
+        ${statBox('CPS', sold ? won(Math.round(spend / sold)) : dash, '실광고비 ÷ 실판매수')}
+        ${statBox('ROAS', spend ? perfRoas(rev / spend) : dash, '실매출금 ÷ 실광고비')}
       </div>
       <div class="tool-table-wrap"><table class="tool-table bg-table er-table">
         <thead><tr>${HEAD.map((label, at) => `<th${at >= HEAD_NUM_FROM ? ' class="perf-num"' : ''}>${escape(label)}${HEAD_NOTE[label]
