@@ -1740,6 +1740,8 @@ function handleAction_(payload) {
     if (payload.action === 'budgetGet') return budgetGet_(payload);
     if (payload.action === 'budgetTrend') return budgetTrend_(payload);
     if (payload.action === 'trendChannelPut') return trendChannelPut_(payload);
+    if (payload.action === 'eventFilesGet') return eventFilesGet_(payload);
+    if (payload.action === 'eventFilesPut') return eventFilesPut_(payload);
     if (payload.action === 'budgetPut') return budgetPut_(payload);
     if (payload.action === 'budgetDrop') return budgetDrop_(payload);
     if (payload.action === 'promoCalendar') return promoCalendar_(payload);
@@ -7331,6 +7333,144 @@ function monthBudgetRow_(line) {
     updatedBy: String(line[4] || ''),
     updatedAt: line[5] instanceof Date ? line[5].toISOString() : String(line[5] || '')
   };
+}
+
+/* ── 행사별 결과에 올린 파일 (팀이 같이 본다) ──────────────────────────
+   전매체 검색에서 내려받은 파일을 화면에 붙이면 그 브라우저에만 담겼다.
+   그래서 붙인 사람 PC 가 아니면 아무것도 안 보였다 — 적은 값(판매수 · 매출 ·
+   사전알림)은 시트에 담겨 잘 보이는데 파일만 그랬다.
+
+   그래서 여기에 담는다. 한 칸에 5만 자까지 들어가므로 파일을 **조각내어** 여러 줄에
+   나눠 적고, 읽을 때 도로 잇는다 (캐시를 나눠 담는 cachePut_ 과 같은 방법이다).
+
+   달마다 따로 담는다 — 파일은 그 달 행사의 것이라, 달을 바꾸면 그 달 파일이 보여야 한다.
+   프로모션명이 비어 있으면 **공용 파일**이다 (여러 행사에 걸쳐 쓴다).
+
+   **화면이 가진 목록 그대로 그 달을 맞춘다.** 파일은 한 사람이 붙였다 뺐다 하는 값이라,
+   마지막에 저장한 사람이 이긴다 (판매수 · 매출처럼 줄마다 임자가 다른 값이 아니다). */
+var EVENT_FILE_SHEET_NAME = '행사별파일';
+var EVENT_FILE_HEADERS = ['달', '프로모션명', '파일명', '조각', '내용', '수정자', '수정시각'];
+var EVENT_FILE_CHUNK = 45000;    // 한 칸 5만 자 — 여유를 둔다
+var EVENT_FILE_MAX = 60;         // 한 달에 담을 조각 수 (≒ 2.7MB)
+
+function eventFileSheet_(book) {
+  book = book || SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(EVENT_FILE_SHEET_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(EVENT_FILE_SHEET_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, EVENT_FILE_HEADERS.length)
+      .setValues([EVENT_FILE_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    // 달 칸은 글자로 둔다 (시트가 '2026-09' 를 날짜로 바꾸면 앞 달로 읽힐 수 있다)
+    sheet.getRange('A:A').setNumberFormat('@');
+    sheet.setColumnWidth(1, 90);
+    sheet.setColumnWidth(2, 220);
+    sheet.setColumnWidth(3, 260);
+    sheet.setColumnWidth(5, 420);
+  }
+  return sheet;
+}
+
+/* 그 달 파일을 돌려준다. 조각을 차례대로 이어 붙여 한 덩이로 만든다.
+   조각이 하나라도 깨져 있으면 그 파일만 건너뛴다 — 반쪽짜리를 주면 받는 쪽이
+   그것으로 숫자를 세게 된다 (없는 것만 못하다). */
+function eventFilesGet_(payload) {
+  var month = monthBudgetKey_((payload && payload.month) || '');
+  if (!month) throw new Error('달이 비어 있습니다.');
+
+  var sheet = eventFileSheet_();
+  var last = sheet.getLastRow();
+  var out = { ok: true, month: month, files: [], byChannel: {}, note: '' };
+  if (last < 2) return out;
+
+  var grid = sheet.getRange(2, 1, last - 1, EVENT_FILE_HEADERS.length).getValues();
+  var packs = {};      // 프로모션|파일명 → { promo, name, parts: [], at }
+  var order = [];
+  grid.forEach(function (line) {
+    if (monthBudgetKey_(line[0]) !== month) return;
+    var promo = String(line[1] || '').trim();
+    var name = String(line[2] || '').trim();
+    if (!name) return;
+    var key = promo + '|' + name;
+    if (!packs[key]) {
+      packs[key] = { promo: promo, name: name, parts: [], at: line[6] };
+      order.push(key);
+    }
+    packs[key].parts[Number(line[3]) || 0] = String(line[4] === null || line[4] === undefined ? '' : line[4]);
+  });
+
+  var broken = [];
+  order.forEach(function (key) {
+    var one = packs[key];
+    var text = '';
+    var ok = true;
+    for (var i = 0; i < one.parts.length; i++) {
+      if (one.parts[i] === undefined) { ok = false; break; }   // 조각이 빠졌다
+      text += one.parts[i];
+    }
+    var body = ok ? monthBudgetParse_(text, null) : null;
+    if (!body) { broken.push(one.name); return; }
+    var got = { name: one.name, body: body };
+    if (one.promo) {
+      if (!out.byChannel[one.promo]) out.byChannel[one.promo] = [];
+      out.byChannel[one.promo].push(got);
+    } else {
+      out.files.push(got);
+    }
+  });
+  if (broken.length) out.note = '조각이 깨져 읽지 못한 파일: ' + broken.join(' · ');
+  out.fetchedAt = new Date().toISOString();
+  return out;
+}
+
+/* 화면이 가진 목록 그대로 그 달을 맞춘다 (빈 목록이면 그 달 파일을 다 지운다 —
+   '지우기' 가 그 길로 온다). 다른 달은 건드리지 않는다. */
+function eventFilesPut_(payload) {
+  var month = monthBudgetKey_((payload && payload.month) || '');
+  if (!month) throw new Error('달이 비어 있습니다.');
+  var files = (payload && payload.files) || [];
+  var who = String((payload && payload.by) || '');
+
+  // 먼저 조각으로 쪼개 본다. 너무 크면 **시트를 건드리기 전에** 멈춘다.
+  var lines = [];
+  var now = new Date();
+  files.forEach(function (one) {
+    var name = String((one && one.name) || '').trim();
+    if (!name || !one.body) return;
+    var promo = String((one && one.promo) || '').trim();
+    var text = JSON.stringify(one.body);
+    var count = Math.ceil(text.length / EVENT_FILE_CHUNK) || 1;
+    for (var i = 0; i < count; i++) {
+      lines.push([month, promo, name, i,
+        text.slice(i * EVENT_FILE_CHUNK, (i + 1) * EVENT_FILE_CHUNK), who, now]);
+    }
+  });
+  if (lines.length > EVENT_FILE_MAX) {
+    throw new Error('파일이 너무 큽니다 (' + lines.length + '조각 · 한 달에 '
+      + EVENT_FILE_MAX + '조각까지). 안 쓰는 파일을 빼고 다시 저장해 주세요.');
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var sheet = eventFileSheet_();
+    var last = sheet.getLastRow();
+    if (last > 1) {
+      var have = sheet.getRange(2, 1, last - 1, 1).getValues();
+      // 아래에서부터 지운다 (줄 번호가 밀리지 않게)
+      for (var i = have.length - 1; i >= 0; i--) {
+        if (monthBudgetKey_(have[i][0]) === month) sheet.deleteRow(i + 2);
+      }
+    }
+    if (lines.length) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, lines.length, EVENT_FILE_HEADERS.length)
+        .setValues(lines);
+    }
+    return { ok: true, month: month, files: files.length, chunks: lines.length,
+      savedAt: new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ── 추이 판매채널 (사람이 손으로 넣는다) ─────────────────────────────

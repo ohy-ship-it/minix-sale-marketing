@@ -13213,10 +13213,15 @@ if (eventReport) {
   let error = '';
   let opening = true;        // 처음 열 때만 가장 늦게 짜 둔 달로 옮겨 간다
 
-  /* 붙인 전매체 파일. **판매채널 추이와 같은 자리에 담는다** — 한 행사의 파일을
-     화면마다 따로 붙이게 두면 같은 행사가 두 화면에서 다른 숫자를 말하게 된다.
-     담아 두는 것은 브라우저이고(파일 한 달치가 수백 KB라 시트 칸에 안 들어간다),
-     화면을 열 때마다 다시 읽는다 — 다른 화면에서 저장한 것이 그때 따라온다. */
+  /* 붙인 전매체 파일.
+
+     **[저장] 하면 시트에 담겨 팀이 같이 본다** (적재 시트의 행사별파일 탭 · 달마다).
+     예전에는 브라우저에만 담겨서, 붙인 사람 PC 가 아니면 아무것도 안 보였다 —
+     적은 값(판매수 · 매출 · 사전알림)은 시트라 잘 보이는데 파일만 그랬다.
+
+     브라우저에도 사본을 둔다. 화면을 열면 그 사본으로 **먼저 그리고**, 시트에서
+     받아 오면 그것으로 바꾼다 — 시트를 기다리는 몇 초 동안 빈 화면을 보지 않게.
+     사본 자리는 판매채널 추이와 같다 (그 화면은 아직 브라우저만 본다). */
   const SAVE_KEY = 'minix-trend-files-v1';
   let files = [];                  // 여러 행사에 걸쳐 쓰는 공용 파일
   const byChannel = {};            // 프로모션명 → [{ name, body }] (그 행사만 담긴 파일)
@@ -14220,9 +14225,9 @@ if (eventReport) {
           ${fileCount() ? `<button type="button" class="tool-copy-all er-drop" data-er="drop"
             title="올려 둔 전매체 파일을 지웁니다 — 담아 둔 것까지 지워져 새로고침해도 돌아오지 않습니다">
             <i data-lucide="trash-2"></i>올린 파일 지우기 (${num(fileCount())})</button>` : ''}
-          <button type="button" class="tool-copy-all" data-er="save"
-            title="붙인 파일을 이 브라우저에 담아 둡니다 (판매채널 추이와 같은 자리입니다)">
-            <i data-lucide="save"></i>저장</button>
+          <button type="button" class="tool-copy-all" data-er="save"${pushing ? ' disabled' : ''}
+            title="붙인 파일을 시트에 담습니다 — 다른 사람 컴퓨터에서도 보입니다">
+            <i data-lucide="save"></i>${pushing ? '담는 중…' : '저장 (팀 공유)'}</button>
           <span class="er-saved">${savedAt ? `담아 둠 · ${escape(savedText())}` : ''}</span>
           <button type="button" class="tool-copy-all" data-er="fill"${filling ? ' disabled' : ''}
             title="붙인 파일의 집행 광고비를 월별 예산의 실사용비에 넣습니다 (브랜드검색은 뺍니다)">
@@ -14238,7 +14243,7 @@ if (eventReport) {
   }).join('')}</div>` : ''}
         <p class="perf-note${error ? ' bg-note-bad' : ''}">${error ? escape(error)
     : `${saved.at ? `월별 예산 마지막 저장 ${escape(new Date(saved.at).toLocaleString('ko-KR'))}${saved.by ? ` · ${escape(saved.by)}` : ''}`
-      : '아직 저장한 적이 없는 달입니다.'} · 붙인 파일과 적은 값은 <b>판매채널 추이</b>와 같은 자리를 씁니다.
+      : '아직 저장한 적이 없는 달입니다.'} · 적은 값은 <b>판매채널 추이</b>와 같은 자리를 씁니다.\n        · 붙인 파일은 <b>저장</b> 을 눌러야 시트에 담겨 다른 사람에게도 보입니다.
 ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니다 — 시트 값이 오면 바뀝니다'}`}</p>
         ${fileNote ? `<p class="perf-note">${fileNote}</p>` : ''}
       </div>
@@ -14273,20 +14278,81 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
   const fileCount = () => files.length + Object.keys(byChannel)
     .reduce((sum, key) => sum + (byChannel[key] || []).length, 0);
 
-  const saveFiles = () => {
+  // 브라우저 사본 (먼저 그리기용). 시트가 진짜 자리다.
+  const keepFiles = () => {
     const empty = !files.length && !Object.keys(byChannel).length;
     try {
       if (empty) localStorage.removeItem(SAVE_KEY);
       else localStorage.setItem(SAVE_KEY, JSON.stringify({ at: new Date().toISOString(), files, byChannel }));
     } catch (reason) {
-      fileNote = `<b>담지 못했습니다</b> — ${escape(reason.message)} `
-        + '(파일이 너무 많으면 안 쓰는 달의 파일을 빼고 다시 저장해 주세요)';
-      render();
-      return;
+      return String(reason.message);   // 사본은 거들기다 — 못 담아도 시트에는 올라간다
     }
     savedAt = empty ? '' : new Date().toISOString();
-    fileNote = empty ? '담아 둔 파일을 비웠습니다.' : '붙인 파일을 담았습니다 — 새로고침해도 그대로 있습니다.';
-    render();
+    return '';
+  };
+
+  /* 시트에 올린다. 화면이 가진 목록 그대로 **그 달**을 맞춘다 —
+     파일은 한 사람이 붙였다 뺐다 하는 값이라 마지막에 저장한 사람이 이긴다. */
+  const sheetFiles = () => {
+    const out = files.map((one) => ({ promo: '', name: one.name, body: one.body }));
+    Object.keys(byChannel).forEach((promo) => {
+      (byChannel[promo] || []).forEach((one) => {
+        out.push({ promo: promo, name: one.name, body: one.body });
+      });
+    });
+    return out;
+  };
+
+  let pushing = false;
+
+  const saveFiles = (quiet) => {
+    const trouble = keepFiles();
+    const many = fileCount();
+    pushing = true;
+    if (!quiet) render();
+    const mine = month;
+    return askSheet({ action: 'eventFilesPut', month: month, files: sheetFiles(), by: '' })
+      .then((body) => {
+        pushing = false;
+        if (mine !== month) return;
+        fileNote = many
+          ? `붙인 파일 <b>${num(many)}개</b>를 <b>${escape(monthName(month))}</b> 에 담았습니다 — 다른 사람 컴퓨터에서도 보입니다 (조각 ${num(body.chunks || 0)}).`
+          : `${escape(monthName(month))} 의 파일을 시트에서도 비웠습니다.`;
+        if (trouble) fileNote += ` (이 브라우저에는 못 담았습니다 — ${escape(trouble)})`;
+        render();
+      })
+      .catch((reason) => {
+        pushing = false;
+        error = /모르는 요청/.test(reason.message)
+          ? `시트에 담지 못했습니다 — Apps Script 를 새 버전으로 다시 배포해 주세요 (${reason.message})`
+          : `시트에 담지 못했습니다 — ${reason.message}`;
+        render();
+      });
+  };
+
+  /* 시트에서 그 달 파일을 받아 온다. 브라우저 사본보다 **이것이 이긴다** —
+     팀이 같이 보는 자리라 남이 올린 것이 기준이다. */
+  const pullFiles = () => {
+    const mine = month;
+    return askSheet({ action: 'eventFilesGet', month: month })
+      .then((body) => {
+        if (mine !== month) return;
+        files = body.files || [];
+        Object.keys(byChannel).forEach((key) => { delete byChannel[key]; });
+        Object.keys(body.byChannel || {}).forEach((key) => { byChannel[key] = body.byChannel[key]; });
+        Object.keys(adsGot).forEach((key) => { delete adsGot[key]; });
+        keepFiles();
+        if (body.note) fileNote = escape(body.note);
+        render();
+      })
+      .catch((reason) => {
+        if (mine !== month) return;
+        // 못 받아도 브라우저 사본으로 그린 것은 그대로 둔다
+        fileNote = /모르는 요청/.test(reason.message)
+          ? '시트에서 파일을 못 읽었습니다 — Apps Script 를 새 버전으로 다시 배포해 주세요. 지금은 이 브라우저에 담긴 것만 보입니다.'
+          : `시트에서 파일을 못 읽었습니다 — ${escape(reason.message)} (이 브라우저에 담긴 것만 보입니다)`;
+        render();
+      });
   };
 
   // 붙인 파일이 전매체에서 내려받은 것인지 본다. 아니면 이유를 그대로 알려 준다.
@@ -14348,6 +14414,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       });
 
     pullTrend(again);   // 달과 상관없는 값이라 한 번만 (다시 읽기는 새로 받는다)
+    pullFiles();        // 그 달에 팀이 올려 둔 파일 (달마다 다르다)
   };
 
   /* 한 줄을 통째로 보낸다. 칸 하나만 보내면 서버가 나머지를 읽어 와 다시 써야 하는데,
