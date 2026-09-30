@@ -13671,14 +13671,16 @@ if (eventReport) {
      사전알림 줄만 나누는 밑이 다르다. 그런 행사는 신청을 받는 것이 목표라 구매가
      거의 안 잡힌다 — 판매량으로 나누면 「한 건에 수십만 원」 처럼 보인다.
      (단계별 · 매체별 표가 CPS 를 CPA 로 바꿔 세는 것과 같은 규칙이다) */
-  const cpaOf = (shown, got, alarm) => {
-    if (!got || !got.spend) return dash;
-    const base = alarm ? Number(got.conv) || 0 : Number(shown.buy) || 0;
-    return base ? won(Math.round(got.spend / base)) : dash;
+  const cpaOf = (shown, spend, got, alarm) => {
+    if (!spend) return dash;
+    const base = alarm ? Number((got || {}).conv) || 0 : Number(shown.buy) || 0;
+    return base ? won(Math.round(spend / base)) : dash;
   };
+  const roasWhy = (key) => `총매출 ÷ 실사용비(없으면 붙인 파일의 집행 광고비)${revTyped(key)
+    ? ' — 수기로 적은 총 매출로 셌습니다' : ''}`;
   const cpaWhy = (key, alarm) => (alarm
-    ? '사전알림 행사라 집행 광고비 ÷ 결과 로 셌습니다'
-    : `집행 광고비 ÷ 판매량${soldTyped(key) ? ' (수기로 적은 총 판매수로 셌습니다)' : ''}`);
+    ? '사전알림 행사라 광고비 ÷ 결과 로 셌습니다'
+    : `실사용비(없으면 붙인 파일의 집행 광고비) ÷ 판매량${soldTyped(key) ? ' — 수기로 적은 총 판매수로 셌습니다' : ''}`);
 
   const line = (row) => {
     const cost = rowCost(row);
@@ -13690,9 +13692,20 @@ if (eventReport) {
     const own = byChannel[key] || [];
     const mine = (own.length || files.length) ? rowsFor(key) : [];
     const got = mine.length ? sumOf(mine) : null;
-    /* 판매량 · ROAS 는 **종합결과와 같은 값**이어야 한다 — 같은 줄을 놓고 위아래가
-       다른 수를 말하면 어느 쪽을 믿어야 할지 알 수가 없다. (광고비는 파일 값 그대로다) */
-    const shown = got ? wholeOf(key) : null;
+    /* 판매량 · 총매출은 **종합결과와 같은 값**이어야 한다 — 같은 줄을 놓고 위아래가
+       다른 수를 말하면 어느 쪽을 믿어야 할지 알 수가 없다.
+
+       **파일이 없어도 적은 값만으로 센다.** 판매처에서 센 수를 적어 두었는데
+       「파일을 붙이면 채워집니다」 로 비워 두면, 적은 사람이 보기에 적은 것이
+       사라진 셈이다. 그 줄은 달성률 · 카테고리별에서는 이미 그 값으로 세고 있었다.
+
+       셈에 쓰는 광고비는 **실사용비가 이기고, 없으면 붙인 파일**이다 (spentOf).
+       SKU 판의 실광고비 · CPS 와 같은 규칙이라 위아래가 같은 수를 말한다.
+       옆의 '집행 광고비' 칸은 그와 달리 **붙인 파일만** 적는 칸이라, 실사용비를
+       적어 둔 줄은 두 값이 다를 수 있다 — 그래서 셈한 칸에 무엇으로 나눴는지 적어 둔다. */
+    const said = soldTyped(key) || revTyped(key);   // 이 줄에 적어 둔 것이 있나
+    const shown = (got || said) ? wholeOf(key) : null;
+    const spend = spentOf([row]);
     const alarm = isAlarm(key);
     const kin = twinsOf(row.channel);
     /* 달성률은 **그 줄**의 것이다 — 판매수도 목표수량도 줄마다 적으므로.
@@ -13714,15 +13727,15 @@ if (eventReport) {
       <td class="perf-num er-rate${goal && sold >= goal ? ' is-good' : ''}"
         title="${kin.length > 1 ? `판매채널 ${escape(row.channel || '')} 전체 — 실판매량 ${num(sold)} ÷ 목표수량 합 ${num(goal)}` : ''}">${goal ? perfPercent(sold / goal) : dash}</td>
       <td class="perf-num bg-used">${used ? won(used) : dash}</td>
-      ${got ? `<td class="perf-num">${money(got.spend)}</td>
+      ${shown ? `<td class="perf-num">${got ? money(got.spend) : dash}</td>
         <td class="perf-num"><span${revTyped(key)
-    ? ` class="is-manual" title="수기로 적은 총 매출입니다 (붙인 파일의 판매전환값은 ${money(got.rev)})"` : ''}>${shown.rev || revTyped(key) ? money(shown.rev) : dash}</span></td>
+    ? ` class="is-manual" title="수기로 적은 총 매출입니다${got ? ` (붙인 파일의 판매전환값은 ${money(got.rev)})` : ''}"` : ''}>${shown.rev || revTyped(key) ? money(shown.rev) : dash}</span></td>
         <td class="perf-num"><span${soldTyped(key)
-    ? ` class="is-manual" title="수기로 적은 총 판매수입니다 (붙인 파일이 센 구매 수는 ${num(got.buy)})"` : ''}>${shown.buy || soldTyped(key) ? num(shown.buy) : dash}</span></td>
-        <td class="perf-num" title="${escape(cpaWhy(key, alarm))}">${cpaOf(shown, got, alarm)}</td>
-        <td class="perf-num"><span${revTyped(key)
-    ? ' class="is-manual" title="수기로 적은 총 매출로 셈한 ROAS 입니다"' : ''}>${got.spend ? perfRoas(ratio(shown.rev, got.spend) || 0) : dash}</span></td>`
-    : `<td class="er-none" colspan="5">파일을 붙이면 채워집니다</td>`}
+    ? ` class="is-manual" title="수기로 적은 총 판매수입니다${got ? ` (붙인 파일이 센 구매 수는 ${num(got.buy)})` : ''}"` : ''}>${shown.buy || soldTyped(key) ? num(shown.buy) : dash}</span></td>
+        <td class="perf-num" title="${escape(cpaWhy(key, alarm))}">${cpaOf(shown, spend, got, alarm)}</td>
+        <td class="perf-num" title="${escape(roasWhy(key))}"><span${revTyped(key)
+    ? ' class="is-manual"' : ''}>${spend ? perfRoas(ratio(shown.rev, spend) || 0) : dash}</span></td>`
+    : `<td class="er-none" colspan="5">파일을 붙이거나 판매수 · 매출을 적으면 채워집니다</td>`}
       <td class="er-own" data-er="skip">
         <label class="er-pick" title="${escape(row.sku || '이 줄')} 의 전매체 파일 (이 줄에만 붙습니다 · 주차마다 하나씩)">
           <i data-lucide="${own.length ? 'file-check' : 'paperclip'}"></i>${own.length ? `${own.length}개` : '파일'}
@@ -13749,7 +13762,7 @@ if (eventReport) {
     '집행 광고비': '붙인 파일',
     '총매출': '적은 총 매출 · 없으면 파일',
     '판매량': '적은 총 판매수 · 없으면 파일',
-    '실 CPA': '집행 광고비 ÷ 판매량',
+    '실 CPA': '실사용비 · 없으면 파일 ÷ 판매량',
   };
   const HEAD_NUM_FROM = 5;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
