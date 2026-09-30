@@ -1968,3 +1968,7 @@ html.is-gated,html.is-gated body{overflow:hidden}
 /* 그 행사에 붙인 파일 (펼친 판 맨 위 · 하나씩 뺀다) */
 .er-own-files{margin:0 0 8px;align-items:center}
 .er-own-files>small{color:#8a8983;font-size:12px;margin-right:2px}
+
+/* 같은 판매채널로 적힌 줄이 여럿 — 파일 · 적은 값 · 숫자를 함께 쓴다 */
+.er-kin{display:inline-block;margin-left:4px;padding:1px 5px;border-radius:9px;
+  background:#f1f0ec;color:#8a8983;font-size:11px;font-weight:600;vertical-align:1px}

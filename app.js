@@ -13354,6 +13354,7 @@ if (eventReport) {
   // 같은 판매채널로 적힌 줄이 여럿인가 (파일은 SKU 를 가리지 못한다 — 아래에서 알려 준다)
   const twinsOf = (channel) => allPlanRows()
     .filter((row) => String(row.channel || '').trim() === String(channel || '').trim());
+  const kinNames = (kin) => kin.map((one) => one.sku || '(SKU 없음)').join(' · ');
 
   // ── 전매체 파일을 프로모션에 붙인다 ──────────────────────────────
   /* 광고그룹 이름은 '[행사]_타겟팅_매출채널' 이라 **마지막 토막이 매출채널**이다.
@@ -13595,6 +13596,10 @@ if (eventReport) {
     const got = mine.length ? sumOf(mine) : null;
     const alarm = isAlarm(row.channel);
     const sold = soldFor(row.channel);   // 달성률 — 목표수량과 견줄 값
+    /* 같은 판매채널로 적힌 줄들. 전매체 파일에는 SKU 가 없어 **판매채널 단위로** 세므로,
+       파일도 적은 값도 그 줄들이 함께 쓴다 — 한 줄에서 지우면 나머지에서도 없어진다.
+       칸이 줄마다 있어 그 줄만의 것처럼 보이던 것을 여기서 드러낸다. */
+    const kin = twinsOf(row.channel);
     return `<tr class="er-row${open === row.id ? ' is-open' : ''}" data-er="pick" data-row="${id}">
       <td class="er-name"><i data-lucide="chevron-right"></i>${escape(row.channel || '') || dash}</td>
       <td>${escape(row.group || '') || dash}</td>
@@ -13614,11 +13619,16 @@ if (eventReport) {
         <td class="perf-num">${got.spend ? perfRoas(ratio(got.rev, got.spend) || 0) : dash}</td>`
     : `<td class="er-none" colspan="3">파일을 붙이면 채워집니다</td>`}
       <td class="er-own" data-er="skip">
-        <label class="er-pick" title="이 행사만 담긴 전매체 파일 (주차마다 하나씩 붙일 수 있습니다)">
+        <label class="er-pick" title="${kin.length > 1
+    ? `이 파일은 판매채널 ‘${escape(row.channel || '')}’ 의 것입니다 — 같은 판매채널로 적힌 ${num(kin.length)}줄(${escape(kinNames(kin))})이 함께 씁니다`
+    : '이 행사만 담긴 전매체 파일 (주차마다 하나씩 붙일 수 있습니다)'}">
           <i data-lucide="${own.length ? 'file-check' : 'paperclip'}"></i>${own.length ? `${own.length}개` : '파일'}
           <input type="file" accept=".json,application/json" multiple data-er="one" data-channel="${escape(row.channel || '')}" hidden>
         </label>
-        ${own.length ? `<button type="button" class="er-off" data-er="offone" data-channel="${escape(row.channel || '')}" title="이 행사에 붙인 파일을 지웁니다 (담아 둔 것까지)"><i data-lucide="x"></i></button>` : ''}
+        ${kin.length > 1 ? `<span class="er-kin" title="${escape(kinNames(kin))} 가 같은 판매채널이라 파일 · 적은 값 · 숫자를 함께 씁니다">함께 ${num(kin.length)}</span>` : ''}
+        ${own.length ? `<button type="button" class="er-off" data-er="offone" data-channel="${escape(row.channel || '')}"
+          title="${kin.length > 1 ? `이 판매채널에 붙인 파일을 다 지웁니다 — ${escape(kinNames(kin))} 에서 같이 없어집니다`
+    : '이 행사에 붙인 파일을 지웁니다 (담아 둔 것까지)'}"><i data-lucide="x"></i></button>` : ''}
       </td>
     </tr>${open === row.id
       ? `<tr class="er-more"><td colspan="${HEAD.length}">${detailCard(row, alarm)}</td></tr>` : ''}`;
@@ -13975,7 +13985,9 @@ if (eventReport) {
   const ownFiles = (promo) => {
     const own = byChannel[promo] || [];
     if (!own.length) return '';
-    return `<div class="er-files er-own-files"><small>이 행사에 붙인 파일</small>
+    const kin = twinsOf(promo);
+    return `<div class="er-files er-own-files"><small>이 행사에 붙인 파일${kin.length > 1
+    ? ` — ${escape(kinNames(kin))} 가 함께 씁니다` : ''}</small>
       ${own.map((one, at) => {
     const range = rangeIn(one.body);
     return `<span class="tr-chip"><b>${escape(span(range.since, range.until)) || '기간 없음'}</b>
@@ -13996,7 +14008,7 @@ if (eventReport) {
       ${ownFiles(promo)}
       ${mergeNote(promo)}
       ${twins.length > 1 ? `<p class="perf-note">이 달에 <b>${escape(promo)}</b> 로 적힌 줄이
-        ${num(twins.length)}개입니다 (${escape(twins.map((one) => one.sku || '(SKU 없음)').join(' · '))}).
+        ${num(twins.length)}개입니다 (${escape(kinNames(twins))}).
         전매체 파일에는 SKU 가 없어 <b>판매채널 단위로</b> 셉니다 — 아래 숫자는 그 줄들을 합친 값입니다.</p>` : ''}
       ${typedBar(promo)}
       <h5 class="er-h">종합결과</h5>
@@ -14555,6 +14567,19 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     }
   });
 
+  /* 같은 판매채널로 적힌 줄이 여럿이면 먼저 묻는다.
+     한 줄에서 지운 파일이 다른 SKU 줄에서도 없어지는데, 누르는 쪽에서는 그 줄만
+     건드리는 줄 안다 (더 플렌더MAX 에서 지웠더니 mini 에서도 없어졌다는 말이 그것이다).
+     한 줄뿐이면 묻지 않는다 — 놀랄 일이 없는데 묻는 것은 성가시기만 하다. */
+  const kinAsk = (channel, what) => {
+    const kin = twinsOf(channel);
+    if (kin.length < 2) return true;
+    return window.confirm(`${what}\n\n`
+      + `이 파일은 판매채널 「${channel}」 의 것이라 같은 판매채널로 적힌 ${kin.length}줄이 함께 씁니다:\n`
+      + `  ${kinNames(kin)}\n\n`
+      + '그 줄들에서 모두 없어집니다. 지울까요?');
+  };
+
   eventReport.addEventListener('click', (event) => {
     const hit = event.target.closest('[data-er]');
     if (!hit) return;
@@ -14579,6 +14604,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (what === 'offfile') {
       const channel = hit.dataset.channel;
       const own = byChannel[channel] || [];
+      if (!kinAsk(channel, `파일 ${(own[Number(hit.dataset.at)] || {}).name || ''} 을 뺍니다.`)) return;
       const gone = own.splice(Number(hit.dataset.at), 1)[0];
       if (!own.length) delete byChannel[channel];
       delete adsGot[channel];
@@ -14590,6 +14616,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (what === 'offone') {
       const channel = hit.dataset.channel;
       const many = (byChannel[channel] || []).length;
+      if (!kinAsk(channel, `${channel} 에 붙인 파일 ${many}개를 지웁니다.`)) return;
       delete byChannel[channel];
       delete adsGot[channel];
       saveFiles();
