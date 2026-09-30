@@ -13674,6 +13674,9 @@ if (eventReport) {
     const own = byChannel[key] || [];
     const mine = (own.length || files.length) ? rowsFor(key) : [];
     const got = mine.length ? sumOf(mine) : null;
+    /* 판매량 · ROAS 는 **종합결과와 같은 값**이어야 한다 — 같은 줄을 놓고 위아래가
+       다른 수를 말하면 어느 쪽을 믿어야 할지 알 수가 없다. (광고비는 파일 값 그대로다) */
+    const shown = got ? wholeOf(key) : null;
     const alarm = isAlarm(key);
     const kin = twinsOf(row.channel);
     /* 달성률은 **그 줄**의 것이다 — 판매수도 목표수량도 줄마다 적으므로.
@@ -13696,8 +13699,10 @@ if (eventReport) {
         title="${kin.length > 1 ? `판매채널 ${escape(row.channel || '')} 전체 — 실판매량 ${num(sold)} ÷ 목표수량 합 ${num(goal)}` : ''}">${goal ? perfPercent(sold / goal) : dash}</td>
       <td class="perf-num bg-used">${used ? won(used) : dash}</td>
       ${got ? `<td class="perf-num">${money(got.spend)}</td>
-        <td class="perf-num">${got.buy ? num(got.buy) : dash}</td>
-        <td class="perf-num">${got.spend ? perfRoas(ratio(got.rev, got.spend) || 0) : dash}</td>`
+        <td class="perf-num"><span${soldTyped(key)
+    ? ` class="is-manual" title="수기로 적은 총 판매수입니다 (붙인 파일이 센 구매 수는 ${num(got.buy)})"` : ''}>${shown.buy || soldTyped(key) ? num(shown.buy) : dash}</span></td>
+        <td class="perf-num"><span${revTyped(key)
+    ? ' class="is-manual" title="수기로 적은 총 매출로 셈한 ROAS 입니다"' : ''}>${got.spend ? perfRoas(ratio(shown.rev, got.spend) || 0) : dash}</span></td>`
     : `<td class="er-none" colspan="3">파일을 붙이면 채워집니다</td>`}
       <td class="er-own" data-er="skip">
         <label class="er-pick" title="${escape(row.sku || '이 줄')} 의 전매체 파일 (이 줄에만 붙습니다 · 주차마다 하나씩)">
@@ -13723,22 +13728,35 @@ if (eventReport) {
     '달성률': '판매량 ÷ 목표수량',
     '광고비': 'CPS×목표수량',
     '집행 광고비': '붙인 파일',
+    '판매량': '적은 총 판매수 · 없으면 파일',
   };
   const HEAD_NUM_FROM = 5;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
   /* ── ① 종합결과 ────────────────────────────────────────────────
-     붙인 파일을 다 더한 값이다. 단계마다 적어 둔 판매수 · 매출이 있으면 **그것으로 센다** —
-     그래야 여기 값이 아래 단계별 표의 합과 맞는다. */
+     붙인 파일을 다 더한 값이다. 그 위에 **사람이 적은 값이 이긴다** — 차례는 늘 이것이다.
+       ① 적어 둔 **총 판매수 · 총 매출** (판매처에서 센 수다)
+       ② 단계마다 적어 둔 판매수 · 매출
+       ③ 붙인 파일이 센 구매 수 · 판매전환값 (매체가 준 값)
+     한동안 ①이 빠져 있었다. 그래서 총 판매수를 적어도 판매량 칸은 파일 값 그대로였고,
+     같은 화면 안에서 달성률 · 카테고리별은 적은 값으로, 판매량 칸은 파일 값으로 —
+     한 화면이 두 말을 했다. 세는 자리를 여기 하나로 모은다. */
   const wholeOf = (promo) => {
     const packs = phasePacks(promo);
     const rows = rowsFor(promo);
     const whole = sumOf(rows);
-    if (!packs.length) return whole;
-    const lines = packs.map((one) => withTyped(sumOf(one.rows), phaseTyped(promo, one.name)));
-    whole.buy = lines.reduce((sum, one) => sum + (Number(one.buy) || 0), 0);
-    whole.rev = lines.reduce((sum, one) => sum + (Number(one.rev) || 0), 0);
-    return whole;
+    if (packs.length) {
+      const lines = packs.map((one) => withTyped(sumOf(one.rows), phaseTyped(promo, one.name)));
+      whole.buy = lines.reduce((sum, one) => sum + (Number(one.buy) || 0), 0);
+      whole.rev = lines.reduce((sum, one) => sum + (Number(one.rev) || 0), 0);
+    }
+    return withTyped(whole, { sales: typedOf(promo).sales, rev: typedOf(promo).rev });
   };
+
+  /* 이 줄의 판매량 · 매출이 **손으로 적은 값인가** — 화면에 표를 내려고 묻는다.
+     (적은 값이면 파일 값과 다를 수밖에 없다. 다른 까닭을 말해 주지 않으면
+      보는 사람은 숫자가 틀렸다고 여긴다) */
+  const soldTyped = (promo) => typedOf(promo).sales !== '';
+  const revTyped = (promo) => typedOf(promo).rev !== '';
 
   const wholeBox = (promo, alarm) => {
     const one = wholeOf(promo);
