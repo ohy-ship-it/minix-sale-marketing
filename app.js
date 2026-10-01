@@ -14414,11 +14414,12 @@ if (eventReport) {
   ];
   const ETC_CAT = '그 밖';
   /* 카테고리별에서 **SKU 로 갈라 보는** 묶음.
-     생활가전은 더 에어드라이와 더 시프트가 아예 다른 제품이라, 한 칸에 합쳐 두면
-     CPS · ROAS 가 뭉개져 어느 쪽이 좋은지 알 수가 없다. 더 플렌더는 mini · MAX · PRO 가
-     같은 제품의 크기 차이라 묶어 두는 편이 읽기 좋다.
+     한 칸에 합쳐 두면 CPS · ROAS 가 뭉개져 어느 쪽이 좋은지 알 수가 없다.
+     생활가전은 더 에어드라이와 더 시프트가 아예 다른 제품이고, 더 플렌더도
+     mini · MAX · PRO 가 값도 사는 사람도 달라 한 수로 보면 뜻이 없다.
+     합쳐 본 값이 필요하면 **판매채널별** 쪽에서 채널 단위로 본다.
      **갈라 보는 것은 이 화면뿐이다** — 월별 예산의 갈래(SKU_TREE)는 그대로 둔다. */
-  const CAT_SPLIT = ['생활가전'];
+  const CAT_SPLIT = ['더 플렌더', '생활가전'];
   const nameKey = (name) => String(name || '').toLowerCase().replace(/[\s()_·\-.]/g, '');
   const catOf = (sku) => {
     const want = nameKey(sku);
