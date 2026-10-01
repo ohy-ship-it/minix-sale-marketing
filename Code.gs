@@ -7636,9 +7636,40 @@ function trendPhases_(found) {
     var one = found[name] || {};
     var sales = trendNum_(one.sales);
     var rev = trendNum_(one.rev);
-    if (sales === '' && rev === '') return;
-    out[String(name)] = { sales: sales, rev: rev };
+    var media = trendPhaseMedia_(one.media);
+    if (sales === '' && rev === '' && !media.length) return;
+    out[String(name)] = { sales: sales, rev: rev, media: media };
   });
+  return out;
+}
+
+/* 단계마다 손으로 적어 넣은 매체.
+   전매체 파일에 안 잡히는 매체가 있다 — 제휴 · 인플루언서 · 오프라인처럼 API 가 없어
+   사람이 적을 수밖에 없는 것들이다. 그 광고비를 못 적으면 행사 총광고비가 비고
+   CPS · ROAS 가 실제보다 좋아 보인다.
+
+   **적는 칸만 담는다.** 화면이 보낸 것을 통째로 담으면 시트 칸(5만 자)이 금방 차고,
+   단계 JSON 하나가 넘치면 그 줄의 판매수 · 매출까지 같이 날아간다. 그래서 칸을 추리고
+   이름 길이도 끊는다. 서른 줄이면 손으로 적기에 넉넉하다. */
+function trendPhaseMedia_(found) {
+  if (!found || !found.length) return [];
+  var out = [];
+  for (var i = 0; i < found.length && i < 30; i++) {
+    var one = found[i] || {};
+    var name = String(one.media || '').trim().slice(0, 40);
+    if (!name) continue;                       // 이름이 없으면 표에서 가릴 수가 없다
+    out.push({
+      media: name,
+      campaign: String(one.campaign || '').trim().slice(0, 60),
+      spend: Number(trendNum_(one.spend)) || 0,
+      imp: Number(trendNum_(one.imp)) || 0,
+      clk: Number(trendNum_(one.clk)) || 0,
+      conv: Number(trendNum_(one.conv)) || 0,
+      rev: Number(trendNum_(one.rev)) || 0,
+      by: String(one.by || '').slice(0, 60),
+      at: String(one.at || '').slice(0, 30)
+    });
+  }
   return out;
 }
 

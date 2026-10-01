@@ -13286,6 +13286,7 @@ if (eventReport) {
 
   let open = '';                   // 펼친 줄 (프로모션 줄 id)
   let openMedia = '';              // '줄id|단계|매체' — 펼친 매체 하나
+  let handOpen = '';               // '줄id|단계' — 매체를 손으로 적는 칸을 연 자리
   let openAds = '';                // 발행 소재를 펼친 프로모션 (매체에 물어본다)
   const adsGot = {};               // 프로모션명 → { status, rows, notes, range }
 
@@ -13471,6 +13472,32 @@ if (eventReport) {
 
   let dupDrop = 0;         // 이번에 겹쳐서 안 센 줄 수 (화면에 적는다)
 
+  /* ── 손으로 적어 넣은 매체 ──────────────────────────────────────
+     전매체 파일에 안 잡히는 매체가 있다 — 제휴 · 인플루언서 · 오프라인처럼 API 가 없어
+     사람이 적을 수밖에 없는 것들이다. 그 광고비를 못 적으면 행사 총광고비가 비고
+     CPS · ROAS 가 실제보다 좋아 보인다.
+
+     적은 값은 **파일 줄과 같은 모양**으로 만들어 그 단계에 섞는다. 그래야 줄의 표 ·
+     단계별 종합결과 · 단계별 매체성과가 저절로 같이 센다 — 더하는 곳마다 따로 손볼 것이 없다.
+     담기는 자리는 판매수 · 매출과 같은 자리(단계 JSON)다.
+
+     판매량은 purchase 에도 넣는다 — 이 화면이 판매량을 buyOf(구매 수)로 세기 때문이다.
+     안 넣으면 광고비만 늘고 판매량은 그대로라 CPS 가 터무니없이 커진다. */
+  const handRows = (promo, name) => {
+    const list = ((typedOf(promo).phases || {})[name] || {}).media || [];
+    return (list || []).map((one, at) => ({
+      source: '', sourceName: String(one.media || '(매체 미상)'), adset: '',
+      campaign: String(one.campaign || '') || '(수기 입력)',
+      spend: Number(one.spend) || 0, imp: Number(one.imp) || 0, clk: Number(one.clk) || 0,
+      conv: Number(one.conv) || 0, results: Number(one.conv) || 0, purchase: Number(one.conv) || 0,
+      rev: Number(one.rev) || 0,
+      hand: true, handPhase: name, handAt: at,
+    }));
+  };
+  // 손으로 적은 매체가 있는 단계 이름들 (파일에 없는 단계여도 세워야 한다)
+  const handPhases = (promo) => Object.keys(typedOf(promo).phases || {})
+    .filter((name) => (((typedOf(promo).phases || {})[name] || {}).media || []).length);
+
   /* 붙인 파일을 모두 훑어 단계별로 모은다. 파일이 하나든 다섯이든 같은 길이다. */
   const phasePacks = (key) => {
     const own = byChannel[key] || [];
@@ -13500,6 +13527,13 @@ if (eventReport) {
       });
     });
     dupDrop = dropped;
+    /* 손으로 적은 매체는 **겹침 검사 뒤에** 더한다 — 파일 줄이 아니라 겹칠 일이 없고,
+       0원이어도 빼지 않는다 (적은 사람이 뜻이 있어 적었다).
+       파일에 없는 단계로 적었으면 그 단계를 새로 세운다 — 안 그러면 적은 광고비가 사라진다. */
+    handPhases(key).forEach((name) => {
+      if (!bucket[name]) bucket[name] = { name: name, since: '', until: '', rows: [] };
+      bucket[name].rows = bucket[name].rows.concat(handRows(key, name));
+    });
     return Object.keys(bucket).sort((a, b) => {
       const one = PHASE_ORDER.indexOf(a);
       const two = PHASE_ORDER.indexOf(b);
@@ -13884,6 +13918,24 @@ if (eventReport) {
     ? '<p class="perf-note">이 파일에는 단계 날짜가 없습니다 — 전매체 검색에서 사전 · 당일 · 사후 날짜를 적고 다시 내려받아 주세요.</p>' : ''}`;
   };
 
+  /* 매체를 손으로 적는 칸. 표 안에 한 줄로 끼워 넣는다 — 표 밖에 두면 어느 단계에
+     적는 것인지 알 수 없다. 적는 칸은 **누를 때만** 세운다 (단계가 넷이면 안 쓰는
+     칸 셋이 늘 자리를 먹는다). */
+  const HAND_FIELDS = [['media', '매체', 'text'], ['campaign', '캠페인', 'text'],
+    ['spend', '광고비', 'number'], ['imp', '노출', 'number'], ['clk', '클릭', 'number'],
+    ['conv', '판매량', 'number'], ['rev', '판매전환값', 'number']];
+  const handForm = (promo, name) => `<tr class="er-hand-row"><td colspan="${METRICS.length + 1}" data-er="skip">
+      <div class="er-hand">
+        ${HAND_FIELDS.map(([key, label, kind]) => `<label>${escape(label)}
+          <input type="${kind}"${kind === 'number' ? ' min="0" step="1"' : ''} data-hand="${key}"
+            ${key === 'campaign' ? 'placeholder="비워도 됩니다"' : ''}></label>`).join('')}
+        <button type="button" class="er-hand-put" data-er="handput"
+          data-channel="${escape(promo)}" data-phase="${escape(name)}">넣기</button>
+        <button type="button" class="er-hand-off" data-er="handoff">취소</button>
+        <p class="er-hand-why">전매체 파일에 안 잡히는 매체(제휴 · 인플루언서 · 오프라인)를 적습니다.
+          적은 값은 이 단계는 물론 줄의 표 · 단계별 종합결과에도 함께 셉니다.</p>
+      </div></td></tr>`;
+
   /* ── ④ 단계별 매체성과 ──────────────────────────────────────────
      단계마다 어느 매체가 돌렸나. 매체 이름을 누르면 그 아래 **캠페인**까지 펼친다 —
      매체 합계만 보면 '메타가 비싸다' 까지밖에 못 말하는데, 대개 비싼 것은 그 안의
@@ -13893,39 +13945,52 @@ if (eventReport) {
     const packs = phasePacks(promo);
     if (!packs.length) return '<p class="perf-note">붙인 전매체 파일이 없습니다.</p>';
     const block = (phase) => {
+      /* 손으로 적은 매체는 **따로 세운다** — 같은 이름의 파일 매체와 합쳐지면
+         어느 줄을 지우는 것인지 집을 수가 없다. 보이는 이름은 그대로 매체 이름이다. */
       const bucket = {};
       phase.rows.forEach((row) => {
         const name = String(row.sourceName || '(매체 미상)');
-        if (!bucket[name]) bucket[name] = [];
-        bucket[name].push(row);
+        const key = row.hand ? `${name} /수기 ${row.handAt}` : name;
+        if (!bucket[key]) bucket[key] = { name: name, hand: !!row.hand, at: row.handAt, rows: [] };
+        bucket[key].rows.push(row);
       });
-      const campsOf = (name) => {
+      const campsOf = (key) => {
         const inside = {};
-        bucket[name].forEach((row) => {
-          const key = String(row.campaign || row.adset || '(캠페인 미상)');
-          if (!inside[key]) inside[key] = [];
-          inside[key].push(row);
+        bucket[key].rows.forEach((row) => {
+          const name = String(row.campaign || row.adset || '(캠페인 미상)');
+          if (!inside[name]) inside[name] = [];
+          inside[name].push(row);
         });
-        return Object.keys(inside).map((key) => ({ name: key, sum: sumOf(inside[key]) }))
+        return Object.keys(inside).map((name) => ({ name: name, sum: sumOf(inside[name]) }))
           .sort((a, b) => b.sum.spend - a.sum.spend);
       };
-      const lines = Object.keys(bucket).map((name) => ({ name: name, sum: sumOf(bucket[name]) }))
+      const lines = Object.keys(bucket).map((key) => ({ key: key, ...bucket[key], sum: sumOf(bucket[key].rows) }))
         .sort((a, b) => b.sum.spend - a.sum.spend);   // 광고비가 큰 매체가 위로
+      const adding = handOpen === `${rowId}|${phase.name}`;
       return `<tr class="er-phase-head">
           <td><b>${escape(phase.name)}</b>${phase.since
-        ? ` <small>${escape(span(phase.since, phase.until))}</small>` : ''}</td>
+        ? ` <small>${escape(span(phase.since, phase.until))}</small>` : ''}
+            <button type="button" class="er-hand-add" data-er="handopen"
+              data-channel="${escape(promo)}" data-phase="${escape(phase.name)}"
+              title="전매체 파일에 안 잡히는 매체(제휴 · 인플루언서 · 오프라인)를 이 단계에 적습니다"
+              >＋ 매체</button></td>
           ${metricRow(sumOf(phase.rows), alarm)}
-        </tr>` + lines.map((one) => {
-        const key = `${rowId}|${phase.name}|${one.name}`;
-        const isOpen = openMedia === key;
-        return `<tr class="er-mrow${isOpen ? ' is-open' : ''}" data-er="media" data-key="${escape(key)}">
-            <td class="er-mname"><i data-lucide="chevron-right"></i>${escape(one.name)}</td>
+        </tr>`
+        + (adding ? handForm(promo, phase.name) : '')
+        + lines.map((one) => {
+          const key = `${rowId}|${phase.name}|${one.key}`;
+          const isOpen = openMedia === key;
+          return `<tr class="er-mrow${isOpen ? ' is-open' : ''}${one.hand ? ' is-hand' : ''}" data-er="media" data-key="${escape(key)}">
+            <td class="er-mname"><i data-lucide="chevron-right"></i>${escape(one.name)}${one.hand
+            ? '<span class="er-hand-tag">수기</span>'
+              + `<button type="button" class="er-hand-del" data-er="handdel" data-channel="${escape(promo)}"
+                  data-phase="${escape(phase.name)}" data-at="${one.at}" title="이 수기 매체 지우기">✕</button>` : ''}</td>
             ${metricRow(one.sum, alarm)}
-          </tr>` + (isOpen ? campsOf(one.name).map((each) => `<tr class="er-camp">
+          </tr>` + (isOpen ? campsOf(one.key).map((each) => `<tr class="er-camp">
             <td class="er-cname">${escape(each.name)}</td>
             ${metricRow(each.sum, alarm)}
           </tr>`).join('') : '');
-      }).join('');
+        }).join('');
     };
     return `<div class="tool-table-wrap"><table class="tool-table er-split">
         <thead><tr><th>단계 · 매체 · 캠페인</th>${metricHeads(alarm)}</tr></thead>
@@ -14922,11 +14987,66 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
   });
 
 
+  /* 손으로 적은 매체를 담는다. 단계 JSON 한 칸에 같이 들어가므로 **그 줄을 통째로**
+     보낸다 (putTyped 와 같은 규칙 — 칸 하나만 보내면 남이 고친 값을 덮는다). */
+  const handPut = (promo, name, list, hit) => {
+    const one = { ...typedOf(promo) };
+    const phases = { ...(one.phases || {}) };
+    const was = { sales: '', rev: '', ...(phases[name] || {}) };
+    was.media = list;
+    phases[name] = was;
+    one.phases = phases;
+    manual[typedKey(promo)] = one;
+    render();                  // 적은 값으로 광고비 · CPS · ROAS 가 그 자리에서 다시 셈해진다
+    putTyped(promo, one, hit);
+  };
+
   eventReport.addEventListener('click', (event) => {
     const hit = event.target.closest('[data-er]');
     if (!hit) return;
     const what = hit.dataset.er;
     if (what === 'reload') { opening = false; load(true); return; }
+    if (what === 'handopen') {
+      event.stopPropagation();
+      const slot = `${hit.dataset.channel}|${hit.dataset.phase}`;
+      handOpen = handOpen === slot ? '' : slot;    // 다시 누르면 닫힌다
+      render();
+      return;
+    }
+    if (what === 'handoff') { event.stopPropagation(); handOpen = ''; render(); return; }
+    if (what === 'handdel') {
+      event.stopPropagation();
+      const promo = hit.dataset.channel;
+      const name = hit.dataset.phase;
+      const list = (((typedOf(promo).phases || {})[name] || {}).media || []).slice();
+      const at = Number(hit.dataset.at);
+      if (!list[at]) return;
+      if (!window.confirm(`"${list[at].media}" 를 지울까요?`)) return;
+      list.splice(at, 1);
+      handPut(promo, name, list, hit);
+      return;
+    }
+    if (what === 'handput') {
+      event.stopPropagation();
+      const box = hit.closest('.er-hand');
+      if (!box) return;
+      const get = (key) => {
+        const field = box.querySelector(`[data-hand="${key}"]`);
+        return field ? String(field.value || '').trim() : '';
+      };
+      const media = get('media');
+      // 이름이 없으면 표에서 '(매체 미상)' 한 줄이 되어 무엇인지 가릴 수가 없다
+      if (!media) { window.alert('매체 이름을 적어 주세요.'); return; }
+      const money = (key) => Number(String(get(key)).replace(/[,s₩원]/g, '')) || 0;
+      const promo = hit.dataset.channel;
+      const name = hit.dataset.phase;
+      const one = { media: media, campaign: get('campaign'),
+        spend: money('spend'), imp: money('imp'), clk: money('clk'),
+        conv: money('conv'), rev: money('rev'), at: new Date().toISOString() };
+      handOpen = '';
+      handPut(promo, name, (((typedOf(promo).phases || {})[name] || {}).media || []).concat([one]), hit);
+      return;
+    }
     if (what === 'save') { saveFiles(); return; }
     if (what === 'fill') { fillUsed(); return; }
     /* 지우기는 **담아 둔 것까지** 지운다 (saveFiles 가 비면 담아 둔 자리를 비운다).
