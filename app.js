@@ -14376,6 +14376,12 @@ if (eventReport) {
     ['생활가전', ['더 에어드라이', '더 시프트']],
   ];
   const ETC_CAT = '그 밖';
+  /* 카테고리별에서 **SKU 로 갈라 보는** 묶음.
+     생활가전은 더 에어드라이와 더 시프트가 아예 다른 제품이라, 한 칸에 합쳐 두면
+     CPS · ROAS 가 뭉개져 어느 쪽이 좋은지 알 수가 없다. 더 플렌더는 mini · MAX · PRO 가
+     같은 제품의 크기 차이라 묶어 두는 편이 읽기 좋다.
+     **갈라 보는 것은 이 화면뿐이다** — 월별 예산의 갈래(SKU_TREE)는 그대로 둔다. */
+  const CAT_SPLIT = ['생활가전'];
   const nameKey = (name) => String(name || '').toLowerCase().replace(/[\s()_·\-.]/g, '');
   const catOf = (sku) => {
     const want = nameKey(sku);
@@ -14471,7 +14477,7 @@ if (eventReport) {
     return sum;
   };
 
-  const catBlock = (name, rows) => {
+  const catBlock = (name, rows, under) => {
     const goal = rows.reduce((into, row) => into + (Number(row.goal) || 0), 0);
     const plan = rows.reduce((into, row) => into + rowCost(row), 0);
     const spend = spentOf(rows);
@@ -14485,7 +14491,8 @@ if (eventReport) {
       ? `목표 대비 ${realCps >= wantCps ? '+' : ''}${(((realCps / wantCps) - 1) * 100).toFixed(0)}%`
       : '총 광고비 ÷ 실판매량';
     return `<div class="er-cat">
-      <div class="er-cat-name">${escape(name)}<small>${num(rows.length)}줄</small></div>
+      <div class="er-cat-name">${escape(name)}<small>${under
+        ? `${escape(under)} · ` : ''}${num(rows.length)}줄</small></div>
       <div class="bg-stats">
         ${statBox('총 광고비', money(spend), '실사용비 · 안 적었으면 붙인 파일의 집행 광고비')}
         ${statBox('총매출금', rev ? won(rev) : dash, '적은 총 매출 · 없으면 파일의 판매전환값')}
@@ -14505,14 +14512,25 @@ if (eventReport) {
       if (!bucket[name]) bucket[name] = [];
       bucket[name].push(row);
     });
-    // 정해 둔 차례대로 (그 밖은 맨 뒤 · 줄이 있을 때만)
-    const names = SKU_TREE.map(([one]) => one).filter((one) => bucket[one])
-      .concat(bucket[ETC_CAT] ? [ETC_CAT] : []);
-    if (!names.length) return '';
+    /* 정해 둔 차례대로 (그 밖은 맨 뒤 · 줄이 있을 때만).
+       갈라 보는 묶음(CAT_SPLIT)은 그 자리에서 SKU 마다 한 칸씩 세운다 —
+       줄이 하나도 없는 SKU 는 세우지 않는다 (빈 칸만 늘어난다). */
+    const blocks = [];
+    SKU_TREE.forEach(([cat, skus]) => {
+      const mine = bucket[cat];
+      if (!mine) return;
+      if (CAT_SPLIT.indexOf(cat) < 0) { blocks.push({ name: cat, rows: mine }); return; }
+      skus.forEach((sku) => {
+        const rows = mine.filter((row) => nameKey(row.sku) === nameKey(sku));
+        if (rows.length) blocks.push({ name: sku, rows: rows, under: cat });
+      });
+    });
+    if (bucket[ETC_CAT]) blocks.push({ name: ETC_CAT, rows: bucket[ETC_CAT] });
+    if (!blocks.length) return '';
     return `<div class="tool-card er-cats">
       <div class="tool-list-head"><h3>카테고리별
-        <small>${escape(names.join(' · '))}</small></h3></div>
-      ${names.map((name) => catBlock(name, bucket[name])).join('')}
+        <small>${escape(blocks.map((one) => one.name).join(' · '))}</small></h3></div>
+      ${blocks.map((one) => catBlock(one.name, one.rows, one.under)).join('')}
     </div>`;
   };
 
