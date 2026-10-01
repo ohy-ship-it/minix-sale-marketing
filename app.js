@@ -13743,7 +13743,7 @@ if (eventReport) {
   /* ── 실 CPA — 한 대 파는 데 든 돈 ─────────────────────────────
      목표 CPS 는 짜 놓은 값이고, 이것은 **실제로 든 값**이다. 두 칸이 나란히 있어야
      싸게 팔았는지 비싸게 팔았는지가 한눈에 보인다.
-       집행 광고비 ÷ 판매량   (판매량은 적은 총 판매수가 이긴다 — wholeOf 와 같다)
+       집행 광고비 ÷ 판매량   (판매량은 손으로 적은 값만이다 — wholeOf 와 같다)
      사전알림 줄만 나누는 밑이 다르다. 그런 행사는 신청을 받는 것이 목표라 구매가
      거의 안 잡힌다 — 판매량으로 나누면 「한 건에 수십만 원」 처럼 보인다.
      (단계별 · 매체별 표가 CPS 를 CPA 로 바꿔 세는 것과 같은 규칙이다) */
@@ -13805,7 +13805,8 @@ if (eventReport) {
         <td class="perf-num"><span${revTyped(key)
     ? ` class="is-manual" title="수기로 적은 총 매출입니다${got ? ` (붙인 파일의 판매전환값은 ${money(got.rev)})` : ''}"` : ''}>${shown.rev || revTyped(key) ? money(shown.rev) : dash}</span></td>
         <td class="perf-num"><span${soldTyped(key)
-    ? ` class="is-manual" title="수기로 적은 총 판매수입니다${got ? ` (붙인 파일이 센 구매 수는 ${num(got.buy)})` : ''}"` : ''}>${shown.buy || soldTyped(key) ? num(shown.buy) : dash}</span></td>
+    ? ` class="is-manual" title="수기로 적은 총 판매수입니다${got ? ` (붙인 파일이 센 구매 수는 ${num(got.buy)} — 판매량에는 쓰지 않습니다)` : ''}"`
+    : ' title="판매량은 손으로 적은 값만 셉니다 — 총 판매수나 단계별 판매수를 적어 주세요"'}>${shown.buy || soldTyped(key) ? num(shown.buy) : dash}</span></td>
         <td class="perf-num" title="${escape(cpaWhy(key, alarm))}">${cpaOf(shown, spend, got, alarm)}</td>
         <td class="perf-num" title="${escape(roasWhy(key))}"><span${revTyped(key)
     ? ' class="is-manual"' : ''}>${spend ? perfRoas(ratio(shown.rev, spend) || 0) : dash}</span></td>`
@@ -13823,7 +13824,7 @@ if (eventReport) {
   };
 
   /* 달성률은 **실판매량 ÷ 목표수량**이다 — 이 표가 묻는 것은 "얼마나 팔렸나" 라서다.
-     판매량은 손으로 적은 총판매수가 있으면 그것, 없으면 붙인 파일이 센 구매 수다.
+     판매량은 손으로 적은 값만 센다 (총판매수 · 없으면 단계별로 적은 값).
      목표를 넘기면 표를 낸다 — 좋은 쪽이라 붉게 쓰지 않는다. */
   /* 구분 · 파트가 맨 앞이다 — 표를 훑을 때 먼저 찾는 것이 '어느 갈래의 무슨 파트인가' 라서다.
      진행광고매체 칸은 뺐다. 줄을 펼치면 단계별 매체성과에서 매체마다 숫자와 함께 보이는데,
@@ -13843,7 +13844,7 @@ if (eventReport) {
     '브검제외 광고비': '월별 예산의 실사용비',
     '브검포함 광고비': '붙인 파일',
     '총매출': '적은 총 매출 · 없으면 파일',
-    '판매량': '적은 총 판매수 · 없으면 파일',
+    '판매량': '손으로 적은 값만',
     '실 CPA': '브검제외 광고비 · 없으면 파일 ÷ 판매량',
   };
   const HEAD_NUM_FROM = 6;         // 이 칸부터 숫자다 (오른쪽 맞춤)
@@ -13856,13 +13857,23 @@ if (eventReport) {
      한동안 ①이 빠져 있었다. 그래서 총 판매수를 적어도 판매량 칸은 파일 값 그대로였고,
      같은 화면 안에서 달성률 · 카테고리별은 적은 값으로, 판매량 칸은 파일 값으로 —
      한 화면이 두 말을 했다. 세는 자리를 여기 하나로 모은다. */
+  /* **판매량은 손으로 적은 값만 센다.** 매체가 보고하는 구매 수는 어트리뷰션이 붙은
+     값이라 판매처에서 센 수와 늘 다르고, 제휴처럼 매체가 아예 못 세는 행사도 있다.
+     섞어 쓰면 어떤 줄은 판매처 수, 어떤 줄은 매체 수가 되어 CPS 를 줄끼리 견줄 수 없다.
+       ① 그 줄에 적어 둔 **총 판매수** 가 있으면 그 값
+       ② 없으면 **단계마다 적어 둔 판매수**의 합 (적은 단계만 더한다)
+       ③ 둘 다 없으면 0 — 화면에는 '—' 로 비어 보인다 (아직 아무도 안 적었다는 뜻이다)
+     매출은 그대로다 — 적은 값이 이기되 없으면 파일의 판매전환값을 쓴다. */
   const wholeOf = (promo) => {
     const packs = phasePacks(promo);
     const rows = rowsFor(promo);
     const whole = sumOf(rows);
+    whole.buy = packs.reduce((sum, one) => {
+      const typed = phaseTyped(promo, one.name);
+      return sum + (typed.sales !== '' ? (Number(typed.sales) || 0) : 0);
+    }, 0);
     if (packs.length) {
       const lines = packs.map((one) => withTyped(sumOf(one.rows), phaseTyped(promo, one.name)));
-      whole.buy = lines.reduce((sum, one) => sum + (Number(one.buy) || 0), 0);
       whole.rev = lines.reduce((sum, one) => sum + (Number(one.rev) || 0), 0);
     }
     return withTyped(whole, { sales: typedOf(promo).sales, rev: typedOf(promo).rev });
@@ -14492,10 +14503,10 @@ if (eventReport) {
 
   /* 실제로 팔린 수. 이것도 판매채널 단위다.
        ① 적어 둔 **총 판매수** 가 있으면 그 값 (판매처에서 센 수다)
-       ② 없으면 단계별로 적은 판매수 · 붙인 파일의 판매량 (wholeOf 가 그 차례로 센다) */
+       ② 없으면 단계별로 적어 둔 판매수의 합 (파일의 구매 수는 쓰지 않는다) */
   /* 실판매량. **줄마다** 센다 — 적는 칸도 붙인 파일도 줄마다 따로라서다.
        ① 그 줄에 적어 둔 **총 판매수** 가 있으면 그 값 (판매처에서 센 수다)
-       ② 안 적었으면 그 줄에 붙인 파일이 센 구매 수
+       ② 안 적었으면 그 줄의 단계마다 적어 둔 판매수
      다만 그 줄에 붙은 파일이 없어 **공용 파일로만** 잡히면 같은 판매채널 줄들이
      모두 같은 파일을 보게 된다 — 그때는 그 채널에 한 번만 센다 (쓴 돈과 같은 규칙). */
   const soldOf = (rows) => {
@@ -14507,17 +14518,15 @@ if (eventReport) {
       if (!byCh[ch]) byCh[ch] = [];
       byCh[ch].push(row);
     });
+    /* 줄마다 센다. 파일 값을 안 쓰므로 공용 파일이 겹칠 걱정이 없다 —
+       예전에는 그래서 '공용 파일로만 잡히면 그 채널에 한 번만' 이라는 단서가 붙었는데,
+       손으로 적은 값은 줄마다 따로라 그 단서를 그대로 두면 적어 둔 줄이 빠진다. */
     Object.keys(byCh).forEach((ch) => {
-      const rest = [];
       byCh[ch].forEach((row) => {
         const typed = typedOf(slotOf(row));
         if (typed.sales !== '') { sum += Number(typed.sales) || 0; return; }
-        rest.push(row);
+        sum += wholeOf(slotOf(row)).buy;     // 단계마다 적어 둔 값 (없으면 0)
       });
-      if (!rest.length) return;
-      const own = rest.filter(hasOwn);
-      (own.length ? own : rest.slice(0, 1))
-        .forEach((row) => { sum += wholeOf(slotOf(row)).buy; });
     });
     return sum;
   };
@@ -14570,7 +14579,7 @@ if (eventReport) {
         ${statBox('총 광고비', money(spend), '실사용비 · 안 적었으면 붙인 파일의 집행 광고비')}
         ${statBox('총매출금', rev ? won(rev) : dash, '적은 총 매출 · 없으면 파일의 판매전환값')}
         ${statBox('목표수량', goal ? `${num(goal)}대` : dash, '월별 예산에 적은 목표의 합')}
-        ${statBox('실판매량', sold ? `${num(sold)}대` : dash, '적은 총 판매수 · 없으면 단계별 · 파일')}
+        ${statBox('실판매량', sold ? `${num(sold)}대` : dash, '손으로 적은 총 판매수 · 없으면 단계별로 적은 값')}
         ${statBox('목표 CPS', wantCps === null ? dash : won(Math.round(wantCps)), '계획 광고비 ÷ 목표수량')}
         ${statBox('실 CPS', realCps === null ? dash : won(Math.round(realCps)), gap)}
       </div>
@@ -14672,7 +14681,7 @@ if (eventReport) {
       <div class="bg-stats">
         ${statBox('예상광고비', sum.cost ? won(sum.cost) : dash, '목표 CPS × 목표수량')}
         ${statBox('실광고비', spend ? won(spend) : dash, '실사용비 · 안 적었으면 붙인 파일의 집행 광고비')}
-        ${statBox('실판매수', sold ? `${num(sold)}대` : dash, '적은 총 판매수 · 없으면 파일')}
+        ${statBox('실판매수', sold ? `${num(sold)}대` : dash, '손으로 적은 총 판매수 · 없으면 단계별로 적은 값')}
         ${statBox('실매출금', rev ? won(rev) : dash, '적은 총 매출 · 없으면 파일')}
         ${statBox('CPS', sold ? won(Math.round(spend / sold)) : dash, '실광고비 ÷ 실판매수')}
         ${statBox('ROAS', spend ? perfRoas(rev / spend) : dash, '실매출금 ÷ 실광고비')}
