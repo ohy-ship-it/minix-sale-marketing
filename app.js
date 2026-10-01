@@ -13379,7 +13379,6 @@ if (eventReport) {
     ? Number(row.cost) : (Number(row.goal) || 0) * (Number(row.cps) || 0));
   const rowUsed = (row) => Number(row.used) || 0;
   const rowBrand = (row) => Number(row.brand) || 0;
-  const mediaOf = (row) => (Array.isArray(row.media) ? row.media : []);
 
   const allPlanRows = () => (Array.isArray(plan.rows) ? plan.rows : []);
 
@@ -13719,11 +13718,11 @@ if (eventReport) {
     const base = alarm ? Number((got || {}).conv) || 0 : Number(shown.buy) || 0;
     return base ? won(Math.round(spend / base)) : dash;
   };
-  const roasWhy = (key) => `총매출 ÷ 실사용비(없으면 붙인 파일의 집행 광고비)${revTyped(key)
+  const roasWhy = (key) => `총매출 ÷ 브검제외 광고비(없으면 붙인 파일의 집행 광고비)${revTyped(key)
     ? ' — 수기로 적은 총 매출로 셌습니다' : ''}`;
   const cpaWhy = (key, alarm) => (alarm
     ? '사전알림 행사라 광고비 ÷ 결과 로 셌습니다'
-    : `실사용비(없으면 붙인 파일의 집행 광고비) ÷ 판매량${soldTyped(key) ? ' — 수기로 적은 총 판매수로 셌습니다' : ''}`);
+    : `브검제외 광고비(없으면 붙인 파일의 집행 광고비) ÷ 판매량${soldTyped(key) ? ' — 수기로 적은 총 판매수로 셌습니다' : ''}`);
 
   const line = (row) => {
     const cost = rowCost(row);
@@ -13744,7 +13743,7 @@ if (eventReport) {
 
        셈에 쓰는 광고비는 **실사용비가 이기고, 없으면 붙인 파일**이다 (spentOf).
        SKU 판의 실광고비 · CPS 와 같은 규칙이라 위아래가 같은 수를 말한다.
-       옆의 '집행 광고비' 칸은 그와 달리 **붙인 파일만** 적는 칸이라, 실사용비를
+       옆의 '브검포함 광고비' 칸은 그와 달리 **붙인 파일만** 적는 칸이라, 실사용비를
        적어 둔 줄은 두 값이 다를 수 있다 — 그래서 셈한 칸에 무엇으로 나눴는지 적어 둔다. */
     const said = soldTyped(key) || revTyped(key);   // 이 줄에 적어 둔 것이 있나
     const shown = (got || said) ? wholeOf(key) : null;
@@ -13756,16 +13755,13 @@ if (eventReport) {
     const sold = soldOf([row]);
     const goal = Number(row.goal) || 0;
     return `<tr class="er-row${open === row.id ? ' is-open' : ''}" data-er="pick" data-row="${id}">
-      <td class="er-name"><i data-lucide="chevron-right"></i>${escape(row.channel || '') || dash}</td>
-      <td>${escape(row.group || '') || dash}</td>
+      <td class="er-name"><i data-lucide="chevron-right"></i>${escape(row.group || '') || dash}</td>
       <td>${escape(row.kind || '') || dash}</td>
+      <td>${escape(row.channel || '') || dash}</td>
       <td class="bg-live">${escape(row.live || '') || dash}</td>
       <td class="bg-span">${at}</td>
       <td class="perf-num">${row.goal ? num(row.goal) : dash}</td>
       <td class="perf-num">${row.cps ? won(row.cps) : dash}</td>
-      <td class="bg-kinds">${mediaOf(row).length
-    ? mediaOf(row).map((one) => `<span class="bg-kind is-on">${escape(one)}</span>`).join('')
-    : dash}</td>
       <td class="perf-num bg-cost"><span${rowManual(row) ? ' class="is-manual" title="수기로 적은 금액입니다"' : ''}>${cost ? won(cost) : dash}</span></td>
       <td class="perf-num er-rate${goal && sold >= goal ? ' is-good' : ''}"
         title="${kin.length > 1 ? `판매채널 ${escape(row.channel || '')} 전체 — 실판매량 ${num(sold)} ÷ 목표수량 합 ${num(goal)}` : ''}">${goal ? perfPercent(sold / goal) : dash}</td>
@@ -13784,7 +13780,6 @@ if (eventReport) {
           <i data-lucide="${own.length ? 'file-check' : 'paperclip'}"></i>${own.length ? `${own.length}개` : '파일'}
           <input type="file" accept=".json,application/json" multiple data-er="one" data-channel="${escape(key)}" hidden>
         </label>
-        ${kin.length > 1 ? `<span class="er-kin" title="${escape(kinNames(kin))} 가 같은 판매채널입니다 — 붙인 파일도 적는 칸(판매수 · 매출 · 사전알림)도 줄마다 따로입니다">채널 ${num(kin.length)}줄</span>` : ''}
         ${own.length ? `<button type="button" class="er-off" data-er="offone" data-channel="${escape(key)}"
           title="이 줄에 붙인 파일을 지웁니다 (담아 둔 것까지)"><i data-lucide="x"></i></button>` : ''}
       </td>
@@ -13795,17 +13790,26 @@ if (eventReport) {
   /* 달성률은 **실판매량 ÷ 목표수량**이다 — 이 표가 묻는 것은 "얼마나 팔렸나" 라서다.
      판매량은 손으로 적은 총판매수가 있으면 그것, 없으면 붙인 파일이 센 구매 수다.
      목표를 넘기면 표를 낸다 — 좋은 쪽이라 붉게 쓰지 않는다. */
-  const HEAD = ['판매채널', '구분', '파트', '라이브일정', '광고기간', '목표수량', '목표 CPS',
-    '진행광고매체', '광고비', '달성률', '실사용비', '집행 광고비', '총매출', '판매량', '실 CPA', 'ROAS', '파일'];
-  /* 이름만으로는 무엇을 무엇으로 나눈 값인지 알 수 없는 칸에 한 줄 적어 둔다.
-     (같은 표에 광고비 · 실사용비 · 집행 광고비가 나란히 있어 더 그렇다) */
+  /* 구분 · 파트가 맨 앞이다 — 표를 훑을 때 먼저 찾는 것이 '어느 갈래의 무슨 파트인가' 라서다.
+     진행광고매체 칸은 뺐다. 줄을 펼치면 단계별 매체성과에서 매체마다 숫자와 함께 보이는데,
+     여기서는 이름만 늘어놓아 정작 숫자 칸을 밀어내고 있었다.
+
+     광고비 칸 둘은 **브랜드검색이 들었나 안 들었나**로 갈린다 — 이름을 그대로 그렇게 적는다.
+       브검제외 광고비  월별 예산의 실사용비. 채울 때 브랜드검색을 뺀다 (정액이라
+                       고정비의 '브랜드검색' 항목에 이미 잡혀 있다 — 또 넣으면 두 번 센다)
+       브검포함 광고비  붙인 전매체 파일의 집행 광고비. 파일에 브랜드검색 줄이 있으면 들어 있다
+     예전 이름(실사용비 · 집행 광고비)으로는 둘이 왜 다른지 표만 봐서는 알 수가 없었다. */
+  const HEAD = ['구분', '파트', '판매채널', '라이브일정', '광고기간', '목표수량', '목표 CPS',
+    '광고비', '달성률', '브검제외 광고비', '브검포함 광고비', '총매출', '판매량', '실 CPA', 'ROAS', '파일'];
+  // 이름만으로는 무엇을 무엇으로 나눈 값인지 알 수 없는 칸에 한 줄 적어 둔다
   const HEAD_NOTE = {
     '달성률': '판매량 ÷ 목표수량',
     '광고비': 'CPS×목표수량',
-    '집행 광고비': '붙인 파일',
+    '브검제외 광고비': '월별 예산의 실사용비',
+    '브검포함 광고비': '붙인 파일',
     '총매출': '적은 총 매출 · 없으면 파일',
     '판매량': '적은 총 판매수 · 없으면 파일',
-    '실 CPA': '실사용비 · 없으면 파일 ÷ 판매량',
+    '실 CPA': '브검제외 광고비 · 없으면 파일 ÷ 판매량',
   };
   const HEAD_NUM_FROM = 5;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
