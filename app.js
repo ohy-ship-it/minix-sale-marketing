@@ -13326,28 +13326,30 @@ if (eventReport) {
 
      **보는 사람 것이라 시트에 담지 않는다** (월별 예산의 브검비 얹어보기와 같은 규칙).
      팀이 함께 보는 값이 아니라 지금 내가 어떻게 볼지를 고른 것이다. */
-  const NO_BRAND_KEY = 'minix-event-no-brand';
+  const WITH_BRAND_KEY = 'minix-event-with-brand';
   const isBrandRow = perfIsBrand;
   const brandSpend = (rows) => rows.filter(isBrandRow)
     .reduce((sum, row) => sum + (Number(row.spend) || 0), 0);
 
-  let noBrand = [];                // 브검을 뺀 채로 보는 프로모션들 (달|프로모션명)
-  const readNoBrand = () => {
-    try {
-      const kept = JSON.parse(window.localStorage.getItem(NO_BRAND_KEY) || '[]');
-      noBrand = Array.isArray(kept) ? kept.filter((one) => typeof one === 'string') : [];
-    } catch (error) { noBrand = []; }
+  /* **브랜드검색은 기본으로 뺀다.** 정액(CPT) 이라 광고비가 계약 금액이고, 월별 예산에서는
+     고정비의 '브랜드검색' 항목으로 이미 잡혀 있다 — 행사 광고비에 또 넣으면 같은 돈을
+     두 번 세게 되고, 브검이 붙은 행사만 CPS 가 통째로 나빠 보인다.
+
+     예전에는 줄마다 '브랜드검색 제외' 를 켜고 껐는데, 그러면 한 표 안에서 어떤 줄은
+     빼고 어떤 줄은 넣은 값이 되어 줄끼리 견줄 수가 없었다. 게다가 그 체크는 펼친 판
+     안에서만 들어, 위의 카드 · 표는 늘 브검을 넣은 값이었다 — 같은 화면이 두 말을 했다.
+
+     그래서 **화면 하나의 스위치**로 바꾼다. 끄면(기본) 모두 브검 미포함, 켜면 모두 포함이다.
+     보는 사람 것이라 시트에 담지 않는다 — 지금 내가 어떻게 볼지를 고른 것이다. */
+  let withBrand = false;
+  const readWithBrand = () => {
+    try { withBrand = window.localStorage.getItem(WITH_BRAND_KEY) === '1'; }
+    catch (error) { withBrand = false; }
   };
-  /* 브검 제외도 **줄마다** 둔다 — 적는 칸과 같은 까닭이다.
-     (같은 판매채널 줄이 둘인데 한쪽에서 끄면 다른 쪽 종합결과까지 바뀌었다)
-     이 값만은 시트에 안 담는다 — 보는 사람이 잠깐 빼고 보는 것이라 그 브라우저 것이다. */
-  const noBrandKey = (promo) => `${month}|${chanOf(promo)}|${promo}`;
-  const isNoBrand = (promo) => noBrand.indexOf(noBrandKey(promo)) >= 0;
-  const setNoBrand = (promo, on) => {
-    const key = noBrandKey(promo);
-    noBrand = on ? noBrand.concat(noBrand.indexOf(key) < 0 ? [key] : [])
-      : noBrand.filter((one) => one !== key);
-    try { window.localStorage.setItem(NO_BRAND_KEY, JSON.stringify(noBrand)); } catch (error) { /* 거들기다 */ }
+  const setWithBrand = (on) => {
+    withBrand = !!on;
+    try { window.localStorage.setItem(WITH_BRAND_KEY, withBrand ? '1' : ''); }
+    catch (error) { /* 거들기다 */ }
   };
 
   const today = new Date();
@@ -13867,16 +13869,16 @@ if (eventReport) {
   const wholeBox = (promo, alarm) => {
     const one = wholeOf(promo);
     const brand = brandSpend(rowsFor(promo));
-    const off = isNoBrand(promo);
-    /* 체크를 켜면 **광고비에서만** 브검 몫을 뺀다. 전환 · 매출은 그대로다.
-       그래서 셈한 칸(CPS · ROAS · CPC · CPM)이 모두 그 광고비로 다시 셈해진다. */
-    const shown = off ? { ...one, spend: Math.max(one.spend - brand, 0) } : one;
+    /* **광고비에서만** 브검 몫을 뺀다. 전환 · 매출은 그대로다 — 브검으로 산 전환도
+       행사가 거둔 전환이라서다. 그래서 셈한 칸(CPS · ROAS · CPC · CPM)이 그 광고비로
+       다시 셈해진다. [브검 포함] 을 켜면 매체가 준 값 그대로 둔다. */
+    const shown = withBrand ? one : { ...one, spend: Math.max(one.spend - brand, 0) };
     return `<div class="bg-stats er-hero">
       ${METRICS.map((each) => statBox(metricName(each, alarm), each.cell(shown, alarm), '')).join('')}
     </div>
-    ${off ? `<p class="perf-note er-brand-note">브랜드검색 광고비 <b>${money(brand)}</b> 을 뺀 값입니다
-      — 전환 · 매출 · 노출 · 클릭은 그대로라 <b>ROAS 는 높게, CPS 는 낮게</b> 보입니다.
-      브검을 넣은 다른 행사와 나란히 견주지 마세요.</p>` : ''}`;
+    ${brand ? `<p class="perf-note er-brand-note">${withBrand
+      ? `브랜드검색 광고비 <b>${money(brand)}</b> 이 <b>들어 있는</b> 값입니다 — 고정비의 '브랜드검색' 과 겹칩니다.`
+      : `브랜드검색 광고비 <b>${money(brand)}</b> 을 뺀 값입니다 — 전환 · 매출 · 노출 · 클릭은 그대로라 <b>ROAS 는 높게, CPS 는 낮게</b> 보입니다.`}</p>` : ''}`;
   };
 
   /* ── ② 사전알림 ────────────────────────────────────────────────
@@ -14042,10 +14044,9 @@ if (eventReport) {
       <label class="er-typed er-alarm" data-er="skip"
         title="사전알림을 받은 행사면 켜 주세요 — 아래 표의 CPS 가 CPA 로 바뀌고 사전알림 칸이 열립니다">
         <input type="checkbox" data-er="alarm" data-channel="${escape(promo)}"${one.alarm ? ' checked' : ''}>사전알림</label>
-      ${brand ? `<label class="er-typed er-alarm" data-er="skip"
-        title="브랜드검색은 정액(CPT) 이라 광고비가 계약 금액입니다. 켜면 종합결과의 광고비에서만 뺍니다">
-        <input type="checkbox" data-er="nobrand" data-channel="${escape(promo)}"${isNoBrand(promo) ? ' checked' : ''}>브랜드검색 제외
-        <small>${money(brand)}</small></label>` : ''}
+      ${brand ? `<span class="er-typed er-brand-tag"
+        title="이 행사에 섞인 브랜드검색 광고비입니다. 넣고 빼는 것은 화면 맨 위 [브검 포함] 으로 고릅니다">
+        브랜드검색 <small>${money(brand)}</small></span>` : ''}
       ${one.alarm ? '<span class="er-typed-note">사전알림 행사라 아래 표는 <b>CPA</b>(광고비 ÷ 결과) 로 셉니다</span>' : ''}
     </div>`;
   };
@@ -14425,7 +14426,11 @@ if (eventReport) {
      둘 다 없으면 0 이다 (아직 아무것도 모르는 줄이다). */
   /* 줄에 붙은 파일은 **줄마다** 센다. 그 줄에 붙은 것이 없고 공용 파일로만 잡히면
      그 채널에 한 번만 센다 — 그러지 않으면 같은 광고비를 줄 수만큼 더하게 된다. */
-  const ownSpend = (rows) => rows.reduce((into, row) => into + sumOf(rowsFor(slotOf(row))).spend, 0);
+  /* 파일에서 세는 광고비. **브랜드검색은 뺀다** — 월별 예산의 실사용비(브검제외 광고비)와
+     같은 기준이라야 한 표 안에서 줄끼리 견줄 수 있다. [브검 포함] 을 켜면 넣어 센다. */
+  const paidSpend = (rows) => rows.reduce((sum, row) =>
+    sum + ((withBrand || !isBrandRow(row)) ? (Number(row.spend) || 0) : 0), 0);
+  const ownSpend = (rows) => rows.reduce((into, row) => into + paidSpend(rowsFor(slotOf(row))), 0);
   const hasOwn = (row) => !!(byChannel[slotOf(row)] || []).length;
 
   const spentOf = (rows) => {
@@ -14728,6 +14733,9 @@ if (eventReport) {
       <div class="tool-card">
         <div class="perf-filter">
           <label class="bg-cat">달 ${monthPick()}</label>
+          <label class="tool-copy-all er-withbrand${withBrand ? ' is-on' : ''}"
+            title="브랜드검색은 정액(CPT) 이라 광고비가 계약 금액이고, 월별 예산에서는 고정비의 '브랜드검색' 으로 이미 잡혀 있습니다. 그래서 기본은 빼고 셉니다 — 켜면 이 화면의 광고비 · CPS · ROAS 를 모두 브검을 넣어 다시 셉니다">
+            <input type="checkbox" data-er="withbrand"${withBrand ? ' checked' : ''}>브검 포함</label>
           <label class="tool-copy-all er-file" title="주차마다 그 주만 조회해 내려받은 파일을 하나씩 붙이세요">
             <i data-lucide="upload"></i>${files.length ? '파일 더 붙이기' : '전매체 파일 붙이기'}
             <input type="file" accept=".json,application/json" multiple data-er="file" hidden>
@@ -14901,7 +14909,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     fresh = false;
     restoreFiles();     // 다른 화면에서 저장한 파일이 있으면 그때 따라온다
     if (!trendGot) readTrend();   // 담아 둔 적어 둔 값 (새 값이 오면 바뀐다)
-    readNoBrand();                // 브검을 뺀 채로 보던 행사들
+    readWithBrand();              // 브검을 넣고 보던 사람인가
     /* 담아 둔 판이 있으면 **먼저 그린다.** 시트를 기다리는 몇 초 동안 빈 화면을
        보지 않아도 되고, 대개 그 값이 이미 맞다 (다르면 곧 바뀐다). */
     const kept = readKept(month);
@@ -14974,6 +14982,11 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (!hit) return;
     const what = hit.dataset.er;
     if (what === 'month') { month = hit.value; open = ''; openMedia = ''; load(); return; }
+    if (what === 'withbrand') {
+      setWithBrand(hit.checked);
+      render();   // 카드 · 표 · 펼친 판이 한꺼번에 그 기준으로 다시 셈해진다
+      return;
+    }
     if (what === 'phase') {
       const promo = hit.dataset.channel;
       const one = { ...typedOf(promo) };
@@ -14986,11 +14999,6 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       manual[typedKey(promo)] = one;
       render();   // 적은 값으로 판매량 · CPS · ROAS 가 그 자리에서 다시 셈해진다
       putTyped(promo, one, null);
-      return;
-    }
-    if (what === 'nobrand') {
-      setNoBrand(hit.dataset.channel, hit.checked);
-      render();   // 종합결과가 그 자리에서 다시 셈해진다
       return;
     }
     if (what === 'typed' || what === 'alarm') {

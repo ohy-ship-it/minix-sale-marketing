@@ -1936,6 +1936,13 @@ html.is-gated,html.is-gated body{overflow:hidden}
 /* 브랜드검색 제외 · 발행 소재 */
 .er-alarm small{margin-left:2px;font-weight:400;font-size:10.5px;color:#a5a49f}
 .er-brand-note{margin-top:6px;color:#96632a}
+/* 브검 포함 스위치 — 켜 두면 눈에 띄게 둔다 (지금 보는 숫자의 기준이 바뀐 상태라서다) */
+.er-withbrand{display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.er-withbrand input{margin:0;cursor:pointer}
+.er-withbrand.is-on{border-color:#e0b36a;background:#fdf6e8;color:#8a6d1f;font-weight:700}
+/* 그 행사에 섞인 브검 광고비 — 넣고 빼는 것은 맨 위 스위치로 고른다 */
+.er-brand-tag{gap:4px;color:#96632a}
+.er-brand-tag small{font-weight:700;color:#8a6d1f}
 .er-brand-note b{color:#7a4f1d}
 .er-ads-go{margin-left:8px;border:1px solid var(--line,#e6e5e0);border-radius:6px;background:#fff;
   padding:3px 10px;font:600 11px 'Noto Sans KR',sans-serif;color:#6f6f68;cursor:pointer}
