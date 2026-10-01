@@ -14433,18 +14433,39 @@ if (eventReport) {
   const ownSpend = (rows) => rows.reduce((into, row) => into + paidSpend(rowsFor(slotOf(row))), 0);
   const hasOwn = (row) => !!(byChannel[slotOf(row)] || []).length;
 
+  /* 그 줄에 섞인 브랜드검색 광고비.
+     붙인 파일에 있으면 그 값이 정확하고, 파일이 없으면 월별 예산에 적어 둔 브랜드검색비를 쓴다.
+     [브검 포함] 을 켰을 때 **적어 둔 실사용비(브검 제외)에 도로 더하는** 값이다 —
+     그러지 않으면 실사용비를 적어 둔 줄은 스위치를 눌러도 꿈쩍하지 않는다. */
+  const brandOne = (row) => brandSpend(rowsFor(slotOf(row))) || rowBrand(row);
+  /* 쓴 돈과 같은 규칙으로 센다 — 그 줄에 붙은 파일이 있으면 줄마다, 공용 파일로만
+     잡히면 그 채널에 한 번만 (안 그러면 같은 브검비를 줄 수만큼 더하게 된다). */
+  const brandFor = (list) => {
+    const own = list.filter(hasOwn);
+    return (own.length ? own : list.slice(0, 1))
+      .reduce((sum, row) => sum + brandOne(row), 0);
+  };
+
   const spentOf = (rows) => {
     const byCh = {};
     let sum = 0;
     rows.forEach((row) => {
       const ch = String(row.channel || '').trim();
-      if (!ch) { sum += rowUsed(row); return; }   // 채널을 안 적은 줄은 그 줄 값만
+      if (!ch) {                                  // 채널을 안 적은 줄은 그 줄 값만
+        sum += rowUsed(row) + (withBrand && rowUsed(row) ? brandOne(row) : 0);
+        return;
+      }
       if (!byCh[ch]) byCh[ch] = [];
       byCh[ch].push(row);
     });
     Object.keys(byCh).forEach((ch) => {
       const used = byCh[ch].reduce((into, row) => into + rowUsed(row), 0);
-      if (used) { sum += used; return; }          // 월별 예산에 적어 둔 실사용비가 이긴다
+      if (used) {
+        /* 월별 예산에 적어 둔 실사용비가 이긴다. 그 값은 **브검을 뺀** 금액이라,
+           [브검 포함] 을 켜면 그 줄의 브검비를 도로 더해 준다. */
+        sum += used + (withBrand ? brandFor(byCh[ch]) : 0);
+        return;
+      }
       const own = byCh[ch].filter(hasOwn);
       sum += own.length ? ownSpend(own) : ownSpend(byCh[ch].slice(0, 1));
     });
