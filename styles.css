@@ -1942,6 +1942,8 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .er-withbrand.is-on{border-color:#e0b36a;background:#fdf6e8;color:#8a6d1f;font-weight:700}
 /* 그 행사에 섞인 브검 광고비 — 넣고 빼는 것은 맨 위 스위치로 고른다 */
 .er-brand-tag{gap:4px;color:#96632a}
+/* 행사명 — 판매채널 옆에 둔다 (한 채널에 행사가 여럿이라 이름이 있어야 갈린다) */
+.er-event{white-space:nowrap;color:#6f6f68}
 /* 카테고리별 ↔ 판매채널별 — 한 카드를 두 가지로 갈라 본다 */
 .er-cuts{margin-left:auto;display:inline-flex;gap:4px}
 .er-cut{border:1px solid var(--line,#e5e4df);background:#fff;border-radius:7px;padding:3px 10px;

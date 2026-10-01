@@ -13792,6 +13792,7 @@ if (eventReport) {
       <td class="er-name"><i data-lucide="chevron-right"></i>${escape(row.group || '') || dash}</td>
       <td>${escape(row.kind || '') || dash}</td>
       <td>${escape(row.channel || '') || dash}</td>
+      <td class="er-event">${escape(row.event || '') || dash}</td>
       <td class="bg-live">${escape(row.live || '') || dash}</td>
       <td class="bg-span">${at}</td>
       <td class="perf-num">${row.goal ? num(row.goal) : dash}</td>
@@ -13833,7 +13834,7 @@ if (eventReport) {
                        고정비의 '브랜드검색' 항목에 이미 잡혀 있다 — 또 넣으면 두 번 센다)
        브검포함 광고비  붙인 전매체 파일의 집행 광고비. 파일에 브랜드검색 줄이 있으면 들어 있다
      예전 이름(실사용비 · 집행 광고비)으로는 둘이 왜 다른지 표만 봐서는 알 수가 없었다. */
-  const HEAD = ['구분', '파트', '판매채널', '라이브일정', '광고기간', '목표수량', '목표 CPS',
+  const HEAD = ['구분', '파트', '판매채널', '행사명', '라이브일정', '광고기간', '목표수량', '목표 CPS',
     '광고비', '달성률', '브검제외 광고비', '브검포함 광고비', '총매출', '판매량', '실 CPA', 'ROAS', '파일'];
   // 이름만으로는 무엇을 무엇으로 나눈 값인지 알 수 없는 칸에 한 줄 적어 둔다
   const HEAD_NOTE = {
@@ -13845,7 +13846,7 @@ if (eventReport) {
     '판매량': '적은 총 판매수 · 없으면 파일',
     '실 CPA': '브검제외 광고비 · 없으면 파일 ÷ 판매량',
   };
-  const HEAD_NUM_FROM = 5;         // 이 칸부터 숫자다 (오른쪽 맞춤)
+  const HEAD_NUM_FROM = 6;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
   /* ── ① 종합결과 ────────────────────────────────────────────────
      붙인 파일을 다 더한 값이다. 그 위에 **사람이 적은 값이 이긴다** — 차례는 늘 이것이다.
@@ -14466,16 +14467,25 @@ if (eventReport) {
       if (!byCh[ch]) byCh[ch] = [];
       byCh[ch].push(row);
     });
+    /* **줄마다** 센다 — 판매량(soldOf)과 한 글자도 다르지 않은 규칙이다.
+         ① 그 줄에 적어 둔 실사용비가 있으면 그 값 (브검을 뺀 금액이라,
+            [브검 포함] 을 켜면 그 줄의 브검비를 도로 더한다)
+         ② 안 적었으면 붙인 파일의 집행 광고비
+       앞서는 채널에 적어 둔 줄이 **하나라도** 있으면 그 합만 세고 끝냈다. 그래서
+       같은 판매채널에 행사가 둘인데 한쪽만 적어 두면 나머지 줄의 광고비가 통째로
+       0 으로 빠졌다 — 판매량은 줄마다 제대로 세므로 CPS 가 터무니없이 낮아 보였다. */
     Object.keys(byCh).forEach((ch) => {
-      const used = byCh[ch].reduce((into, row) => into + rowUsed(row), 0);
-      if (used) {
-        /* 월별 예산에 적어 둔 실사용비가 이긴다. 그 값은 **브검을 뺀** 금액이라,
-           [브검 포함] 을 켜면 그 줄의 브검비를 도로 더해 준다. */
-        sum += used + (withBrand ? brandFor(byCh[ch]) : 0);
-        return;
-      }
-      const own = byCh[ch].filter(hasOwn);
-      sum += own.length ? ownSpend(own) : ownSpend(byCh[ch].slice(0, 1));
+      const rest = [];
+      byCh[ch].forEach((row) => {
+        const used = rowUsed(row);
+        if (used) { sum += used + (withBrand ? brandOne(row) : 0); return; }
+        rest.push(row);
+      });
+      if (!rest.length) return;
+      /* 안 적은 줄은 붙인 파일로 센다. 그 줄에 붙은 것이 있으면 줄마다,
+         공용 파일로만 잡히면 그 채널에 한 번만 (같은 광고비를 줄 수만큼 더하지 않게). */
+      const own = rest.filter(hasOwn);
+      sum += own.length ? ownSpend(own) : ownSpend(rest.slice(0, 1));
     });
     return sum;
   };
@@ -14591,24 +14601,36 @@ if (eventReport) {
     return blocks;
   };
 
-  /* 판매채널로 가른 칸. 제품이 아니라 **어디서 팔았나**로 묶어 본다 —
-     같은 카카오라도 더 플렌더와 에어드라이가 섞여 있어, 제품으로만 보면
-     '카카오가 잘 돌았나' 를 물을 자리가 없었다.
-     차례는 광고비가 큰 채널부터다 (정해 둔 차례가 없고, 큰 데부터 보는 게 맞다).
-     판매채널을 안 적은 줄도 한 칸으로 모은다 — 조용히 빠지면 합이 안 맞는다. */
+  /* 판매채널 × 행사명으로 가른 칸. 제품이 아니라 **어디서 무슨 행사로 팔았나**로 본다.
+
+     판매채널만으로 묶지 않는다. 한 달에 같은 카카오로 행사를 두세 번 돌리는데
+     통째로 합치면 잘 돈 행사와 안 돈 행사가 한 수로 뭉개져, 정작 알고 싶은
+     '이번 리필데이가 저번보다 나았나' 를 물을 자리가 없다.
+     행사명을 안 적은 줄은 판매채널만으로 한 칸이 된다 (적으면 그때 갈린다).
+
+     차례는 광고비가 큰 것부터다 (정해 둔 차례가 없고, 큰 데부터 보는 게 맞다).
+     판매채널을 안 적은 줄도 한 칸으로 모아 맨 뒤에 둔다 — 조용히 빠지면 합이 안 맞는다. */
   const NO_CHANNEL = '(판매채널 없음)';
   const chanBlocks = () => {
     const bucket = {};
     allPlanRows().forEach((row) => {
-      const name = String(row.channel || '').trim() || NO_CHANNEL;
-      if (!bucket[name]) bucket[name] = [];
-      bucket[name].push(row);
+      const ch = String(row.channel || '').trim() || NO_CHANNEL;
+      const ev = String(row.event || '').trim();
+      const key = `${ch} // ${ev}`;
+      if (!bucket[key]) bucket[key] = { channel: ch, event: ev, rows: [] };
+      bucket[key].rows.push(row);
     });
     return Object.keys(bucket)
-      .map((name) => ({ name: name, rows: bucket[name], spend: spentOf(bucket[name]) }))
+      .map((key) => ({
+        // 칸 이름은 행사명, 그 아래 작은 글씨에 판매채널 (이름에 채널을 두 번 적지 않는다)
+        name: bucket[key].event || bucket[key].channel,
+        under: bucket[key].event ? bucket[key].channel : '',
+        channel: bucket[key].channel,
+        rows: bucket[key].rows, spend: spentOf(bucket[key].rows),
+      }))
       .sort((a, b) => {
-        if (a.name === NO_CHANNEL) return 1;      // 이름 없는 칸은 맨 뒤
-        if (b.name === NO_CHANNEL) return -1;
+        if (a.channel === NO_CHANNEL) return 1;   // 판매채널을 안 적은 칸은 맨 뒤
+        if (b.channel === NO_CHANNEL) return -1;
         return b.spend - a.spend;
       });
   };
@@ -14622,8 +14644,9 @@ if (eventReport) {
     const tab = (key, name) => `<button type="button" class="er-cut${cutBy === key ? ' is-on' : ''}"
       data-er="cut" data-cut="${key}">${escape(name)}</button>`;
     return `<div class="tool-card er-cats">
-      <div class="tool-list-head"><h3>${cutBy === 'channel' ? '판매채널별' : '카테고리별'}
-        <small>${escape(blocks.map((one) => one.name).join(' · '))}</small></h3>
+      <div class="tool-list-head"><h3>${cutBy === 'channel' ? '판매채널 · 행사별' : '카테고리별'}
+        <small>${cutBy === 'channel' ? `${num(blocks.length)}칸`
+    : escape(blocks.map((one) => one.name).join(' · '))}</small></h3>
         <span class="er-cuts">${tab('cat', '카테고리별')}${tab('channel', '판매채널별')}</span></div>
       ${blocks.map((one) => catBlock(one.name, one.rows, one.under)).join('')}
     </div>`;
