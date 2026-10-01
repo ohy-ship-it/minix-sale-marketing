@@ -9,6 +9,7 @@
       "**/__pycache__/**",
       "da_set/**",
       "_deploy-backup/**",
+      "guides/**",
       "광고 소재 검수기/**",
       "**/*.py",
       "**/*.pyc",
