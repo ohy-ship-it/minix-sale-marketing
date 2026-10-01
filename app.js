@@ -1217,6 +1217,7 @@ const VIEWS = {
   // hash 는 섹션 id 와 달라야 한다. 같으면 브라우저가 그 요소로 스크롤해 버린다.
   '메타 광고 세팅': { section: '#ad-setup', hash: '#meta-ad-setup' },
   '카카오 광고 세팅': { section: '#kakao-ad-setup', hash: '#kakao-setup' },
+  '소재 제작': { section: '#banner-maker', hash: '#banner' },
   '퍼포먼스일정': { section: '#brand-schedule', hash: '#performance-schedule' },
   '주간미팅 작성': { section: '#weekly-write', hash: '#weekly' },
   '온보딩 자료': { section: '#onboarding', hash: '#onboarding-docs' },
