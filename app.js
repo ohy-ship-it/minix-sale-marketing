@@ -13228,6 +13228,31 @@ const perfCrossSpend = (files, channels, sales, ads) => {
   });
   return out;
 };
+/* 파일 한 벌의 광고비 **전부**. 줄에 직접 붙일 때 쓴다.
+   그 파일은 통째로 그 행사의 것이라 판매채널로 가릴 것이 없다 — 행사별 결과가
+   줄에 붙은 파일을 쓰는 규칙과 같다. 같은 광고그룹이 두 파일에 겹쳐 있으면 한 번만 센다.
+   브랜드검색은 따로 세어 함께 돌려준다 (부르는 쪽이 빼고 쓴다). */
+const perfCrossTotal = (files) => {
+  const out = { spend: 0, brand: 0, rows: 0 };
+  const seen = {};
+  (files || []).forEach((file) => {
+    perfPhasesIn(file && file.body).forEach((each) => {
+      perfPaid(each.rows || []).forEach((row) => {
+        const mark = [each.name, each.since, each.until,
+          row.source, row.account, row.id || row.adset].join('|');
+        if (row.id || row.adset) {
+          if (seen[mark]) return;
+          seen[mark] = true;
+        }
+        const money = Number(row.spend) || 0;
+        out.rows += 1;
+        if (perfIsBrand(row)) out.brand += money;
+        else out.spend += money;
+      });
+    });
+  });
+  return out;
+};
 // ── 전매체 파일 읽기 끝 ─────────────────────────────────────────────
 
 // ── 행사별 결과 ────────────────────────────────────────────────────
@@ -15667,9 +15692,13 @@ if (budgetPlanView) {
         data-bg="cost" data-row="${id}" value="${escape(row.cost ? commaNum(row.cost) : '')}"
         placeholder="${escape(cost ? commaNum(cost) : '자동')}"
         title="비우면 목표수량 × 목표 CPS 로 셉니다"></td>
-      <td class="perf-num"><input type="text" class="bg-num bg-used" data-bg="used" data-row="${id}"
+      <td class="perf-num bg-used-cell"><input type="text" class="bg-num bg-used" data-bg="used" data-row="${id}"
         value="${escape(paid ? commaNum(paid) : '')}" placeholder="0"
-        title="실제로 나간 돈"></td>
+        title="실제로 나간 돈"><label class="bg-used-file"
+        title="이 줄의 전매체 파일을 붙이면 그 광고비로 실사용비를 채웁니다 (브랜드검색은 뺍니다)">
+        <i data-lucide="paperclip"></i>
+        <input type="file" accept=".json,application/json" multiple hidden
+          data-bg="crossOne" data-row="${id}"${crossBusy ? ' disabled' : ''}></label></td>
       <td class="bg-kill"><button type="button" data-bg="drop" data-row="${id}" title="이 줄을 지웁니다"><i data-lucide="x"></i></button></td>
     </tr>`;
   };
@@ -16322,6 +16351,56 @@ if (budgetPlanView) {
       });
   };
 
+  /* ── 줄 하나에 파일 붙이기 ──────────────────────────────────────
+     맨 위의 [파일로 실사용비 채우기] 는 판매채널 이름으로 줄을 찾는다. 그래서 같은
+     판매채널 줄이 둘 이상이면(더 플렌더MAX · mini 가 다 카카오) 어느 줄 몫인지 알 수 없어
+     건드리지 않는다 — 정작 가장 손이 가는 줄이 늘 비어 있었다.
+
+     줄에 직접 붙이면 그 셈이 필요 없다. 전매체 검색은 행사 하나씩 찾아 내려받으므로
+     그 파일은 통째로 그 줄의 것이다 (행사별 결과가 줄에 파일을 붙이는 규칙과 같다).
+     브랜드검색은 여기서도 뺀다 — 고정비의 '브랜드검색' 에 이미 들어 있다. */
+  const crossOne = (rowId, picked) => {
+    const row = plan.rows.find((one) => String(one.id) === String(rowId));
+    if (!row) return;
+    crossBusy = true;
+    crossNote = '';
+    error = '';
+    render();
+
+    const mine = month;
+    Promise.all(picked.map(crossRead))
+      .then((files) => {
+        const got = perfCrossTotal(files);
+        if (!got.rows) throw new Error('파일에 광고비가 든 줄이 없습니다.');
+        const what = `${row.channel || '(판매채널 없음)'}${row.sku ? ` · ${row.sku}` : ''}`;
+        if (!window.confirm(`"${what}" 의 실사용비를 ${won(got.spend)} 로 채웁니다.
+
+`
+          + `파일 ${picked.length}개 · 광고그룹 ${got.rows}줄`
+          + (got.brand ? `
+(브랜드검색 ${won(got.brand)} 은 뺐습니다 — 고정비에 이미 있습니다)` : '')
+          + `
+
+지금 적혀 있는 값(${row.used ? won(row.used) : '없음'})은 덮어씁니다. 채울까요?`)) return null;
+        row.used = Math.round(got.spend);
+        return { what: what, spend: row.used, brand: Math.round(got.brand), rows: got.rows };
+      })
+      .then((got) => {
+        crossBusy = false;
+        if (!got || mine !== month) { render(); return; }
+        crossNote = `<b>${escape(got.what)}</b> 의 실사용비를 ${won(got.spend)} 로 채웠습니다 `
+          + `(광고그룹 ${num(got.rows)}줄).`
+          + (got.brand ? ` 브랜드검색 ${won(got.brand)} 은 뺐습니다 — 고정비에 이미 있습니다.` : '');
+        render();
+        save(true);   // 곧바로 시트에 담는다
+      })
+      .catch((reason) => {
+        crossBusy = false;
+        error = `실사용비를 채우지 못했습니다 — ${reason.message}`;
+        render();
+      });
+  };
+
   // 이 달을 통째로 지운다. 시트에서 줄이 없어지므로 달 고르개에서도 사라진다.
   // 되돌릴 수 없어 무엇이 사라지는지 세어 보여 주고 묻는다.
   const dropMonth = () => {
@@ -16458,6 +16537,13 @@ if (budgetPlanView) {
       const picked = Array.from(cross.files || []);
       cross.value = '';                 // 같은 파일을 다시 골라도 change 가 오게
       if (picked.length) crossFill(picked);
+      return;
+    }
+    const one = event.target.closest('[data-bg="crossOne"]');
+    if (one) {
+      const picked = Array.from(one.files || []);
+      one.value = '';
+      if (picked.length) crossOne(one.dataset.row, picked);
       return;
     }
     const hit = event.target.closest('[data-bg]');

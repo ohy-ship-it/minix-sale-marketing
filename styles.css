@@ -1086,6 +1086,13 @@ body.is-dragging-card,body.is-resizing{user-select:none}
 /* 진행광고매체 — 한 줄에 여럿을 켤 수 있다. 표 칸 안이라 눌러 켜는 조각으로 둔다
    (여러 줄 고르개는 칸 높이를 세 배로 만든다). 보기일 때는 켠 것만 남는다. */
 .bg-kinds{white-space:nowrap;line-height:1}
+/* 실사용비 칸 — 적는 칸 옆에 그 줄의 전매체 파일을 붙이는 클립 */
+.bg-used-cell{white-space:nowrap}
+.bg-used-cell .bg-used{width:calc(100% - 22px)}
+.bg-used-file{display:inline-flex;align-items:center;justify-content:center;width:18px;height:22px;
+  margin-left:2px;vertical-align:middle;cursor:pointer;color:#b0afa8;border-radius:4px}
+.bg-used-file:hover{color:#37352f;background:#f1f0ec}
+.bg-used-file svg{width:13px;height:13px}
 .bg-kind{display:inline-block;margin:1px 3px 1px 0;padding:3px 8px;border:1px solid var(--line);
   border-radius:20px;background:#fff;font-family:inherit;font-size:11px;color:#a5a49f;cursor:pointer}
 button.bg-kind:hover{border-color:#b9c9dd;color:#2a78d6}
