@@ -1942,6 +1942,12 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .er-withbrand.is-on{border-color:#e0b36a;background:#fdf6e8;color:#8a6d1f;font-weight:700}
 /* 그 행사에 섞인 브검 광고비 — 넣고 빼는 것은 맨 위 스위치로 고른다 */
 .er-brand-tag{gap:4px;color:#96632a}
+/* 카테고리별 ↔ 판매채널별 — 한 카드를 두 가지로 갈라 본다 */
+.er-cuts{margin-left:auto;display:inline-flex;gap:4px}
+.er-cut{border:1px solid var(--line,#e5e4df);background:#fff;border-radius:7px;padding:3px 10px;
+  font:600 11.5px 'Noto Sans KR',sans-serif;color:#6f6f68;cursor:pointer}
+.er-cut:hover{border-color:#c9c8c1;color:#37352f}
+.er-cut.is-on{background:#37352f;border-color:#37352f;color:#fff}
 .er-brand-tag small{font-weight:700;color:#8a6d1f}
 .er-brand-note b{color:#7a4f1d}
 .er-ads-go{margin-left:8px;border:1px solid var(--line,#e6e5e0);border-radius:6px;background:#fff;

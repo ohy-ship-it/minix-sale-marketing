@@ -13313,6 +13313,13 @@ if (eventReport) {
   let open = '';                   // 펼친 줄 (프로모션 줄 id)
   let openMedia = '';              // '줄id|단계|매체' — 펼친 매체 하나
   let handOpen = '';               // '줄id|단계' — 매체를 손으로 적는 칸을 연 자리
+  /* 위 카드를 제품으로 가를지 판매채널로 가를지. 보는 사람 것이라 시트에 안 담고,
+     그 브라우저에만 기억해 둔다 (늘 같은 쪽으로 보는 사람이 많다). */
+  const CUT_KEY = 'minix-event-cut';
+  let cutBy = 'cat';
+  try {
+    if (window.localStorage.getItem(CUT_KEY) === 'channel') cutBy = 'channel';
+  } catch (error) { cutBy = 'cat'; }
   let openAds = '';                // 발행 소재를 펼친 프로모션 (매체에 물어본다)
   const adsGot = {};               // 프로모션명 → { status, rows, notes, range }
 
@@ -14559,17 +14566,16 @@ if (eventReport) {
     </div>`;
   };
 
-  const catCard = () => {
-    const rows = allPlanRows();
+  /* 제품으로 가른 칸. 정해 둔 차례대로 (그 밖은 맨 뒤 · 줄이 있을 때만).
+     갈라 보는 묶음(CAT_SPLIT)은 그 자리에서 SKU 마다 한 칸씩 세운다 —
+     줄이 하나도 없는 SKU 는 세우지 않는다 (빈 칸만 늘어난다). */
+  const catBlocks = () => {
     const bucket = {};
-    rows.forEach((row) => {
+    allPlanRows().forEach((row) => {
       const name = catOf(row.sku);
       if (!bucket[name]) bucket[name] = [];
       bucket[name].push(row);
     });
-    /* 정해 둔 차례대로 (그 밖은 맨 뒤 · 줄이 있을 때만).
-       갈라 보는 묶음(CAT_SPLIT)은 그 자리에서 SKU 마다 한 칸씩 세운다 —
-       줄이 하나도 없는 SKU 는 세우지 않는다 (빈 칸만 늘어난다). */
     const blocks = [];
     SKU_TREE.forEach(([cat, skus]) => {
       const mine = bucket[cat];
@@ -14581,10 +14587,43 @@ if (eventReport) {
       });
     });
     if (bucket[ETC_CAT]) blocks.push({ name: ETC_CAT, rows: bucket[ETC_CAT] });
+    return blocks;
+  };
+
+  /* 판매채널로 가른 칸. 제품이 아니라 **어디서 팔았나**로 묶어 본다 —
+     같은 카카오라도 더 플렌더와 에어드라이가 섞여 있어, 제품으로만 보면
+     '카카오가 잘 돌았나' 를 물을 자리가 없었다.
+     차례는 광고비가 큰 채널부터다 (정해 둔 차례가 없고, 큰 데부터 보는 게 맞다).
+     판매채널을 안 적은 줄도 한 칸으로 모은다 — 조용히 빠지면 합이 안 맞는다. */
+  const NO_CHANNEL = '(판매채널 없음)';
+  const chanBlocks = () => {
+    const bucket = {};
+    allPlanRows().forEach((row) => {
+      const name = String(row.channel || '').trim() || NO_CHANNEL;
+      if (!bucket[name]) bucket[name] = [];
+      bucket[name].push(row);
+    });
+    return Object.keys(bucket)
+      .map((name) => ({ name: name, rows: bucket[name], spend: spentOf(bucket[name]) }))
+      .sort((a, b) => {
+        if (a.name === NO_CHANNEL) return 1;      // 이름 없는 칸은 맨 뒤
+        if (b.name === NO_CHANNEL) return -1;
+        return b.spend - a.spend;
+      });
+  };
+
+  /* 한 카드 안에서 **제품으로 볼지 판매채널로 볼지** 고른다.
+     칸을 둘로 늘리지 않는다 — 같은 달을 두 번 그려 놓으면 화면만 길어지고,
+     정작 보고 싶은 하나를 찾으려면 또 스크롤해야 한다. */
+  const catCard = () => {
+    const blocks = cutBy === 'channel' ? chanBlocks() : catBlocks();
     if (!blocks.length) return '';
+    const tab = (key, name) => `<button type="button" class="er-cut${cutBy === key ? ' is-on' : ''}"
+      data-er="cut" data-cut="${key}">${escape(name)}</button>`;
     return `<div class="tool-card er-cats">
-      <div class="tool-list-head"><h3>카테고리별
-        <small>${escape(blocks.map((one) => one.name).join(' · '))}</small></h3></div>
+      <div class="tool-list-head"><h3>${cutBy === 'channel' ? '판매채널별' : '카테고리별'}
+        <small>${escape(blocks.map((one) => one.name).join(' · '))}</small></h3>
+        <span class="er-cuts">${tab('cat', '카테고리별')}${tab('channel', '판매채널별')}</span></div>
       ${blocks.map((one) => catBlock(one.name, one.rows, one.under)).join('')}
     </div>`;
   };
@@ -15083,6 +15122,12 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (!hit) return;
     const what = hit.dataset.er;
     if (what === 'reload') { opening = false; load(true); return; }
+    if (what === 'cut') {
+      cutBy = hit.dataset.cut === 'channel' ? 'channel' : 'cat';
+      try { window.localStorage.setItem(CUT_KEY, cutBy); } catch (error) { /* 거들기다 */ }
+      render();
+      return;
+    }
     if (what === 'handopen') {
       event.stopPropagation();
       const slot = `${hit.dataset.channel}|${hit.dataset.phase}`;
