@@ -14776,12 +14776,14 @@ if (eventReport) {
      줄에 파일이 붙어 있으면 가를 수 있다 (예전에는 통째로 건너뛰었다).
      다만 그 줄에 붙은 것이 없고 **공용 파일로만** 잡히는데 같은 채널 줄이 여럿이면
      그대로 둔다 — 그 광고비를 어느 줄 몫으로 넣을지 알 수 없어서다. */
-  const fillPlan = () => {
+  const fillPlan = (onlyEmpty) => {
     const ready = [];
     const many = [];
     allPlanRows().forEach((row) => {
       const ch = String(row.channel || '').trim();
       if (!ch) return;
+      // 자동으로 채울 때는 **손으로 적어 둔 값을 덮지 않는다** (사람이 고쳐 둔 것이 이긴다)
+      if (onlyEmpty && rowUsed(row) > 0) return;
       const key = slotOf(row);
       const got = spendFor(key);
       if (!got.rows) return;                      // 이 줄에 잡히는 파일이 없다
@@ -14794,9 +14796,15 @@ if (eventReport) {
     return { ready: ready, many: many };
   };
 
-  const fillUsed = () => {
-    const plan0 = fillPlan();
+  /* auto 를 주면 **묻지 않고** 아직 비어 있는 줄만 채운다.
+     파일을 붙이는 길에 저절로 불린다 — 붙여 놓고 단추를 또 눌러야 채워지는 것을
+     아무도 안 눌러, 정작 숫자를 보는 자리는 늘 비어 있었다.
+     손으로 적어 둔 값은 건드리지 않는다. 그 값까지 다시 채우려면 맨 위
+     [실사용비 채우기] 를 누르면 된다 (그건 적어 둔 값도 덮는다). */
+  const fillUsed = (auto) => {
+    const plan0 = fillPlan(auto);
     if (!plan0.ready.length) {
+      if (auto) { render(); return; }      // 채울 것이 없으면 조용히 지나간다
       fileNote = plan0.many.length
         ? `채울 줄이 없습니다 — <b>${escape(plan0.many.join(' · '))}</b> 은 같은 판매채널 줄이 여럿인데 공용 파일로만 잡혀, 어느 줄 몫인지 알 수 없습니다 (줄에 파일을 붙이면 채웁니다).`
         : '붙인 파일에서 이 달 판매채널을 찾지 못했습니다.';
@@ -14806,7 +14814,7 @@ if (eventReport) {
     const total = plan0.ready.reduce((sum, one) => sum + one.spend, 0);
     const brand = plan0.ready.reduce((sum, one) => sum + one.brand, 0);
     const what = plan0.ready.map((one) => `${one.channel}${one.row.sku ? ` · ${one.row.sku}` : ''} ${won(one.spend)}`).join('\n');
-    if (!window.confirm(`${plan0.ready.length}줄의 실사용비를 붙인 파일로 채웁니다.\n\n`
+    if (!auto && !window.confirm(`${plan0.ready.length}줄의 실사용비를 붙인 파일로 채웁니다.\n\n`
       + `${what}\n\n합계 ${won(total)}`
       + (brand ? `\n(브랜드검색 ${won(brand)} 은 뺐습니다 — 고정비에 이미 있습니다)` : '')
       + '\n\n월별 예산에 그대로 저장됩니다. 채울까요?')) return;
@@ -14841,7 +14849,9 @@ if (eventReport) {
         if (mine !== month) return;
         plan = got.fresh;
         keepBudget(month, { plan: plan, updatedAt: new Date().toISOString(), updatedBy: saved.by });
-        fileNote = `실사용비를 <b>${num(got.done)}줄</b> 채웠습니다 (합계 ${won(total)}).`
+        fileNote = (auto
+          ? `붙인 파일로 <b>브검제외 광고비</b> ${num(got.done)}줄을 채웠습니다 (합계 ${won(total)}) — 월별 예산에도 담았습니다.`
+          : `실사용비를 <b>${num(got.done)}줄</b> 채웠습니다 (합계 ${won(total)}).`)
           + (brand ? ` 브랜드검색 ${won(brand)} 은 뺐습니다 — 고정비에 이미 있습니다.` : '')
           + (plan0.many.length ? ` <b>${escape(plan0.many.join(' · '))}</b> 은 같은 판매채널 줄이 여럿이라 건드리지 않았습니다 — 손으로 나눠 적어 주세요.` : '');
         render();
@@ -15259,6 +15269,9 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
               .map((one) => escape(one.name)).join(' · ')} (담아 두려면 <b>저장</b> 을 눌러 주세요)` : '',
             bad.length ? `<b>못 붙인 파일</b> — ${bad.map((one) => escape(one)).join(' · ')}` : '',
           ].filter(Boolean).join('<br>');
+          /* 붙이는 길에 **브검제외 광고비를 저절로 채운다** (브랜드검색은 뺀다).
+             손으로 적어 둔 줄은 건드리지 않는다. 채울 것이 없으면 조용히 지나간다. */
+          if (good.length) { fillUsed(true); return; }
           render();
         });
     }
