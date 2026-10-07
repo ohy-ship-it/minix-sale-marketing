@@ -246,6 +246,7 @@ function onOpen() {
     .addItem('구글 연결 확인', 'checkGoogleAds')
     .addItem('카카오 연결 확인', 'checkKakaoToken')
     .addItem('Clarity 연결 확인', 'checkClarity')
+    .addItem('미닉스 밀어넣기 확인', 'checkMediaPush')
     .addSeparator()
     .addSubMenu(SpreadsheetApp.getUi().createMenu('월별 예산')
       .addItem('지금 한 번 올리기', 'budgetDailyRun')
@@ -1623,6 +1624,108 @@ function tndTop_(payload) {
   return { ok: true, tab: tab, campaign: head.replace(/^🔴\s*/, '') };
 }
 
+/* ── 매체결과 밀어넣기 (여기 → 미닉스 워크스페이스) ────────────────────
+   행사별 결과에서 전매체 파일을 붙이면, 같은 파일을 미닉스 워크스페이스의
+   '행사별 결과 → 매체결과' 에도 넣어 준다. 예전에는 사람이 내려받아 두 화면에
+   각각 올렸고, 한쪽만 올리고 잊으면 두 화면이 다른 숫자를 말했다.
+
+   **왜 앱 스크립트를 거치나.** 화면(워크스페이스)은 정적 사이트라 열쇠를 코드에
+   넣으면 누구나 본다. 그래서 브라우저는 열쇠를 모르고 여기로만 보내고, 열쇠는
+   스크립트 속성에만 둔다. 서버끼리 부르는 길이라 CORS 도 필요 없다.
+
+   넣을 곳: MEDIA_PUSH_KEY (미닉스 쪽 환경변수와 **같은 값**) · MY_PAGES_URL (주소).
+   둘 중 하나라도 없으면 무엇을 넣어야 하는지 그대로 알려 준다 — 조용히 실패하면
+   보내는 사람은 들어간 줄 안다. */
+var MY_PAGES_URL_DEFAULT = 'https://minix-workspace.onrender.com';
+
+function mediaPushKey_() {
+  var key = cleanToken_(PropertiesService.getScriptProperties().getProperty('MEDIA_PUSH_KEY'));
+  if (!key) {
+    throw new Error('MEDIA_PUSH_KEY 스크립트 속성이 없습니다. '
+      + 'Apps Script 편집기 → 프로젝트 설정 → 스크립트 속성에 넣어 주세요 '
+      + '(미닉스 워크스페이스 Render 환경변수와 같은 값이어야 합니다).');
+  }
+  return key;
+}
+
+function myPagesUrl_() {
+  var url = cleanToken_(PropertiesService.getScriptProperties().getProperty('MY_PAGES_URL'))
+    || MY_PAGES_URL_DEFAULT;
+  url = String(url);
+  while (url.length && url.charAt(url.length - 1) === '/') url = url.slice(0, -1);
+  return url;
+}
+
+/* 행사 하나에 파일을 밀어넣는다.
+   payload: { promoId, product, files: [{ name, body }], by }
+   promoId 는 **미닉스 행사 캘린더의 ID 칸** 값이다 — 이름이 아니라 번호로 짝지어야
+   미닉스에서 행사명을 고쳐도 안 끊긴다. */
+function mediaPush_(payload) {
+  var promoId = String((payload && payload.promoId) || '').trim();
+  var product = String((payload && payload.product) || '').trim();
+  var files = (payload && payload.files) || [];
+  if (!promoId) throw new Error('행사 ID 가 비어 있습니다 (미닉스 행사 캘린더의 ID 칸).');
+  if (!product) throw new Error('제품이 비어 있습니다.');
+  if (!files.length) throw new Error('보낼 파일이 없습니다.');
+
+  var url = myPagesUrl_() + '/api/promos/' + encodeURIComponent(promoId) + '/media-push';
+  var answer = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json; charset=utf-8',
+    muteHttpExceptions: true,
+    headers: { 'x-media-key': mediaPushKey_() },
+    payload: JSON.stringify({
+      product: product,
+      files: files,
+      by: String((payload && payload.by) || ''),
+      at: new Date().toISOString()
+    })
+  });
+
+  var code = answer.getResponseCode();
+  var text = answer.getContentText() || '';
+  var body = null;
+  try { body = JSON.parse(text); } catch (error) { body = null; }
+
+  if (code === 401) {
+    throw new Error('미닉스 워크스페이스가 열쇠를 거절했습니다 — 양쪽 MEDIA_PUSH_KEY 가 같은 값인지 확인해 주세요.');
+  }
+  if (code === 503) {
+    throw new Error('미닉스 워크스페이스에 MEDIA_PUSH_KEY 가 아직 없습니다 (Render 환경변수에 넣고 다시 배포해 주세요).');
+  }
+  if (code === 404) {
+    throw new Error('미닉스 워크스페이스에서 그 행사를 찾지 못했습니다 (행사 ID ' + promoId + ').');
+  }
+  if (code >= 400 || !body || !body.ok) {
+    throw new Error('미닉스 워크스페이스 (HTTP ' + code + '): '
+      + ((body && body.error) || text.slice(0, 300)));
+  }
+  return { ok: true, source: 'mediaPush', promoId: promoId, product: product,
+    promo: body.promo || '', done: body.done || [], bad: body.bad || [] };
+}
+
+// 밀어넣기 연결 확인 — 시트 UTM 메뉴에서 부른다 (열쇠 · 주소가 제대로 들어갔는지)
+function checkMediaPush() {
+  var lines = [];
+  try {
+    var key = mediaPushKey_();
+    lines.push('넣어 둔 값');
+    lines.push('');
+    lines.push('· MY_PAGES_URL : ' + myPagesUrl_());
+    lines.push('· MEDIA_PUSH_KEY : ' + key.length + '자, ' + key.slice(0, 4) + '… 로 시작');
+    lines.push('');
+    lines.push('미닉스 워크스페이스 Render 환경변수의 MEDIA_PUSH_KEY 와 같은 값이어야 합니다.');
+  } catch (error) {
+    lines.push('아직 쓸 수 없습니다.');
+    lines.push('');
+    lines.push(String(error && error.message ? error.message : error));
+  }
+  var message = lines.join(BR1);
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
+}
+
 // ── 메타 광고 성과 조회 (워크스페이스 '매체별 성과' 화면) ──────────────
 // 액세스 토큰은 스크립트 속성 META_ACCESS_TOKEN 에 둔다. 브라우저로는 내려보내지 않는다.
 //   Apps Script 편집기 → 프로젝트 설정(톱니) → 스크립트 속성 → META_ACCESS_TOKEN 추가
@@ -1775,6 +1878,7 @@ function handleAction_(payload) {
     if (payload.action === 'filenameRecent') return filenameRecent_(payload);
     if (payload.action === 'filenameSeq') return filenameSeq_();
     if (payload.action === 'partTabs') return partTabs_();
+    if (payload.action === 'mediaPush') return mediaPush_(payload);
     return { ok: false, error: '모르는 요청입니다: ' + payload.action };
   } catch (error) {
     return { ok: false, error: String(error && error.message ? error.message : error) };
@@ -8302,6 +8406,7 @@ function budgetDailyOn_(value) {
    메뉴가 통째로 죽지 않게 붙잡아, 무엇을 하면 되는지 그대로 알려 준다.
    권한을 못 넣는 상황도 있으므로 손으로 트리거를 거는 길도 함께 적어 둔다 —
    그 길은 budgetDailyRun 만 부르므로 이 권한이 아예 필요 없다.                        */
+var BR1 = String.fromCharCode(10);   // 줄바꿈 하나 (알림창 줄 나누기)
 var BR2 = "\n\n";   // 줄바꿈 둘 (알림창 문단 나누기)
 var BUDGET_DAILY_SCOPE = 'https://www.googleapis.com/auth/script.scriptapp';
 
