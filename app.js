@@ -13823,7 +13823,14 @@ if (eventReport) {
       <td class="perf-num bg-cost"><span${rowManual(row) ? ' class="is-manual" title="수기로 적은 금액입니다"' : ''}>${cost ? won(cost) : dash}</span></td>
       <td class="perf-num er-rate${goal && sold >= goal ? ' is-good' : ''}"
         title="${kin.length > 1 ? `판매채널 ${escape(row.channel || '')} 전체 — 실판매량 ${num(sold)} ÷ 목표수량 합 ${num(goal)}` : ''}">${goal ? perfPercent(sold / goal) : dash}</td>
-      <td class="perf-num bg-used">${used ? won(used) : dash}</td>
+      <td class="perf-num bg-used er-used-cell" data-er="skip">
+        <input type="text" inputmode="numeric" class="er-used-in" data-er="used" data-row="${id}"
+          value="${escape(used ? num(used) : '')}" placeholder="—"
+          title="월별 예산의 실사용비와 같은 칸입니다 — 여기서 적어도 거기에 담깁니다 (브랜드검색은 빼고 적어 주세요)">
+        <label class="er-used-file" title="이 줄의 전매체 파일을 붙이면 그 광고비로 채웁니다 (브랜드검색은 뺍니다)">
+          <i data-lucide="paperclip"></i>
+          <input type="file" accept=".json,application/json" multiple hidden
+            data-er="usedFile" data-row="${id}"></label></td>
       ${shown ? `<td class="perf-num">${got ? money(got.spend) : dash}</td>
         <td class="perf-num"><span${revTyped(key)
     ? ` class="is-manual" title="수기로 적은 총 매출입니다${got ? ` (붙인 파일의 판매전환값은 ${money(got.rev)})` : ''}"` : ''}>${shown.rev || revTyped(key) ? money(shown.rev) : dash}</span></td>
@@ -15029,6 +15036,72 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       });
   };
 
+  /* ── 브검제외 광고비 적기 (= 월별 예산의 실사용비) ──────────────────
+     두 화면이 **같은 칸**을 본다. 월별 예산의 실사용비와 여기 브검제외 광고비는
+     한 값이라, 어느 쪽에서 적어도 다른 쪽에 그대로 보인다 (담기는 곳이 한 군데다).
+     예전에는 여기서 읽기만 되어, 숫자를 고치려면 월별 예산으로 건너가 [수정하기] 를
+     눌러야 했다 — 정작 숫자를 보는 자리는 여기인데.
+
+     **쓰기 전에 그 달을 다시 읽는다.** 이 화면을 열어 둔 사이에 남이 월별 예산을
+     고쳤을 수 있는데, 들고 있던 옛 판을 그대로 덮으면 그 고침이 사라진다. */
+  const putUsed = (rowId, money, say) => {
+    const mine = month;
+    if (say) say.classList.add('is-saving');
+    return askSheet({ action: 'budgetGet', month: month })
+      .then((body) => {
+        const found = (body.budget || {}).plan;
+        const now = (found && typeof found === 'object') ? found : { skus: [], rows: [] };
+        if (!Array.isArray(now.rows)) now.rows = [];
+        const row = now.rows.find((one) => String(one.id) === String(rowId));
+        if (!row) throw new Error('월별 예산에서 그 줄을 찾지 못했습니다 (그새 지워진 듯합니다).');
+        row.used = money;
+        return askSheet({ action: 'budgetPut', month: month, plan: now, by: '' }).then(() => now);
+      })
+      .then((now) => {
+        if (say) { say.classList.remove('is-saving'); say.classList.add('is-saved'); }
+        if (mine !== month) return;
+        plan = now;
+        keepBudget(month, { plan: plan, updatedAt: new Date().toISOString(), updatedBy: saved.by });
+        render();
+      })
+      .catch((reason) => {
+        if (say) say.classList.remove('is-saving');
+        error = `브검제외 광고비를 담지 못했습니다 — ${reason.message}`;
+        render();
+      });
+  };
+
+  /* 줄 하나를 **그 줄에 붙인 파일**로 채운다.
+     맨 위 [실사용비 채우기] 는 붙여 둔 파일에서 판매채널로 줄을 찾는데, 같은 판매채널
+     줄이 여럿이고 공용 파일로만 잡히면 어느 줄 몫인지 알 수 없어 건드리지 않는다.
+     여기 붙이면 그 셈이 필요 없다 — 전매체 검색은 행사 하나씩 찾아 내려받으므로
+     그 파일은 통째로 그 줄의 것이다. 브랜드검색은 여기서도 뺀다. */
+  const fillOneUsed = (rowId, picked, say) => {
+    const row = allPlanRows().find((one) => String(one.id) === String(rowId));
+    if (!row) return;
+    Promise.all(picked.map((one) => readFile(one).then((body) => ({ name: one.name, body: body }))))
+      .then((files) => {
+        const got = perfCrossTotal(files);
+        if (!got.rows) throw new Error('파일에 광고비가 든 줄이 없습니다.');
+        const what = `${row.channel || '(판매채널 없음)'}${row.event ? ` · ${row.event}` : ''}`;
+        if (!window.confirm(`"${what}" 의 브검제외 광고비를 ${won(got.spend)} 로 채웁니다.
+
+`
+          + `파일 ${picked.length}개 · 광고그룹 ${got.rows}줄`
+          + (got.brand ? `
+(브랜드검색 ${won(got.brand)} 은 뺐습니다 — 고정비에 이미 있습니다)` : '')
+          + `
+
+지금 적혀 있는 값(${rowUsed(row) ? won(rowUsed(row)) : '없음'})은 덮어씁니다.`
+          + ' 월별 예산의 실사용비에 그대로 담깁니다. 채울까요?')) return null;
+        return putUsed(rowId, Math.round(got.spend), say);
+      })
+      .catch((reason) => {
+        error = `브검제외 광고비를 채우지 못했습니다 — ${reason.message}`;
+        render();
+      });
+  };
+
   // 붙인 파일이 전매체에서 내려받은 것인지 본다. 아니면 이유를 그대로 알려 준다.
   const readFile = (picked) => picked.text().then((text) => {
     let found = null;
@@ -15118,6 +15191,19 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (!hit) return;
     const what = hit.dataset.er;
     if (what === 'month') { month = hit.value; open = ''; openMedia = ''; load(); return; }
+    if (what === 'used') {
+      // 월별 예산의 실사용비와 같은 칸이다 — 여기서 적어도 거기에 담긴다
+      const money = Number(String(hit.value).replace(/[,s₩원]/g, '')) || 0;
+      hit.value = money ? num(money) : '';
+      putUsed(hit.dataset.row, money, hit);
+      return;
+    }
+    if (what === 'usedFile') {
+      const picked = Array.from(hit.files || []);
+      hit.value = '';                   // 같은 파일을 다시 골라도 change 가 오게
+      if (picked.length) fillOneUsed(hit.dataset.row, picked, hit);
+      return;
+    }
     if (what === 'withbrand') {
       setWithBrand(hit.checked);
       render();   // 카드 · 표 · 펼친 판이 한꺼번에 그 기준으로 다시 셈해진다
