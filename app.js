@@ -13760,7 +13760,7 @@ if (eventReport) {
       ${one === month ? 'selected' : ''}>${escape(monthName(one))}</option>`).join('')}</select>`;
 
   // 월별 예산의 요약 조각과 같은 모양을 쓴다 (두 화면이 나란히 읽혀야 한다)
-  const statBox = (label, value, hint) => `<span class="bg-stat">
+  const statBox = (label, value, hint, cls) => `<span class="bg-stat${cls ? ` ${cls}` : ''}">
     <small>${escape(label)}</small><b>${value}</b>${hint ? `<em>${hint}</em>` : ''}</span>`;
 
   /* ── 실 CPA — 한 대 파는 데 든 돈 ─────────────────────────────
@@ -14630,6 +14630,8 @@ if (eventReport) {
         ${statBox('총매출금', rev ? won(rev) : dash, '적은 총 매출 · 없으면 파일의 판매전환값')}
         ${statBox('목표수량', goal ? `${num(goal)}대` : dash, '월별 예산에 적은 목표의 합')}
         ${statBox('실판매량', sold ? `${num(sold)}대` : dash, '손으로 적은 총 판매수 · 없으면 단계별로 적은 값')}
+        ${statBox('달성률', goal ? perfPercent(sold / goal) : dash, '실판매량 ÷ 목표수량',
+    goal && sold >= goal ? 'is-good' : '')}
         ${statBox('목표 CPS', wantCps === null ? dash : won(Math.round(wantCps)), '계획 광고비 ÷ 목표수량')}
         ${statBox('실 CPS', realCps === null ? dash : won(Math.round(realCps)), gap)}
       </div>
@@ -14732,6 +14734,9 @@ if (eventReport) {
         ${statBox('예상광고비', sum.cost ? won(sum.cost) : dash, '목표 CPS × 목표수량')}
         ${statBox('실광고비', spend ? won(spend) : dash, '실사용비 · 안 적었으면 붙인 파일의 집행 광고비')}
         ${statBox('실판매수', sold ? `${num(sold)}대` : dash, '손으로 적은 총 판매수 · 없으면 단계별로 적은 값')}
+        ${statBox('달성률', sum.goal ? perfPercent(sold / sum.goal) : dash,
+    sum.goal ? `목표 ${num(sum.goal)}대` : '목표수량을 안 적었습니다',
+    sum.goal && sold >= sum.goal ? 'is-good' : '')}
         ${statBox('실매출금', rev ? won(rev) : dash, '적은 총 매출 · 없으면 파일')}
         ${statBox('CPS', sold ? won(Math.round(spend / sold)) : dash, '실광고비 ÷ 실판매수')}
         ${statBox('ROAS', spend ? perfRoas(rev / spend) : dash, '실매출금 ÷ 실광고비')}
