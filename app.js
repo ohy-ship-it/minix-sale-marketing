@@ -13612,6 +13612,11 @@ if (eventReport) {
   const pctText = (value) => (value === null ? dash : perfPercent(value));
   const moneyText = (value) => (value === null ? dash : won(Math.round(value)));
 
+  /* 사전알림 행사에서 **신청으로 나누는 단계.** 신청은 사전에만 받는다 —
+     당일부터는 구매가 목표라 판매량으로 나눈다. */
+  const ASK_PHASES = ['사전', '사전(알림)'];
+  const asksOf = (name) => ASK_PHASES.indexOf(String(name || '')) >= 0;
+
   /* 지표 차례는 **한 군데서 정한다** — 이 화면의 표가 셋(줄 · 단계별 · 매체별)이라
      따로 적어 두면 곧 서로 어긋난다. 판매채널 추이와 같은 차례 · 같은 셈이다.
      받은 값 먼저, 셈한 값 나중 — 광고비 · 판매전환값 · 노출 · 클릭 · 판매량 →
@@ -13622,19 +13627,37 @@ if (eventReport) {
     { name: '노출', cell: (one) => (one.imp ? num(one.imp) : dash) },
     { name: '클릭', cell: (one) => (one.clk ? num(one.clk) : dash) },
     { name: '판매량', cell: (one) => (one.buy ? num(one.buy) : dash) },
-    /* 사전알림 행사는 **CPA** 로 센다. 그런 캠페인은 신청을 받는 것이 목표라 구매가
-       거의 안 잡힌다 — CPS 를 그대로 두면 '한 건에 수십만 원' 처럼 보인다. */
+    /* 사전알림 행사는 **단계마다 나누는 밑이 다르다.**
+       사전은 신청을 받는 기간이라 구매가 거의 안 잡힌다 — 판매량으로 나누면
+       '한 건에 수십만 원' 처럼 보인다. 그래서 사전은 **결과(신청)**, 당일 · 사후는
+       **판매량(구매)** 으로 나눈다.
+       한 표에 두 가지가 섞이므로 무엇으로 나눈 값인지 옆에 작게 적는다 — 안 적으면
+       사전이 네 배쯤 싸 보이고, 보는 사람은 그게 잘 돈 것으로 읽는다.
+       단계를 모르는 자리(종합결과 · 줄의 표)는 예전처럼 결과로 나눈다. */
     { name: 'CPS', alarmName: 'CPA',
-      cell: (one, alarm) => moneyText(ratio(one.spend, alarm ? one.conv : one.buy)) },
+      cell: (one, alarm) => {
+        if (!alarm) return moneyText(ratio(one.spend, one.buy));
+        const ask = one.phase === undefined ? true : asksOf(one.phase);
+        const base = one.base === undefined ? (ask ? one.conv : one.buy) : one.base;
+        const text = moneyText(ratio(one.spend, base));
+        if (text === dash) return dash;
+        const tag = one.base === undefined ? (ask ? '신청' : '구매') : '신청+구매';
+        return `${text}<small class="er-base">${tag}</small>`;
+      } },
     { name: 'ROAS', cell: (one) => (one.spend ? perfRoas(ratio(one.rev, one.spend) || 0) : dash) },
     { name: 'CVR', cell: (one) => pctText(ratio(one.buy, one.clk)) },
     { name: 'CPC', cell: (one) => moneyText(ratio(one.spend, one.clk)) },
     { name: 'CTR', cell: (one) => pctText(ratio(one.clk, one.imp)) },
     { name: 'CPM', cell: (one) => moneyText(ratio(one.spend * 1000, one.imp)) },
   ];
-  const metricName = (one, alarm) => (alarm && one.alarmName ? one.alarmName : one.name);
-  const metricHeads = (alarm) => METRICS.map((one) =>
-    `<th class="perf-num">${escape(metricName(one, alarm))}</th>`).join('');
+  /* both 를 주면 두 이름을 같이 적는다 (단계별 표는 한 칸에 CPA 와 CPS 가 섞인다) */
+  const metricName = (one, alarm, both) => {
+    if (!one.alarmName) return one.name;
+    if (both) return `${one.alarmName} · ${one.name}`;
+    return alarm ? one.alarmName : one.name;
+  };
+  const metricHeads = (alarm, both) => METRICS.map((one) =>
+    `<th class="perf-num">${escape(metricName(one, alarm, both))}</th>`).join('');
   const metricRow = (sum, alarm) => METRICS.map((one) =>
     `<td class="perf-num">${one.cell(sum, alarm)}</td>`).join('');
 
@@ -13946,6 +13969,7 @@ if (eventReport) {
       sum.spend = paidSpend(one.rows);
       sum.buy = typed.sales !== '' ? (Number(typed.sales) || 0) : 0;
       if (typed.rev !== '') sum.rev = Number(typed.rev) || 0;
+      sum.phase = one.name;          // CPS · CPA 가 이걸 보고 나눌 밑을 고른다
       return { ...one, typed: typed, sum: sum };
     });
     /* 합계는 **줄을 다 더해 다시 계산한다** — 단계별 ROAS · CPS 를 평균 내면 틀린다
@@ -13956,9 +13980,16 @@ if (eventReport) {
     whole.spend = paidSpend(everyRow);
     whole.buy = lines.reduce((sum, one) => sum + (Number(one.sum.buy) || 0), 0);
     whole.rev = lines.reduce((sum, one) => sum + (Number(one.sum.rev) || 0), 0);
+    /* 합계의 CPA · CPS 는 **단계마다 쓴 밑을 더해** 나눈다. 사전은 신청, 당일은 구매라
+       밑이 섞이므로 '신청+구매' 라고 적어 둔다 — 한 가지로 센 값인 척하면 안 된다.
+       사전알림 행사가 아니면 밑이 판매량 하나뿐이라 섞일 것이 없다. */
+    if (alarm) {
+      whole.base = lines.reduce((sum, one) =>
+        sum + (Number(asksOf(one.name) ? one.sum.conv : one.sum.buy) || 0), 0);
+    }
     const anyTyped = lines.some((one) => one.typed.sales !== '' || one.typed.rev !== '');
     return `<div class="tool-table-wrap"><table class="tool-table er-split">
-        <thead><tr><th>단계</th><th>기간</th>${metricHeads(alarm)}
+        <thead><tr><th>단계</th><th>기간</th>${metricHeads(alarm, alarm)}
           <th class="perf-num er-typed-head">적은 판매수</th>
           <th class="perf-num er-typed-head">적은 매출</th></tr></thead>
         <tbody>
