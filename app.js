@@ -14919,6 +14919,7 @@ if (eventReport) {
       : '아직 저장한 적이 없는 달입니다.'} · 적은 값은 시트의 <b>추이판매채널</b> 탭에 담깁니다.\n        · 붙인 파일은 <b>저장</b> 을 눌러야 시트에 담겨 다른 사람에게도 보입니다.
 ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니다 — 시트 값이 오면 바뀝니다'}`}</p>
         ${fileNote ? `<p class="perf-note">${fileNote}</p>` : ''}
+        ${pushNote ? `<p class="perf-note er-push">${pushNote}</p>` : ''}
       </div>
       ${catCard()}
       <div class="tool-card">
@@ -15117,6 +15118,113 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       });
   };
 
+  /* ── 미닉스 워크스페이스로 밀어넣기 ──────────────────────────────
+     여기 붙인 파일을 미닉스 쪽 '행사별 결과 → 매체결과' 에도 그대로 넣는다.
+     예전에는 사람이 내려받아 두 화면에 각각 올렸고, 한쪽만 올리고 잊으면 두 화면이
+     다른 숫자를 말했다.
+
+     **짝은 미닉스 행사 캘린더로 짓는다.** 그 캘린더는 미닉스가 저장할 때마다 적재
+     시트로 복사되는 거울이라, 거기 적힌 ID 가 곧 미닉스의 행사 번호다. 이름이 아니라
+     번호로 보내야 미닉스에서 행사명을 고쳐도 짝이 안 끊긴다.
+
+     못 찾은 줄은 **보내지 않고 이름을 적어 알려 준다.** 조용히 건너뛰면 보낸 사람은
+     들어간 줄 알고, 조용히 아무 행사에나 넣으면 남의 행사 숫자가 어긋난다. */
+  let calRows = [];        // 그 달 캘린더 (채널 · 행사명 · 행사제품 · ID)
+  let calAt = '';          // 어느 달 것을 들고 있나
+  let pushNote = '';
+
+  // 이름을 견주기 전에 띄어쓰기 · 괄호 · 가운뎃점 따위를 턴다.
+  // '더 플렌더(MAX)' 와 '더 플렌더 MAX' 가 같은 제품인데 다르다고 나오면 짝이 안 맞는다.
+  const CAL_DROP = ' ()[]_·.-';
+  const calKey = (text) => String(text || '').toLowerCase().split('')
+    .filter((one) => CAL_DROP.indexOf(one) < 0).join('');
+
+  const pullCalendar = () => {
+    if (calAt === month) return Promise.resolve(calRows);
+    return askSheet({ action: 'promoCalendar', month: month })
+      .then((body) => {
+        const cols = body.columns || [];
+        const at = (name) => cols.indexOf(name);
+        const iCh = at('채널');
+        const iName = at('행사명');
+        const iProduct = at('행사제품');
+        const iId = at('ID');
+        calRows = (body.rows || []).map((line) => ({
+          channel: String(line[iCh] || '').trim(),
+          event: String(line[iName] || '').trim(),
+          product: String(line[iProduct] || '').trim(),
+          id: String(line[iId] || '').trim(),
+        })).filter((one) => one.id);
+        calAt = month;
+        return calRows;
+      })
+      .catch(() => { calRows = []; calAt = ''; return []; });
+  };
+
+  /* 월별 예산 줄 하나에 맞는 캘린더 줄을 고른다.
+     행사명이 **같아야** 한다 (그게 행사를 가리는 이름이다). 판매채널까지 같으면 더 좋고,
+     한 행사가 채널 여럿에 걸쳐 있으면 행사명만 같아도 받는다.
+     제품은 그 줄의 SKU 와 가장 가까운 캘린더 줄에서 가져온다 — 없으면 SKU 를 그대로 쓴다. */
+  const calMatch = (row) => {
+    const ev = calKey(row.event);
+    if (!ev) return null;
+    const mine = calRows.filter((one) => calKey(one.event) === ev);
+    if (!mine.length) return null;
+    const ch = calKey(row.channel);
+    const sku = calKey(row.sku);
+    return mine.filter((one) => calKey(one.channel) === ch && calKey(one.product) === sku)[0]
+      || mine.filter((one) => calKey(one.product) === sku)[0]
+      || mine.filter((one) => calKey(one.channel) === ch)[0]
+      /* 채널도 제품도 안 맞는데 후보가 여럿이면 **고르지 않는다.** 아무거나 집으면
+         남의 행사에 광고비가 들어가고, 그건 안 보낸 것보다 나쁘다 — 이름을 적어 알린다. */
+      || (mine.length === 1 ? mine[0] : null);
+  };
+
+  /* 붙인 파일을 미닉스로 보낸다. 줄마다 따로 보낸다 — 행사 · 제품이 줄마다 다르다. */
+  const pushToMinix = (rowIds, files) => {
+    if (!files.length) return;
+    pushNote = '미닉스 워크스페이스로 보내는 중…';
+    render();
+    pullCalendar().then((cal) => {
+      if (!cal.length) {
+        pushNote = '미닉스 행사 캘린더를 읽지 못해 보내지 못했습니다.';
+        render();
+        return;
+      }
+      const jobs = [];
+      const lost = [];
+      allPlanRows().forEach((row) => {
+        if (rowIds.length && rowIds.indexOf(String(row.id)) < 0) return;
+        const found = calMatch(row);
+        const what = `${row.event || '(행사명 없음)'}${row.channel ? ` · ${row.channel}` : ''}`;
+        if (!found) { lost.push(what); return; }
+        jobs.push({ row: row, promoId: found.id,
+          product: found.product || row.sku || '', what: what });
+      });
+      if (!jobs.length) {
+        pushNote = lost.length
+          ? `미닉스에 보내지 못했습니다 — 캘린더에서 못 찾은 행사: <b>${escape(lost.join(' · '))}</b>`
+          : '미닉스로 보낼 줄이 없습니다.';
+        render();
+        return;
+      }
+      return Promise.all(jobs.map((job) => askSheet({ action: 'mediaPush',
+        promoId: job.promoId, product: job.product, files: files, by: '' })
+        .then(() => ({ ok: true, what: job.what }))
+        .catch((reason) => ({ ok: false, what: job.what, why: reason.message }))))
+        .then((done) => {
+          const good = done.filter((one) => one.ok);
+          const bad = done.filter((one) => !one.ok);
+          pushNote = [
+            good.length ? `미닉스 워크스페이스에도 넣었습니다 — ${escape(good.map((one) => one.what).join(' · '))}` : '',
+            bad.length ? `<b>미닉스에 못 넣은 줄</b> — ${escape(bad.map((one) => `${one.what}: ${one.why}`).join(' / '))}` : '',
+            lost.length ? `캘린더에서 못 찾아 건너뛴 행사 — ${escape(lost.join(' · '))}` : '',
+          ].filter(Boolean).join('<br>');
+          render();
+        });
+    });
+  };
+
   // 붙인 파일이 전매체에서 내려받은 것인지 본다. 아니면 이유를 그대로 알려 준다.
   const readFile = (picked) => picked.text().then((text) => {
     let found = null;
@@ -15276,6 +15384,11 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
           ].filter(Boolean).join('<br>');
           /* 붙이는 길에 **브검제외 광고비를 저절로 채운다** (브랜드검색은 뺀다).
              손으로 적어 둔 줄은 건드리지 않는다. 채울 것이 없으면 조용히 지나간다. */
+          /* **줄에 붙인 파일만 미닉스로 보낸다.** 맨 위에 붙이는 파일은 그 달 전체에
+             걸리는 것이라 어느 행사 것인지 알 수 없다 — 아무 행사에나 보내면 남의 행사
+             숫자가 어긋나므로 보내지 않고, 대신 줄 클립을 쓰라고 적어 둔다. */
+          if (good.length && channel) pushToMinix([channel], good);
+          else if (good.length) pushNote = '맨 위에 붙인 파일은 어느 행사 것인지 알 수 없어 미닉스로 보내지 않았습니다 — 줄의 📎 로 붙이면 그 행사로 같이 들어갑니다.';
           if (good.length) { fillUsed(true); return; }
           render();
         });

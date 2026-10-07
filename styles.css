@@ -2096,3 +2096,7 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .bm-pass svg{width:13px}
 .bm-card .tool-copy{align-self:flex-start;text-decoration:none}
 @media (max-width:600px){.bm-url{flex-direction:column}.bm-summary .bm-zip{margin-left:0}}
+
+/* 미닉스 워크스페이스로 밀어넣은 결과 — 파일 알림(.perf-note) 과 가리려고 색을 달리한다 */
+.er-push { color: #1d6f42; background: #f1f8f3; border-left: 3px solid #1d6f42; padding: 6px 10px; border-radius: 4px; }
+.er-push b { color: #14532d; }
