@@ -13935,14 +13935,25 @@ if (eventReport) {
       return '<p class="perf-note">붙인 전매체 파일이 없습니다 — 전매체 검색에서 단계 날짜를 '
         + '적고 내려받은 파일을 붙이면 사전 · 당일 · 사후로 갈라 보여 드립니다.</p>';
     }
+    /* 이 표는 **위의 종합결과와 같은 기준**이어야 한다. 한 화면 안에서 같은 행사를 놓고
+       위아래가 다른 CPS · CPA 를 말하면 어느 쪽도 못 믿는다. 앞서 어긋나 있었다:
+         · 광고비 — 여기만 파일 그대로라 브랜드검색이 들어 있었다 ([브검 포함] 도 안 들었다)
+         · 판매량 — 여기만 단계에 안 적었으면 파일의 구매 수로 물러섰다
+       둘 다 맞춘다. 광고비는 브검을 빼고(스위치를 켜면 넣고), 판매량은 적은 값만 센다. */
     const lines = packs.map((one) => {
       const typed = phaseTyped(promo, one.name);
-      return { ...one, typed: typed, sum: withTyped(sumOf(one.rows), typed) };
+      const sum = sumOf(one.rows);
+      sum.spend = paidSpend(one.rows);
+      sum.buy = typed.sales !== '' ? (Number(typed.sales) || 0) : 0;
+      if (typed.rev !== '') sum.rev = Number(typed.rev) || 0;
+      return { ...one, typed: typed, sum: sum };
     });
     /* 합계는 **줄을 다 더해 다시 계산한다** — 단계별 ROAS · CPS 를 평균 내면 틀린다
        (광고비가 큰 단계가 더 무겁다). 판매수 · 매출만 단계별 값을 더한다 —
        손으로 적은 단계가 섞일 수 있어, 그래야 합계가 보이는 줄들과 맞는다. */
-    const whole = sumOf(packs.reduce((all, one) => all.concat(one.rows), []));
+    const everyRow = packs.reduce((all, one) => all.concat(one.rows), []);
+    const whole = sumOf(everyRow);
+    whole.spend = paidSpend(everyRow);
     whole.buy = lines.reduce((sum, one) => sum + (Number(one.sum.buy) || 0), 0);
     whole.rev = lines.reduce((sum, one) => sum + (Number(one.sum.rev) || 0), 0);
     const anyTyped = lines.some((one) => one.typed.sales !== '' || one.typed.rev !== '');
@@ -14402,7 +14413,8 @@ if (eventReport) {
       ${alarm ? `<h5 class="er-h">사전알림</h5>${alarmBox(promo)}` : ''}
       <h5 class="er-h">단계별 종합결과 <small>사전 · 당일 · 사후</small></h5>
       ${phaseTable(promo, alarm)}
-      <h5 class="er-h">단계별 매체성과 <small>매체를 누르면 캠페인까지 펼칩니다</small></h5>
+      <h5 class="er-h">단계별 매체성과 <small>매체를 누르면 캠페인까지 펼칩니다 ·
+        여기 광고비 · 판매량은 <b>매체가 준 값 그대로</b>입니다 (브랜드검색 포함 · 손으로 적은 판매수는 안 덮습니다)</small></h5>
       ${mediaTable(row.id, promo, alarm)}
       <h5 class="er-h">발행 소재
         <small>파일에 실린 번호로 매체에 그때 물어봅니다</small>
