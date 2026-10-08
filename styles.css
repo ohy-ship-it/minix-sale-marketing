@@ -2108,4 +2108,15 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .cafe24-bar{display:inline-block;width:120px;height:8px;border-radius:4px;background:#f1f0eb;vertical-align:middle;overflow:hidden}
 .cafe24-bar i{display:block;height:100%;background:#2f86d9;border-radius:4px}
 .cafe24-bar-num{margin-left:8px}
+.cafe24-orders{margin-top:12px}
+.cafe24-utm-filter{margin-bottom:10px;flex-wrap:wrap;gap:8px}
+.cafe24-utm-filter select,.cafe24-utm-filter input{min-width:180px}
+.cafe24-utm-sum{margin:0 0 8px}
+[data-cafe="utm-orders"] .cafe24-orders{margin-top:0}
+.cafe24-path{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px}
+.cafe24-hop{padding:2px 8px;border-radius:999px;background:var(--surface-2,rgba(127,127,127,.12));font-size:12px;white-space:nowrap}
+.cafe24-hop-ad{font-weight:600}
+.cafe24-arrow{font-style:normal;opacity:.5}
+.cafe24-orders>summary{cursor:pointer;font-weight:600;padding:6px 0}
+.cafe24-orders>summary small{font-weight:400;opacity:.7;margin-left:6px}
 @media (max-width:600px){.cafe24-bar{width:64px}}

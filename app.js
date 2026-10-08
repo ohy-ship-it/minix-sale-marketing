@@ -12115,6 +12115,10 @@ if (cafe24Result) {
   let error = '';
   let found = null;
   let caretAt = null;
+  // UTM 표 거르기 — 화면 안에서만 거른다 (시트를 다시 읽지 않는다)
+  let utmAd = '';          // '' 전체 · '(없음)' UTM 정보 없음 · 그 밖은 광고매체 이름
+  let utmContent = '';     // 콘텐츠에 들어 있는 글자
+  let utmOpen = false;     // 주문별 목록을 펼쳐 두었나 (다시 그려도 그대로 두려고)
 
   const look = () => {
     if (since > until) { state = 'error'; error = '시작일이 종료일보다 뒤입니다.'; render(); return; }
@@ -12149,6 +12153,121 @@ if (cafe24Result) {
         </tr>`).join('')}</tbody>
       </table></div>
     </div>`;
+  };
+
+  // UTM별 — 걸린 주문을 카페24UTM주문 탭과 주문번호로 이은 것 (Code.gs 의 cafe24LookupUtm_)
+  const blank = (text) => (text ? escapeHtml(text) : '<span class="tool-blank">—</span>');
+  // 광고매체 · 콘텐츠로 거른다. 광고매체는 똑같아야, 콘텐츠는 글자가 들어 있으면 걸린다.
+  const utmPass = (row) => {
+    if (utmAd === '(없음)' && row.known) return false;
+    if (utmAd && utmAd !== '(없음)' && row.ad !== utmAd) return false;
+    const want = utmContent.trim().toLowerCase();
+    return !want || String(row.content || '').toLowerCase().includes(want);
+  };
+
+  // 유입 경로를 화살표로 잇는다 — 광고매체 → 매체 → 캠페인 → 콘텐츠 → 검색어 (빈 칸은 건너뛴다)
+  const HOPS = [['ad', '광고매체'], ['medium', '매체'], ['campaign', '캠페인'], ['content', '콘텐츠'], ['keyword', '검색어']];
+  const utmPath = (row) => {
+    if (!row.known) return '<span class="tool-blank">UTM 정보 없음</span>';
+    const hops = HOPS.filter(([key]) => row[key]).map(([key, label]) =>
+      `<span class="cafe24-hop cafe24-hop-${key}" title="${label}">${escapeHtml(row[key])}</span>`);
+    return hops.length ? `<span class="cafe24-path">${hops.join('<i class="cafe24-arrow">→</i>')}</span>`
+      : '<span class="tool-blank">UTM 값이 비어 있음</span>';
+  };
+  const NONE_ROW = (span) => `<tr><td colspan="${span}" class="tool-blank">걸린 주문이 없습니다.</td></tr>`;
+
+  const utmBody = () => {
+    const utm = found.utm;
+    const picked = utm.groups.filter(utmPass);
+    const sum = picked.reduce((all, row) => ({ orders: all.orders + row.orders, qty: all.qty + row.qty,
+      amount: all.amount + row.amount }), { orders: 0, qty: 0, amount: 0 });
+    const filtered = utmAd || utmContent.trim();
+    const groups = picked.map((row) => `<tr>
+        <td>${utmPath(row)}</td>
+        <td class="perf-num"><b>${num(row.orders)}</b></td>
+        <td class="perf-num">${num(row.qty)}</td>
+        <td class="perf-num">${won(row.amount)}</td>
+      </tr>`).join('');
+    return `${filtered ? `<p class="perf-note cafe24-utm-sum">거른 결과 <b>주문 ${num(sum.orders)}건</b>
+        · 판매 수량 ${num(sum.qty)}개 · 매출 ${won(sum.amount)}</p>` : ''}
+      <div class="tool-table-wrap"><table class="tool-table cafe24-table">
+        <thead><tr><th>유입 경로 <small>광고매체 → 매체 → 캠페인 → 콘텐츠 → 검색어</small></th>
+          <th class="perf-num">주문 건수</th><th class="perf-num">판매 수량</th><th class="perf-num">매출</th></tr></thead>
+        <tbody>${groups || NONE_ROW(4)}</tbody>
+      </table></div>`;
+  };
+
+  // 주문별 목록 — 걸린 상품 바로 밑에 둔다. 아래 UTM 표의 광고매체 · 콘텐츠 거르기가 같이 걸린다.
+  const ordersBody = () => {
+    const utm = found.utm;
+    const shown = utm.orders.filter(utmPass);
+    const more = utm.orderCount > utm.orders.length ? ` · 최근 ${num(utm.orders.length)}건 중에서` : '';
+    const filtered = utmAd || utmContent.trim() ? ' · 아래 UTM 거르기 적용 중' : '';
+    const orders = shown.map((row) => `<tr>
+        <td>${escapeHtml(row.day)}</td><td>${escapeHtml(row.id)}</td>
+        <td>${escapeHtml(row.products)}</td>
+        <td>${utmPath(row)}</td>
+        <td class="perf-num">${num(row.qty)}</td>
+        <td class="perf-num">${won(row.amount)}</td>
+      </tr>`).join('');
+    return `<details class="cafe24-orders"${utmOpen ? ' open' : ''}>
+        <summary>주문별로 보기 <small>${num(shown.length)}건${more}${filtered}</small></summary>
+        <div class="tool-table-wrap"><table class="tool-table cafe24-table">
+          <thead><tr><th>주문일</th><th>주문번호</th><th>상품</th><th>유입 경로</th>
+            <th class="perf-num">수량</th><th class="perf-num">매출</th></tr></thead>
+          <tbody>${orders || NONE_ROW(6)}</tbody>
+        </table></div>
+      </details>`;
+  };
+
+  const ordersCard = () => {
+    const utm = found && found.utm;
+    if (!utm || !utm.orderCount || !utm.loaded) return '';
+    return `<div class="tool-card" data-cafe="utm-orders">${ordersBody()}</div>`;
+  };
+
+  const utmTable = () => {
+    const utm = found && found.utm;
+    if (!utm || !utm.orderCount) return '';
+    if (!utm.loaded) {
+      return `<p class="perf-warn">UTM 주문이 아직 안 쌓였습니다 — 시트 메뉴 UTM → 카페24 → "지금 한 번 적재" 를 다시 눌러 주세요.</p>`;
+    }
+    const miss = utm.missing
+      ? ` · UTM 탭에 없는 주문 ${num(utm.missing)}건 (적재 전이거나 애널리틱스가 못 잡은 주문)` : '';
+    // 고를 광고매체 — 걸린 주문에 실제로 있는 것만, 주문 많은 차례로
+    const ads = {};
+    utm.groups.forEach((row) => { if (row.known && row.ad) ads[row.ad] = (ads[row.ad] || 0) + row.orders; });
+    const adList = Object.keys(ads).sort((a, b) => ads[b] - ads[a]);
+    if (utmAd && utmAd !== '(없음)' && !adList.includes(utmAd)) utmAd = '';   // 새로 찾았더니 없는 매체
+    const contents = [...new Set(utm.groups.map((row) => row.content).filter(Boolean))];
+    return `<div class="tool-card">
+      <div class="tool-list-head"><h3>유입 광고 · UTM별 <small>정상 주문 ${num(utm.orderCount)}건${miss}</small></h3></div>
+      <div class="perf-filter cafe24-utm-filter">
+        <label class="cafe24-date">광고매체
+          <select data-cafe="utm-ad">
+            <option value="">전체</option>
+            ${adList.map((name) => `<option value="${escapeHtml(name)}"${name === utmAd ? ' selected' : ''}>
+              ${escapeHtml(name)} (${num(ads[name])})</option>`).join('')}
+            <option value="(없음)"${utmAd === '(없음)' ? ' selected' : ''}>UTM 정보 없음</option>
+          </select></label>
+        <label class="cafe24-date">콘텐츠
+          <input type="search" data-cafe="utm-content" list="cafe24-utm-contents" value="${escapeHtml(utmContent)}"
+            placeholder="콘텐츠 일부 (예: 소재 이름)" autocomplete="off"></label>
+        <datalist id="cafe24-utm-contents">${contents.map((one) => `<option value="${escapeHtml(one)}">`).join('')}</datalist>
+        ${utmAd || utmContent ? '<button type="button" class="perf-chip" data-cafe="utm-clear">거르기 풀기</button>' : ''}
+      </div>
+      <div data-cafe="utm-body">${utmBody()}</div>
+      <p class="perf-note">매출은 걸린 상품의 판매가 × 수량입니다 (주문에 다른 상품이 같이 있어도 그 몫은 빼고 셉니다).</p>
+    </div>`;
+  };
+
+  // 거르기는 표 부분만 다시 그린다 (콘텐츠 칸에 적는 중에 커서가 날아가지 않게)
+  const utmRedraw = () => {
+    if (!found || !found.utm) return;
+    const body = cafe24Result.querySelector('[data-cafe="utm-body"]');
+    if (body) body.innerHTML = utmBody();
+    const orders = cafe24Result.querySelector('[data-cafe="utm-orders"]');
+    if (orders) orders.innerHTML = ordersBody();
   };
 
   // 날짜별 — 막대로 한눈에 보고, 옆에 숫자를 적는다
@@ -12192,6 +12311,8 @@ if (cafe24Result) {
         ${tile('취소 · 반품', `${num(total.cancelOrders)}건`, `${num(total.cancelQty)}개 · 위 숫자에는 빠져 있습니다`)}
       </div></div>
       ${productTable()}
+      ${ordersCard()}
+      ${utmTable()}
       ${dayTable()}`;
   };
 
@@ -12245,9 +12366,19 @@ if (cafe24Result) {
       query = event.target.value;
       caretAt = event.target.selectionStart;
     }
+    if (event.target.matches('[data-cafe="utm-content"]')) {
+      utmContent = event.target.value;
+      utmRedraw();
+    }
   });
 
+  // 주문별 목록을 펼치고 접은 것을 기억한다
+  cafe24Result.addEventListener('toggle', (event) => {
+    if (event.target.matches('.cafe24-orders')) utmOpen = event.target.open;
+  }, true);
+
   cafe24Result.addEventListener('change', (event) => {
+    if (event.target.matches('[data-cafe="utm-ad"]')) { utmAd = event.target.value; render(); return; }
     if (event.target.matches('[data-cafe="since"]')) { since = event.target.value || since; look(); }
     if (event.target.matches('[data-cafe="until"]')) { until = event.target.value || until; look(); }
   });
@@ -12258,6 +12389,7 @@ if (cafe24Result) {
 
   cafe24Result.addEventListener('click', (event) => {
     if (event.target.closest('[data-cafe="go"]')) { look(); return; }
+    if (event.target.closest('[data-cafe="utm-clear"]')) { utmAd = ''; utmContent = ''; render(); return; }
     const range = event.target.closest('[data-cafe="range"]');
     if (range) {
       const picked = RANGES.find(([key]) => key === range.dataset.range);
