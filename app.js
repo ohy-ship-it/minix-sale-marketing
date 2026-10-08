@@ -1224,6 +1224,7 @@ const VIEWS = {
   'UTM 빌더': { section: '#utm-builder', hash: '#utm' },
   '매체별 성과': { section: '#media-performance', hash: '#media-report' },
   '소재별 결과': { section: '#creative-performance', hash: '#creative-result' },
+  '카페24 결과': { section: '#cafe24-result', hash: '#cafe24' },
   '페이지 결과': { section: '#page-performance', hash: '#page-result' },
   '월별 예산': { section: '#budget-plan', hash: '#budget' },
   'KOL라이브': { section: '#kol-live', hash: '#kol' },
@@ -12088,6 +12089,191 @@ if (pagePerformance) {
   });
 
   loadList(false);
+}
+
+// ── 카페24 결과 ────────────────────────────────────────────────────
+// 자사몰(카페24) 주문을 상품명 · 상품번호로 찾아 주문 건수 · 판매 수량을 본다.
+// 카페24 를 바로 부르지 않는다 — 아침마다 적재 시트의 카페24주문 탭에 쌓아 둔 것을 읽는다
+// (Code.gs 의 cafe24Lookup_). 그래서 숫자는 **마지막 적재 시각까지**다.
+const cafe24Result = document.querySelector('#cafe24-result');
+if (cafe24Result) {
+  const escapeHtml = perfEscape;
+  const num = perfCount;
+  const won = perfMoney('KRW');
+  const day = (offset) => {
+    const at = new Date(Date.now() + 9 * 3600000 - offset * 86400000);   // 한국 날짜
+    return at.toISOString().slice(0, 10);
+  };
+  const monthStart = () => `${day(0).slice(0, 8)}01`;
+  const RANGES = [['7d', '최근 7일', () => [day(6), day(0)]], ['30d', '최근 30일', () => [day(29), day(0)]],
+    ['month', '이번 달', () => [monthStart(), day(0)]]];
+
+  let query = window.localStorage.getItem('minix-cafe24-q') || '';
+  let since = day(6);
+  let until = day(0);
+  let state = 'idle';     // idle · loading · ready · error
+  let error = '';
+  let found = null;
+  let caretAt = null;
+
+  const look = () => {
+    if (since > until) { state = 'error'; error = '시작일이 종료일보다 뒤입니다.'; render(); return; }
+    state = 'loading';
+    render();
+    try { window.localStorage.setItem('minix-cafe24-q', query); } catch (ignore) { /* 거들기다 */ }
+    askSheet({ action: 'cafe24Lookup', q: query, since, until })
+      .then((body) => { found = body; state = 'ready'; error = ''; render(); })
+      .catch((reason) => { state = 'error'; error = reason.message; render(); });
+  };
+
+  const tile = (label, value, note) => `<div class="page-stat"><small>${label}</small>
+    <strong>${value}</strong>${note ? `<em>${note}</em>` : ''}</div>`;
+
+  const productTable = () => {
+    const rows = (found && found.products) || [];
+    if (!rows.length) return '';
+    const more = found.productCount > rows.length ? ` · 판매 수량 많은 ${num(rows.length)}개만` : '';
+    return `<div class="tool-card">
+      <div class="tool-list-head"><h3>걸린 상품 <small>${num(found.productCount)}개${more}</small></h3></div>
+      <div class="tool-table-wrap"><table class="tool-table cafe24-table">
+        <thead><tr><th>상품번호</th><th>상품명</th><th class="perf-num">주문 건수</th><th class="perf-num">판매 수량</th>
+          <th class="perf-num">매출</th><th class="perf-num">취소·반품</th></tr></thead>
+        <tbody>${rows.map((row) => `<tr>
+          <td><button type="button" class="page-link" data-cafe="pick" data-q="${escapeHtml(row.number)}"
+            title="이 상품번호로 다시 찾기">${escapeHtml(row.number || '—')}</button></td>
+          <td>${escapeHtml(row.name)}</td>
+          <td class="perf-num"><b>${num(row.orders)}</b></td>
+          <td class="perf-num">${num(row.qty)}</td>
+          <td class="perf-num">${won(row.amount)}</td>
+          <td class="perf-num">${row.cancelOrders ? `${num(row.cancelOrders)}건` : '<span class="tool-blank">—</span>'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`;
+  };
+
+  // 날짜별 — 막대로 한눈에 보고, 옆에 숫자를 적는다
+  const dayTable = () => {
+    const rows = (found && found.days) || [];
+    if (!rows.length || !found.total.orders) return '';
+    const top = Math.max(...rows.map((row) => row.orders), 1);
+    return `<div class="tool-card">
+      <div class="tool-list-head"><h3>날짜별 <small>정상 주문만</small></h3></div>
+      <div class="tool-table-wrap"><table class="tool-table cafe24-table">
+        <thead><tr><th>날짜</th><th>주문 건수</th><th class="perf-num">판매 수량</th><th class="perf-num">매출</th></tr></thead>
+        <tbody>${rows.slice().reverse().map((row) => `<tr>
+          <td>${escapeHtml(row.day)}</td>
+          <td><span class="cafe24-bar"><i style="width:${(row.orders / top) * 100}%"></i></span>
+            <b class="cafe24-bar-num">${num(row.orders)}</b></td>
+          <td class="perf-num">${num(row.qty)}</td>
+          <td class="perf-num">${won(row.amount)}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`;
+  };
+
+  const result = () => {
+    if (state === 'loading') return '<div class="tool-card page-loading">세는 중…</div>';
+    if (state === 'error') return `<p class="perf-warn">${escapeHtml(error)}</p>`;
+    if (state !== 'ready' || !found) return '';
+    if (found.notice) return `<p class="perf-warn">${escapeHtml(found.notice)}</p>`;
+    const total = found.total;
+    const outside = found.dataSince && (since < found.dataSince || until > found.dataUntil)
+      ? `<p class="perf-warn">시트에는 <b>${escapeHtml(found.dataSince)} ~ ${escapeHtml(found.dataUntil)}</b> 주문만 쌓여 있습니다.
+        그 밖의 날짜는 0 으로 셉니다 — 지난 기간은 시트 메뉴 UTM → 카페24 → "기간 정해 적재" 로 채워 주세요.</p>` : '';
+    if (!found.productCount) {
+      return `${outside}<div class="tool-card page-miss"><b>${query ? `'${escapeHtml(query)}' 가 들어간 ` : ''}주문이 없습니다.</b>
+        <p>${escapeHtml(since)} ~ ${escapeHtml(until)} 사이에서 찾았습니다. 상품명 한 토막만 넣거나(예: <code>플렌더</code>),
+          상품번호를 그대로 넣어 보세요.</p></div>`;
+    }
+    return `${outside}<div class="tool-card"><div class="page-found-side">
+        ${tile('주문 건수', `${num(total.orders)}건`, '같은 주문은 한 번만 셉니다')}
+        ${tile('판매 수량', `${num(total.qty)}개`, '')}
+        ${tile('매출', won(total.amount), '판매가 × 수량 (할인 전)')}
+        ${tile('취소 · 반품', `${num(total.cancelOrders)}건`, `${num(total.cancelQty)}개 · 위 숫자에는 빠져 있습니다`)}
+      </div></div>
+      ${productTable()}
+      ${dayTable()}`;
+  };
+
+  const render = () => {
+    const busy = state === 'loading';
+    cafe24Result.innerHTML = `<div class="tool-head">
+        <h2>카페24 결과 <small>자사몰 주문</small></h2>
+        <p>상품명이나 상품번호를 넣으면 고른 기간의 주문 건수 · 판매 수량을 셉니다.
+          비워 두면 기간 안의 모든 상품을 판매 수량 순으로 보여 줍니다.</p>
+      </div>
+
+      <div class="tool-card">
+        <div class="perf-filter">
+          <div class="perf-search page-search">
+            <i data-lucide="package-search"></i>
+            <input type="search" data-cafe="q" value="${escapeHtml(query)}"
+              placeholder="상품명 또는 상품번호 (쉼표로 여러 개)" autocomplete="off">
+          </div>
+          <label class="cafe24-date">시작<input type="date" data-cafe="since" value="${since}"></label>
+          <label class="cafe24-date">종료<input type="date" data-cafe="until" value="${until}"></label>
+          <button type="button" class="tool-add" data-cafe="go"${busy ? ' disabled' : ''}>
+            <i data-lucide="search"></i>${busy ? '세는 중…' : '보기'}</button>
+          <a class="tool-copy-all" href="${escapeHtml((found && found.url) || SHEET_URL)}" target="_blank" rel="noopener">
+            <i data-lucide="external-link"></i>시트에서 보기</a>
+        </div>
+        <div class="perf-filter page-days">
+          <span class="perf-chips">${RANGES.map(([key, name, pick]) => {
+    const [a, b] = pick();
+    return `<button type="button" class="perf-chip${a === since && b === until ? ' is-on' : ''}"
+              data-cafe="range" data-range="${key}"${busy ? ' disabled' : ''}>${name}</button>`;
+  }).join('')}</span>
+        </div>
+        <p class="perf-note">
+          ${found && found.lastRun ? `마지막 적재 <b>${escapeHtml(found.lastRun.slice(0, 16))}</b> · ` : ''}
+          ${found && found.dataSince ? `시트에 쌓인 주문 ${escapeHtml(found.dataSince)} ~ ${escapeHtml(found.dataUntil)} · ` : ''}
+          정상 주문(취소 · 반품 · 교환 제외) 기준 · 주문일 기준
+        </p>
+      </div>
+
+      ${result()}`;
+    lucide.createIcons();
+    if (caretAt !== null) {
+      const box = cafe24Result.querySelector('[data-cafe="q"]');
+      if (box) { box.focus(); box.setSelectionRange(caretAt, caretAt); }
+      caretAt = null;
+    }
+  };
+
+  cafe24Result.addEventListener('input', (event) => {
+    if (event.target.matches('[data-cafe="q"]')) {
+      query = event.target.value;
+      caretAt = event.target.selectionStart;
+    }
+  });
+
+  cafe24Result.addEventListener('change', (event) => {
+    if (event.target.matches('[data-cafe="since"]')) { since = event.target.value || since; look(); }
+    if (event.target.matches('[data-cafe="until"]')) { until = event.target.value || until; look(); }
+  });
+
+  cafe24Result.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && event.target.matches('[data-cafe="q"]')) look();
+  });
+
+  cafe24Result.addEventListener('click', (event) => {
+    if (event.target.closest('[data-cafe="go"]')) { look(); return; }
+    const range = event.target.closest('[data-cafe="range"]');
+    if (range) {
+      const picked = RANGES.find(([key]) => key === range.dataset.range);
+      if (picked) [since, until] = picked[2]();
+      look();
+      return;
+    }
+    const pick = event.target.closest('[data-cafe="pick"]');
+    if (pick && pick.dataset.q) { query = pick.dataset.q; look(); }
+  });
+
+  // 메뉴를 처음 열 때 한 번만 부른다 (화면을 열지 않은 사람까지 시트를 읽게 하지 않는다)
+  const firstLook = () => { if (state === 'idle' && !cafe24Result.hidden) look(); };
+  new MutationObserver(firstLook).observe(cafe24Result, { attributes: true, attributeFilter: ['hidden'] });
+  render();
+  firstLook();
 }
 
 const eventResult = document.querySelector('#event-result');

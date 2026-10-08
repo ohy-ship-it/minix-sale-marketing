@@ -186,7 +186,10 @@ function doPost(e) {
   }
 }
 
-function doGet() {
+// 카페24 가 승인 뒤 인증코드를 붙여 이 주소로 돌려보낸다 (?code=...&state=...). 그 외에는 예전 그대로.
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  if (p.state && (p.code || p.error)) return cafe24Callback_(p);
   return json({ ok: true, message: 'minix filename endpoint' });
 }
 
@@ -254,6 +257,14 @@ function onOpen() {
       .addItem('아침 자동 올리기 끄기', 'budgetDailyRemove')
       .addItem('자동 올리기 확인', 'budgetDailyCheck')
       .addItem('손으로 건 트리거 표시하기', 'budgetDailyMarkOn'))
+    .addSubMenu(SpreadsheetApp.getUi().createMenu('카페24')
+      .addItem('연결하기', 'cafe24Connect')
+      .addItem('연결 확인', 'cafe24Check')
+      .addItem('지금 한 번 적재 (최근 7일)', 'cafe24DailyRun')
+      .addItem('기간 정해 적재', 'cafe24LoadRange')
+      .addItem('아침 자동 적재 켜기', 'cafe24DailyInstall')
+      .addItem('아침 자동 적재 끄기', 'cafe24DailyRemove')
+      .addItem('응답 모양 보기', 'cafe24Probe'))
     .addToUi();
 }
 
@@ -1879,6 +1890,8 @@ function handleAction_(payload) {
     if (payload.action === 'filenameSeq') return filenameSeq_();
     if (payload.action === 'partTabs') return partTabs_();
     if (payload.action === 'mediaPush') return mediaPush_(payload);
+    // 카페24 — 아침에 쌓아 둔 카페24주문 탭을 읽어 상품별 주문 건수를 센다
+    if (payload.action === 'cafe24Lookup') return cafe24Lookup_(payload);
     return { ok: false, error: '모르는 요청입니다: ' + payload.action };
   } catch (error) {
     return { ok: false, error: String(error && error.message ? error.message : error) };
@@ -9038,3 +9051,662 @@ function tndFilenames_(payload) {
     lock.releaseLock();
   }
 }
+
+// ── 카페24 (자사몰 주문 · 상품별 판매량 · 접속통계) ───────────────────────
+// 카페24 는 공식 API 가 있다. 그래서 GFA 와 달리 PC 없이 여기서 바로 받아 시트에 쌓는다.
+//
+//   처음 한 번   시트 메뉴 UTM → 카페24 → 연결하기 → 쇼핑몰 대표운영자가 승인
+//               → 카페24 가 인증코드를 이 웹 앱 주소(doGet)로 돌려보내고, 여기서 토큰으로 바꿔 둔다.
+//   그다음       아침 트리거(cafe24DailyRun)가 최근 7일을 다시 받아 덮어쓴다.
+//               (취소 · 반품으로 지난 주문의 상태가 바뀌기 때문에 오늘 하루만 받지 않는다)
+//
+// 스크립트 속성
+//   CAFE24_MALL_ID         쇼핑몰 ID (xxx.cafe24.com 의 xxx)          ← 사람이 넣는다
+//   CAFE24_CLIENT_SECRET   개발자센터 앱의 Client Secret             ← 사람이 넣는다
+//   CAFE24_ACCESS_TOKEN · CAFE24_REFRESH_TOKEN · *_UNTIL                ← 스크립트가 쓴다
+//
+// 토큰: 접속 2시간 · 갱신 14일. 갱신할 때마다 갱신 토큰도 새로 받는다.
+// **14일 넘게 한 번도 돌지 않으면 끊긴다** → 연결하기를 다시 누르면 된다.
+var CAFE24_CLIENT_ID = '7Wx4jKDhDdbljPqMEOxtuD';   // 앱 ID (공개돼도 되는 값)
+var CAFE24_REDIRECT_URI = 'https://script.google.com/macros/s/'
+  + 'AKfycbwWEYRTgiY7g5Hoz1U5Y9HGauaSjuZal5AQmO4vU8lN-SrU2xwc17wszUpPypHBixbV/exec';
+// 개발자센터 앱에 켜 둔 권한과 같아야 한다. 더 달라고 하면 승인 화면에서 거절된다.
+var CAFE24_SCOPES = ['mall.read_order', 'mall.read_salesreport', 'mall.read_analytics'];
+var CAFE24_DATA_URL = 'https://ca-api.cafe24data.com';   // 접속통계 (Analytics API)
+var CAFE24_DAYS = 7;          // 아침 적재가 다시 받는 날 수 (오늘 포함)
+var CAFE24_RANGE_MAX = 31;    // '기간 정해 적재' 한 번의 최대 일수 (6분 제한)
+var CAFE24_DATA_GAP = 2100;   // 접속통계는 2초에 한 번꼴로만 부를 수 있다
+var CAFE24_DAILY_HOUR = 7;
+var CAFE24_DAILY_FN = 'cafe24DailyRun';
+
+var CAFE24_ORDER_SHEET = '카페24주문';
+var CAFE24_VISIT_SHEET = '카페24접속';
+var CAFE24_PRODUCT_SHEET = '카페24상품판매';
+
+// 주문은 품목 한 줄씩. '주문 결제금액' 은 주문의 첫 품목 줄에만 적는다 — 그래야 열을 더해도 겹치지 않는다.
+// 구매자 이름 · 연락처 · 주소는 받지 않는다.
+var CAFE24_ORDER_HEADERS = ['주문일', '주문시각', '결제일', '주문번호', '품목주문번호',
+  '상품번호', '상품코드', '상품명', '옵션', '수량', '판매가', '판매가×수량',
+  '상태코드', '상태', '결제여부', '주문경로', '주문 결제금액', '적재시각'];
+var CAFE24_VISIT_HEADERS = ['날짜', '기기', '방문수', '처음방문', '재방문', '순방문자', '페이지뷰', '적재시각'];
+var CAFE24_PRODUCT_HEADERS = ['날짜', '상품번호', '상품명', '주문건수', '판매수량', '매출', '적재시각'];
+var CAFE24_DEVICES = [['total', '전체'], ['pc', 'PC'], ['mobile', '모바일']];
+
+// 품목 상태코드 앞글자 → 뜻. 자세한 코드(N10 · C40 …)는 옆 칸에 그대로 둔다.
+var CAFE24_STATUS = { N00: '입금전', N10: '상품준비중', N20: '배송준비중', N21: '배송대기',
+  N22: '배송보류', N30: '배송중', N40: '배송완료', C40: '취소완료', R40: '반품완료', E40: '교환완료' };
+var CAFE24_STATUS_HEAD = { N: '정상', C: '취소', R: '반품', E: '교환' };
+
+// ── 값 · 토큰 ──────────────────────────────────────────────────────
+function cafe24Prop_(name) {
+  var raw = PropertiesService.getScriptProperties().getProperty(name);
+  return String(raw === null || raw === undefined ? '' : raw).trim().replace(/^["']|["']$/g, '');
+}
+
+// 'minix', 'minix.cafe24.com', 'https://minix.cafe24.com/' 무엇을 넣어도 ID 만 남긴다.
+function cafe24Mall_() {
+  var mall = cafe24Prop_('CAFE24_MALL_ID').replace(/^https?:\/\//, '').split(/[./]/)[0];
+  if (!mall) {
+    throw new Error('CAFE24_MALL_ID 스크립트 속성이 없습니다. '
+      + 'Apps Script 편집기 → 프로젝트 설정 → 스크립트 속성에 쇼핑몰 ID 를 넣어 주세요.');
+  }
+  return mall;
+}
+
+function cafe24Secret_() {
+  var secret = cafe24Prop_('CAFE24_CLIENT_SECRET');
+  if (!secret) {
+    throw new Error('CAFE24_CLIENT_SECRET 스크립트 속성이 없습니다. '
+      + '카페24 개발자센터 앱 정보의 Client Secret 을 스크립트 속성에 넣어 주세요.');
+  }
+  return secret;
+}
+
+// 카페24 시각은 '2026-10-07T14:00:00.000' 처럼 시간대 없이 한국 시각으로 온다.
+function cafe24Time_(text) {
+  var t = Date.parse(String(text || '').slice(0, 19) + '+09:00');
+  return isNaN(t) ? 0 : t;
+}
+
+// form: { grant_type: 'authorization_code', code, redirect_uri } 또는 { grant_type: 'refresh_token', refresh_token }
+function cafe24TokenAsk_(form) {
+  var clientId = cafe24Prop_('CAFE24_CLIENT_ID') || CAFE24_CLIENT_ID;
+  var response = UrlFetchApp.fetch('https://' + cafe24Mall_() + '.cafe24api.com/api/v2/oauth/token', {
+    method: 'post',
+    headers: { Authorization: 'Basic ' + Utilities.base64Encode(clientId + ':' + cafe24Secret_()) },
+    contentType: 'application/x-www-form-urlencoded',
+    payload: form,
+    muteHttpExceptions: true
+  });
+  var text = response.getContentText() || '';
+  var body = {};
+  try { body = JSON.parse(text); } catch (ignore) { /* 아래에서 글자 그대로 보여 준다 */ }
+  if (response.getResponseCode() !== 200 || !body.access_token) {
+    throw new Error('카페24 토큰 (HTTP ' + response.getResponseCode() + '): '
+      + (body.error_description || body.error || text.slice(0, 300)));
+  }
+  var now = Date.now();
+  PropertiesService.getScriptProperties().setProperties({
+    CAFE24_ACCESS_TOKEN: body.access_token,
+    CAFE24_ACCESS_UNTIL: String((cafe24Time_(body.expires_at) || now + 2 * 3600000) - 5 * 60000),
+    CAFE24_REFRESH_TOKEN: body.refresh_token || cafe24Prop_('CAFE24_REFRESH_TOKEN'),
+    CAFE24_REFRESH_UNTIL: String(cafe24Time_(body.refresh_token_expires_at) || now + 14 * 86400000)
+  });
+  return body.access_token;
+}
+
+function cafe24Token_(force) {
+  var access = cafe24Prop_('CAFE24_ACCESS_TOKEN');
+  if (!force && access && Number(cafe24Prop_('CAFE24_ACCESS_UNTIL')) > Date.now()) return access;
+  var refresh = cafe24Prop_('CAFE24_REFRESH_TOKEN');
+  if (!refresh) throw new Error('카페24 연결이 아직 안 됐습니다 — 시트 메뉴 UTM → 카페24 → 연결하기.');
+  if (Number(cafe24Prop_('CAFE24_REFRESH_UNTIL')) < Date.now()) {
+    throw new Error('카페24 연결이 끊겼습니다 (14일 넘게 적재가 돌지 않았습니다) — 연결하기를 다시 눌러 주세요.');
+  }
+  return cafe24TokenAsk_({ grant_type: 'refresh_token', refresh_token: refresh });
+}
+
+// ── 연결하기 (처음 한 번 · 끊겼을 때) ──────────────────────────────────
+function cafe24Connect() {
+  var url;
+  try {
+    var mall = cafe24Mall_();
+    cafe24Secret_();   // 승인까지 받고 나서 비밀값이 없어 실패하지 않게 먼저 본다
+    var state = Utilities.getUuid();
+    CacheService.getScriptCache().put('cafe24state:' + state, '1', 1800);
+    url = 'https://' + mall + '.cafe24api.com/api/v2/oauth/authorize'
+      + '?response_type=code'
+      + '&client_id=' + encodeURIComponent(cafe24Prop_('CAFE24_CLIENT_ID') || CAFE24_CLIENT_ID)
+      + '&state=' + encodeURIComponent(state)
+      + '&redirect_uri=' + encodeURIComponent(CAFE24_REDIRECT_URI)
+      + '&scope=' + encodeURIComponent(CAFE24_SCOPES.join(','));
+  } catch (error) {
+    var message = String(error && error.message ? error.message : error);
+    Logger.log(message);
+    try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+    return message;
+  }
+  Logger.log(url);
+  var html = '<div style="font:14px sans-serif;line-height:1.6">'
+    + '<p><b>카페24 쇼핑몰 대표운영자 계정</b>으로 로그인된 브라우저에서 아래를 눌러 승인해 주세요.</p>'
+    + '<p><a href="' + url + '" target="_blank" style="font-size:16px">카페24 승인 화면 열기 →</a></p>'
+    + '<p style="color:#666">승인하면 "연결됐습니다" 화면이 뜹니다. 이 링크는 30분 동안만 쓸 수 있습니다.<br>'
+    + '다른 분이 승인해야 하면 아래 주소를 복사해 전달해 주세요.</p>'
+    + '<textarea readonly style="width:100%;height:80px">' + url + '</textarea></div>';
+  try {
+    SpreadsheetApp.getUi().showModalDialog(
+      HtmlService.createHtmlOutput(html).setWidth(520).setHeight(300), '카페24 연결하기');
+  } catch (ignore) { /* 편집기에서 돌렸으면 로그의 주소를 연다 */ }
+  return url;
+}
+
+// doGet 이 부른다. 카페24 가 붙여 보낸 인증코드를 토큰으로 바꿔 둔다.
+function cafe24Callback_(p) {
+  var ok = false;
+  var message;
+  try {
+    var cache = CacheService.getScriptCache();
+    var slot = 'cafe24state:' + String(p.state);
+    if (!cache.get(slot)) throw new Error('연결 링크가 만료됐거나 이미 쓰였습니다 — 시트에서 연결하기를 다시 눌러 주세요.');
+    cache.remove(slot);
+    if (p.error) throw new Error('카페24 가 승인하지 않았습니다: ' + (p.error_description || p.error));
+    cafe24TokenAsk_({ grant_type: 'authorization_code', code: String(p.code), redirect_uri: CAFE24_REDIRECT_URI });
+    ok = true;
+    message = '카페24 연결됐습니다. 이 창은 닫으셔도 됩니다.<br>'
+      + '시트 메뉴 UTM → 카페24 → "지금 한 번 적재" 로 바로 받아 볼 수 있습니다.';
+  } catch (error) {
+    message = String(error && error.message ? error.message : error)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  return HtmlService.createHtmlOutput('<div style="font:15px sans-serif;padding:24px;line-height:1.7">'
+    + '<h3>' + (ok ? '✅' : '⚠️') + ' 카페24</h3><p>' + message + '</p></div>');
+}
+
+// ── 부르기 ─────────────────────────────────────────────────────────
+function cafe24Query_(params) {
+  return Object.keys(params).filter(function (k) {
+    return params[k] !== undefined && params[k] !== null && params[k] !== '';
+  }).map(function (k) {
+    return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+  }).join('&');
+}
+
+// 401 이면 토큰을 한 번 새로 받아 다시, 429 면 조금 쉬었다 다시 부른다.
+function cafe24Get_(url, tried) {
+  tried = tried || 0;
+  var response = UrlFetchApp.fetch(url, {
+    headers: { Authorization: 'Bearer ' + cafe24Token_(tried === 1) },
+    muteHttpExceptions: true
+  });
+  var code = response.getResponseCode();
+  var text = response.getContentText() || '';
+  if (code === 401 && tried === 0) return cafe24Get_(url, 1);
+  if (code === 429 && tried < 4) {
+    Utilities.sleep(3000 * (tried + 1));
+    return cafe24Get_(url, tried + 2);
+  }
+  var body = {};
+  try { body = JSON.parse(text); } catch (ignore) { /* 아래 */ }
+  if (code !== 200) {
+    var why = (body.error && (body.error.message || body.error)) || text.slice(0, 300);
+    throw new Error('카페24 (HTTP ' + code + ') ' + url.split('?')[0].replace(/^https:\/\/[^/]+/, '') + ': ' + why);
+  }
+  return body;
+}
+
+function cafe24Admin_(path, params) {
+  return cafe24Get_('https://' + cafe24Mall_() + '.cafe24api.com/api/v2/admin/' + path + '?' + cafe24Query_(params));
+}
+
+var cafe24LastData = 0;
+function cafe24Data_(path, params) {
+  var wait = cafe24LastData + CAFE24_DATA_GAP - Date.now();
+  if (wait > 0) Utilities.sleep(wait);
+  cafe24LastData = Date.now();
+  params.mall_id = cafe24Mall_();
+  return cafe24Get_(CAFE24_DATA_URL + path + '?' + cafe24Query_(params));
+}
+
+// 응답의 뿌리 이름(orders · view · sales …)이 API 마다 달라서, 처음 나오는 배열을 목록으로 본다.
+function cafe24List_(body) {
+  if (Array.isArray(body)) return body;
+  var keys = Object.keys(body || {});
+  for (var i = 0; i < keys.length; i += 1) if (Array.isArray(body[keys[i]])) return body[keys[i]];
+  return [];
+}
+
+function cafe24DataAll_(path, params) {
+  var all = [];
+  for (var page = 0; page < 20; page += 1) {
+    params.limit = 1000;
+    params.offset = page * 1000;
+    var rows = cafe24List_(cafe24Data_(path, params));
+    all = all.concat(rows);
+    if (rows.length < 1000) break;
+  }
+  return all;
+}
+
+function cafe24Num_(value) {
+  var n = Number(value);
+  return isNaN(n) ? 0 : n;
+}
+
+// ── 날짜 ───────────────────────────────────────────────────────────
+function cafe24Day_(time) {
+  return Utilities.formatDate(new Date(time), 'Asia/Seoul', 'yyyy-MM-dd');
+}
+
+function cafe24Days_(since, until) {
+  var days = [];
+  var t = Date.parse(since + 'T12:00:00+09:00');
+  var end = Date.parse(until + 'T12:00:00+09:00');
+  while (t <= end && days.length < 400) {
+    days.push(cafe24Day_(t));
+    t += 86400000;
+  }
+  return days;
+}
+
+// ── 받기 ───────────────────────────────────────────────────────────
+// 주문은 하루씩 받는다. 한 번에 100건 · 건너뛰기 15000 까지라 긴 기간을 한 번에 받으면 잘린다.
+function cafe24Orders_(since, until, stamp) {
+  var lines = [];
+  cafe24Days_(since, until).forEach(function (day) {
+    for (var offset = 0; offset <= 15000; offset += 100) {
+      var orders = cafe24List_(cafe24Admin_('orders', {
+        start_date: day, end_date: day, date_type: 'order_date', embed: 'items', limit: 100, offset: offset
+      }));
+      orders.forEach(function (order) {
+        var paidAmount = (order.actual_order_amount && order.actual_order_amount.payment_amount !== undefined)
+          ? order.actual_order_amount.payment_amount : order.payment_amount;
+        (order.items || []).forEach(function (item, i) {
+          var code = String(item.order_status || '');
+          var price = cafe24Num_(item.product_price) + cafe24Num_(item.option_price);
+          var quantity = cafe24Num_(item.quantity);
+          lines.push([
+            String(order.order_date || day).slice(0, 10),
+            String(order.order_date || '').slice(11, 19),
+            String(order.payment_date || '').slice(0, 10),
+            String(order.order_id || ''),
+            String(item.order_item_code || ''),
+            String(item.product_no || ''),
+            String(item.product_code || ''),
+            String(item.product_name || ''),
+            String(item.option_value || ''),
+            quantity,
+            price,
+            price * quantity,
+            code,
+            CAFE24_STATUS[code] || CAFE24_STATUS_HEAD[code.charAt(0)] || code,
+            order.paid === 'T' ? '결제' : '미결제',
+            String(order.order_place_name || ''),
+            i === 0 ? cafe24Num_(paidAmount) : '',
+            stamp
+          ]);
+        });
+      });
+      if (orders.length < 100) break;
+    }
+  });
+  return lines;
+}
+
+// 접속통계는 기간을 한 번에, 기기(전체 · PC · 모바일)별로 받아 날짜로 합친다.
+function cafe24Visits_(since, until, stamp) {
+  var lines = [];
+  CAFE24_DEVICES.forEach(function (device) {
+    var byDay = {};
+    function slot(row) {
+      var day = String(row.date || '').slice(0, 10);
+      if (!byDay[day]) byDay[day] = { visit: 0, first: 0, again: 0, unique: 0, pv: 0 };
+      return byDay[day];
+    }
+    var base = { start_date: since, end_date: until, device_type: device[0], format_type: 'day' };
+    cafe24DataAll_('/visitors/view', JSON.parse(JSON.stringify(base))).forEach(function (row) {
+      var s = slot(row);
+      s.visit += cafe24Num_(row.visit_count);
+      s.first += cafe24Num_(row.first_visit_count);
+      s.again += cafe24Num_(row.re_visit_count);
+    });
+    cafe24DataAll_('/visitors/unique', JSON.parse(JSON.stringify(base))).forEach(function (row) {
+      slot(row).unique += cafe24Num_(row.unique_visit_count);
+    });
+    cafe24DataAll_('/visitors/pageview', JSON.parse(JSON.stringify(base))).forEach(function (row) {
+      slot(row).pv += cafe24Num_(row.page_view !== undefined ? row.page_view : row.pageview_count);
+    });
+    Object.keys(byDay).sort().forEach(function (day) {
+      if (!day) return;
+      var s = byDay[day];
+      lines.push([day, device[1], s.visit, s.first, s.again, s.unique, s.pv, stamp]);
+    });
+  });
+  return lines;
+}
+
+// 상품별 판매는 기간 합계로만 오므로 하루씩 물어 날짜를 붙인다.
+function cafe24ProductSales_(since, until, stamp) {
+  var lines = [];
+  cafe24Days_(since, until).forEach(function (day) {
+    cafe24DataAll_('/products/sales', { start_date: day, end_date: day }).forEach(function (row) {
+      lines.push([day, String(row.product_no || ''), String(row.product_name || ''),
+        cafe24Num_(row.order_count), cafe24Num_(row.order_product_count), cafe24Num_(row.order_amount), stamp]);
+    });
+  });
+  return lines;
+}
+
+// ── 시트에 쓰기 ────────────────────────────────────────────────────
+// 받은 기간의 줄은 지우고 새로 받은 줄로 바꾼다 (첫 칸이 날짜). 그 밖의 날짜는 그대로 둔다.
+// 이 탭들은 스크립트가 통째로 다시 쓴다 — 손으로 적은 칸은 남지 않는다.
+function cafe24Replace_(name, headers, since, until, lines) {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(name) || book.insertSheet(name, book.getNumSheets());
+  var width = headers.length;
+  var keep = [];
+  var last = sheet.getLastRow();
+  if (last > 1) {
+    keep = sheet.getRange(2, 1, last - 1, width).getValues().filter(function (line) {
+      var day = naverDay_(line[0]);
+      return day && (day < since || day > until);
+    });
+  }
+  var all = keep.map(function (line) {
+    line[0] = naverDay_(line[0]);
+    return line;
+  }).concat(lines);
+  all.sort(function (a, b) { return a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0); });
+
+  sheet.getRange(1, 1, 1, width).setValues([headers]).setFontWeight('bold');
+  sheet.setFrozenRows(1);
+  if (last > 1) sheet.getRange(2, 1, last - 1, Math.max(width, sheet.getLastColumn())).clearContent();
+  if (all.length) {
+    sheet.getRange(2, 1, all.length, 1).setNumberFormat('@');   // 날짜를 글자로 둔다 (시트가 바꾸지 않게)
+    sheet.getRange(2, 1, all.length, width).setValues(all);
+  }
+  return lines.length;
+}
+
+// ── 적재 ───────────────────────────────────────────────────────────
+// 셋 중 하나가 실패해도 나머지는 쌓는다. 무엇이 안 됐는지는 결과 글에 남긴다.
+function cafe24Load_(since, until) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('다른 카페24 적재가 도는 중입니다. 잠시 뒤 다시 시도해 주세요.');
+  try {
+    var stamp = new Date();
+    var done = [];
+    var failed = [];
+    [
+      ['주문', CAFE24_ORDER_SHEET, CAFE24_ORDER_HEADERS, cafe24Orders_],
+      ['접속통계', CAFE24_VISIT_SHEET, CAFE24_VISIT_HEADERS, cafe24Visits_],
+      ['상품별 판매', CAFE24_PRODUCT_SHEET, CAFE24_PRODUCT_HEADERS, cafe24ProductSales_]
+    ].forEach(function (job) {
+      try {
+        var lines = job[3](since, until, stamp);
+        cafe24Replace_(job[1], job[2], since, until, lines);
+        done.push(job[0] + ' ' + lines.length + '줄');
+      } catch (error) {
+        failed.push(job[0] + ': ' + String(error && error.message ? error.message : error));
+      }
+    });
+    var message = '카페24 ' + since + ' ~ ' + until + BR1 + '· 받음: ' + (done.join(', ') || '없음')
+      + (failed.length ? BR1 + '· 안 됨: ' + failed.join(BR1 + '  ') : '');
+    PropertiesService.getScriptProperties().setProperty('CAFE24_LAST_RUN',
+      Utilities.formatDate(stamp, 'Asia/Seoul', 'yyyy-MM-dd HH:mm') + ' ' + message);
+    if (!done.length) throw new Error(message);
+    return message;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function cafe24Alert_(message) {
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 트리거 · 편집기에서는 로그로만 */ }
+  return message;
+}
+
+// 아침 트리거가 부른다 (메뉴의 '지금 한 번 적재' 도 같다). 오늘 포함 최근 7일.
+function cafe24DailyRun() {
+  var now = Date.now();
+  var message = cafe24Load_(cafe24Day_(now - (CAFE24_DAYS - 1) * 86400000), cafe24Day_(now));
+  return cafe24Alert_(message);
+}
+
+// 지난 기간을 채울 때. 한 번에 31일까지 (Apps Script 한 번 실행은 6분까지라).
+function cafe24LoadRange() {
+  var ui = SpreadsheetApp.getUi();
+  var answer = ui.prompt('카페24 기간 정해 적재',
+    '시작일과 종료일을 띄어 적어 주세요 (최대 ' + CAFE24_RANGE_MAX + '일)' + BR1 + '예: 2026-09-01 2026-09-30',
+    ui.ButtonSet.OK_CANCEL);
+  if (answer.getSelectedButton() !== ui.Button.OK) return '';
+  var parts = answer.getResponseText().match(/\d{4}-\d{2}-\d{2}/g) || [];
+  if (parts.length !== 2 || parts[0] > parts[1]) return cafe24Alert_('날짜를 YYYY-MM-DD YYYY-MM-DD 로 적어 주세요.');
+  if (cafe24Days_(parts[0], parts[1]).length > CAFE24_RANGE_MAX) {
+    return cafe24Alert_('한 번에 ' + CAFE24_RANGE_MAX + '일까지입니다. 나눠서 적재해 주세요.');
+  }
+  try {
+    return cafe24Alert_(cafe24Load_(parts[0], parts[1]));
+  } catch (error) {
+    return cafe24Alert_(String(error && error.message ? error.message : error));
+  }
+}
+
+// ── 아침 자동 적재 ──────────────────────────────────────────────────
+// 갱신 토큰이 14일이라, 이게 매일 돌아야 연결이 끊기지 않는다.
+function cafe24DailyClear_() {
+  var gone = 0;
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === CAFE24_DAILY_FN) {
+      ScriptApp.deleteTrigger(trigger);
+      gone += 1;
+    }
+  });
+  return gone;
+}
+
+function cafe24DailyInstall() {
+  try {
+    cafe24DailyClear_();
+    ScriptApp.newTrigger(CAFE24_DAILY_FN).timeBased()
+      .atHour(CAFE24_DAILY_HOUR).nearMinute(0).everyDays(1).inTimezone('Asia/Seoul').create();
+  } catch (error) {
+    return cafe24Alert_(budgetDailyHelp_(error));
+  }
+  return cafe24Alert_('카페24 아침 자동 적재를 켰습니다.' + BR2
+    + '한국 시간 매일 오전 ' + CAFE24_DAILY_HOUR + '시쯤 최근 ' + CAFE24_DAYS + '일 주문 · 접속통계 · 상품별 판매를' + BR1
+    + CAFE24_ORDER_SHEET + ' · ' + CAFE24_VISIT_SHEET + ' · ' + CAFE24_PRODUCT_SHEET + ' 탭에 다시 씁니다.');
+}
+
+function cafe24DailyRemove() {
+  var gone;
+  try {
+    gone = cafe24DailyClear_();
+  } catch (error) {
+    return cafe24Alert_('트리거를 지우지 못했습니다. Apps Script 의 ⏰ 트리거 화면에서 '
+      + CAFE24_DAILY_FN + ' 을 직접 지워 주세요.' + BR2 + budgetDailyHelp_(error));
+  }
+  return cafe24Alert_(gone ? '카페24 아침 자동 적재를 껐습니다.'
+    + BR2 + '14일 넘게 적재가 돌지 않으면 연결이 끊겨 연결하기를 다시 해야 합니다.'
+    : '켜져 있는 카페24 자동 적재가 없습니다.');
+}
+
+// ── 확인 ───────────────────────────────────────────────────────────
+function cafe24Check() {
+  var lines = ['카페24 연결 상태', ''];
+  var mall = cafe24Prop_('CAFE24_MALL_ID');
+  var secret = cafe24Prop_('CAFE24_CLIENT_SECRET');
+  lines.push('· CAFE24_MALL_ID : ' + (mall || '(비어 있음)'));
+  lines.push('· Client ID : ' + (cafe24Prop_('CAFE24_CLIENT_ID') || CAFE24_CLIENT_ID));
+  lines.push('· CAFE24_CLIENT_SECRET : ' + (secret ? secret.length + '자, ' + secret.slice(0, 3) + '… 로 시작' : '(비어 있음)'));
+  var until = Number(cafe24Prop_('CAFE24_REFRESH_UNTIL'));
+  lines.push('· 연결 : ' + (!cafe24Prop_('CAFE24_REFRESH_TOKEN') ? '아직 안 됨 (연결하기)'
+    : until < Date.now() ? '끊김 (연결하기를 다시)'
+      : Utilities.formatDate(new Date(until), 'Asia/Seoul', 'yyyy-MM-dd HH:mm') + ' 까지 유지 (적재가 돌 때마다 늘어남)'));
+  var auto = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === CAFE24_DAILY_FN; });
+  lines.push('· 아침 자동 적재 : ' + (auto ? '켜짐' : '꺼짐'));
+  lines.push('');
+  lines.push('마지막 적재: ' + (cafe24Prop_('CAFE24_LAST_RUN') || '없음'));
+  return cafe24Alert_(lines.join(BR1));
+}
+
+// 응답 모양 보기 — 어제 하루치를 API 마다 조금씩 받아 열 이름과 첫 줄을 로그에 남긴다.
+// 주문은 구매자 정보가 섞여 있어 열 이름만 남긴다. (매출통계 API 를 붙일 때 모양을 보려고 둔다)
+function cafe24Probe() {
+  var day = cafe24Day_(Date.now() - 86400000);
+  var out = ['카페24 응답 모양 (' + day + ')'];
+  function note(label, run) {
+    try {
+      out.push('', '■ ' + label, run());
+    } catch (error) {
+      out.push('', '■ ' + label, '  안 됨: ' + String(error && error.message ? error.message : error));
+    }
+  }
+  note('주문 orders', function () {
+    var orders = cafe24List_(cafe24Admin_('orders',
+      { start_date: day, end_date: day, date_type: 'order_date', embed: 'items', limit: 1 }));
+    if (!orders.length) return '  (그날 주문 없음)';
+    return '  주문 열: ' + Object.keys(orders[0]).join(', ')
+      + BR1 + '  품목 열: ' + Object.keys((orders[0].items || [])[0] || {}).join(', ');
+  });
+  [['매출통계 reports/salesvolume', 'reports/salesvolume'],
+    ['매출통계 financials/dailysales', 'financials/dailysales']].forEach(function (pair) {
+    note(pair[0], function () {
+      return '  ' + JSON.stringify(cafe24Admin_(pair[1], { start_date: day, end_date: day })).slice(0, 800);
+    });
+  });
+  [['/visitors/view', {}], ['/visitors/unique', {}], ['/visitors/pageview', {}], ['/products/sales', {}],
+    ['/visitpaths/domains', {}]].forEach(function (pair) {
+    note('접속통계 ' + pair[0], function () {
+      var params = { start_date: day, end_date: day, limit: 50 };
+      return '  ' + JSON.stringify(cafe24Data_(pair[0], params)).slice(0, 600);
+    });
+  });
+  var message = out.join(BR1);
+  Logger.log(message);
+  try {
+    SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(
+      '<pre style="white-space:pre-wrap;font:12px monospace">'
+      + message.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>').setWidth(760).setHeight(560), '카페24 응답 모양');
+  } catch (ignore) { /* 로그로만 */ }
+  return message;
+}
+
+// ── 카페24 결과 (워크스페이스 '카페24 결과' 화면) ─────────────────────────
+// 상품명 · 상품번호를 넣으면 고른 기간의 주문 건수 · 판매 수량을 센다.
+// 카페24 를 바로 부르지 않고 아침 적재가 쌓아 둔 카페24주문 탭을 읽는다 — 그래야 빠르고,
+// 카페24 호출 한도를 화면이 갉아먹지 않는다. (그래서 오늘 숫자는 마지막 적재 시각까지다)
+//
+// 세는 법
+//   주문 건수   같은 주문번호는 한 번만 센다 (한 주문에 같은 상품 옵션 두 개여도 1건)
+//   정상        품목 상태코드가 N 으로 시작하는 것 (입금전 · 배송준비 · 배송완료 …)
+//   취소 · 반품  C · R · E 로 시작하는 것. 정상 숫자에는 넣지 않고 옆에 따로 센다
+//   매출        판매가(옵션가 포함) × 수량. 쿠폰 · 적립금 할인 전 금액이다
+var CAFE24_LOOKUP_PRODUCTS = 200;
+
+function cafe24Lookup_(payload) {
+  var since = String((payload && payload.since) || '').slice(0, 10);
+  var until = String((payload && payload.until) || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    throw new Error('조회 기간이 올바르지 않습니다.');
+  }
+  if (since > until) throw new Error('시작일이 종료일보다 뒤입니다.');
+
+  // 쉼표로 여러 개를 넣을 수 있다 (하나라도 맞으면 걸린다). 띄어쓰기 · 대소문자는 무시한다.
+  var squash = function (text) { return String(text || '').toLowerCase().replace(/\s+/g, ''); };
+  var words = String((payload && payload.q) || '').split(',')
+    .map(squash).filter(function (one) { return !!one; });
+  var hit = function (number, name, code) {
+    if (!words.length) return true;
+    var plainName = squash(name);
+    var plainCode = squash(code);
+    return words.some(function (one) {
+      if (/^\d+$/.test(one) && one === String(number)) return true;   // 상품번호는 똑같아야
+      return plainName.indexOf(one) >= 0 || (plainCode && plainCode === one);
+    });
+  };
+
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(CAFE24_ORDER_SHEET);
+  var lastRun = cafe24Prop_('CAFE24_LAST_RUN');
+  var empty = { ok: true, since: since, until: until, q: words.join(','), lastRun: lastRun,
+    dataSince: '', dataUntil: '', total: { orders: 0, qty: 0, amount: 0, cancelOrders: 0, cancelQty: 0 },
+    products: [], days: [], url: SHEET_URL_ };
+  if (!sheet || sheet.getLastRow() < 2) {
+    empty.notice = '카페24주문 탭이 아직 없습니다 — 시트 메뉴 UTM → 카페24 → "지금 한 번 적재" 를 먼저 눌러 주세요.';
+    return empty;
+  }
+
+  var grid = sheet.getRange(2, 1, sheet.getLastRow() - 1, CAFE24_ORDER_HEADERS.length).getValues();
+  var dataSince = '';
+  var dataUntil = '';
+  var orders = {};        // 정상 주문번호
+  var cancels = {};       // 취소 · 반품 주문번호
+  var total = { orders: 0, qty: 0, amount: 0, cancelOrders: 0, cancelQty: 0 };
+  var byProduct = {};
+  var byDay = {};
+
+  grid.forEach(function (line) {
+    var day = naverDay_(line[0]);
+    if (!day) return;
+    if (!dataSince || day < dataSince) dataSince = day;
+    if (!dataUntil || day > dataUntil) dataUntil = day;
+    if (day < since || day > until) return;
+
+    var number = String(line[5] || '').trim();
+    var name = String(line[7] || '').trim();
+    if (!hit(number, name, line[6])) return;
+
+    var orderId = String(line[3] || '');
+    var qty = Number(line[9]) || 0;
+    var amount = Number(line[11]) || 0;
+    var normal = String(line[12] || '').charAt(0) === 'N';
+
+    var key = number || name;
+    if (!byProduct[key]) {
+      byProduct[key] = { number: number, name: name, orders: {}, qty: 0, amount: 0, cancels: {}, cancelQty: 0 };
+    }
+    var product = byProduct[key];
+    if (!byDay[day]) byDay[day] = { day: day, orders: {}, qty: 0, amount: 0 };
+
+    if (normal) {
+      orders[orderId] = true;
+      total.qty += qty;
+      total.amount += amount;
+      product.orders[orderId] = true;
+      product.qty += qty;
+      product.amount += amount;
+      byDay[day].orders[orderId] = true;
+      byDay[day].qty += qty;
+      byDay[day].amount += amount;
+    } else {
+      cancels[orderId] = true;
+      total.cancelQty += qty;
+      product.cancels[orderId] = true;
+      product.cancelQty += qty;
+    }
+  });
+
+  total.orders = Object.keys(orders).length;
+  total.cancelOrders = Object.keys(cancels).length;
+
+  var products = Object.keys(byProduct).map(function (key) {
+    var one = byProduct[key];
+    return { number: one.number, name: one.name, orders: Object.keys(one.orders).length,
+      qty: one.qty, amount: one.amount, cancelOrders: Object.keys(one.cancels).length, cancelQty: one.cancelQty };
+  }).sort(function (a, b) { return b.qty - a.qty || b.orders - a.orders; });
+
+  // 주문이 없던 날도 0 으로 채워 둔다 (빈 날이 빠지면 추이가 이어 보인다)
+  var days = cafe24Days_(since, until).map(function (day) {
+    var one = byDay[day];
+    return { day: day, orders: one ? Object.keys(one.orders).length : 0,
+      qty: one ? one.qty : 0, amount: one ? one.amount : 0 };
+  });
+
+  return { ok: true, since: since, until: until, q: words.join(','), lastRun: lastRun,
+    dataSince: dataSince, dataUntil: dataUntil, total: total,
+    products: products.slice(0, CAFE24_LOOKUP_PRODUCTS), productCount: products.length,
+    days: days, url: SHEET_URL_ + '#gid=' + sheet.getSheetId(), fetchedAt: new Date().toISOString() };
+}
+
+var SHEET_URL_ = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit';

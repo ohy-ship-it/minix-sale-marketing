@@ -2100,3 +2100,12 @@ html.is-gated,html.is-gated body{overflow:hidden}
 /* 미닉스 워크스페이스로 밀어넣은 결과 — 파일 알림(.perf-note) 과 가리려고 색을 달리한다 */
 .er-push { color: #1d6f42; background: #f1f8f3; border-left: 3px solid #1d6f42; padding: 6px 10px; border-radius: 4px; }
 .er-push b { color: #14532d; }
+
+/* 카페24 결과 */
+.cafe24-date{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#8c8c85}
+.cafe24-date input{border:1px solid #e3e2dc;border-radius:7px;padding:6px 8px;font:400 12px inherit;background:#fff}
+.cafe24-table th.perf-num,.cafe24-table td.perf-num{text-align:right}
+.cafe24-bar{display:inline-block;width:120px;height:8px;border-radius:4px;background:#f1f0eb;vertical-align:middle;overflow:hidden}
+.cafe24-bar i{display:block;height:100%;background:#2f86d9;border-radius:4px}
+.cafe24-bar-num{margin-left:8px}
+@media (max-width:600px){.cafe24-bar{width:64px}}
