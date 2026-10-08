@@ -12120,13 +12120,39 @@ if (cafe24Result) {
   let utmContent = '';     // 콘텐츠에 들어 있는 글자
   let utmOpen = false;     // 주문별 목록을 펼쳐 두었나 (다시 그려도 그대로 두려고)
 
+  /* 같은 광고매체가 이름만 달리 들어오는 것을 하나로 합친다.
+     카페24 는 utm_source 를 적힌 그대로 주고, 애널리틱스에 등록한 매체는 그 이름(페이스북)으로 준다.
+     그래서 같은 페이스북 유입이 'facebook' · 'Facebook' · '페이스북' · 'fb' 로 갈라져 보였다.
+     대소문자 · 띄어쓰기 · 앞뒤에 붙은 기호(facebook- 처럼 UTM 을 잘못 적은 것)는 늘 무시하고,
+     다른 이름은 아래 표로 묶는다. */
+  const AD_SAME = { fb: 'facebook', '페이스북': 'facebook', 'facebook.com': 'facebook', 'm.facebook.com': 'facebook' };
+  const adKey = (name) => {
+    const plain = String(name || '').trim().toLowerCase().replace(/\s+/g, '')
+      .replace(/^[-_.·/|]+|[-_.·/|]+$/g, '');
+    return AD_SAME[plain] || plain;
+  };
+  const mergeAds = (utm) => {
+    if (!utm || !utm.groups) return utm;
+    const fix = (row) => ({ ...row, ad: row.known ? adKey(row.ad) : row.ad });
+    const merged = {};
+    utm.groups.map(fix).forEach((row) => {
+      const key = [row.known, row.ad, row.medium, row.campaign, row.content, row.keyword].join('|');
+      if (!merged[key]) { merged[key] = { ...row }; return; }
+      merged[key].orders += row.orders;
+      merged[key].qty += row.qty;
+      merged[key].amount += row.amount;
+    });
+    const groups = Object.values(merged).sort((a, b) => b.orders - a.orders || b.amount - a.amount);
+    return { ...utm, groups, orders: (utm.orders || []).map(fix) };
+  };
+
   const look = () => {
     if (since > until) { state = 'error'; error = '시작일이 종료일보다 뒤입니다.'; render(); return; }
     state = 'loading';
     render();
     try { window.localStorage.setItem('minix-cafe24-q', query); } catch (ignore) { /* 거들기다 */ }
     askSheet({ action: 'cafe24Lookup', q: query, since, until })
-      .then((body) => { found = body; state = 'ready'; error = ''; render(); })
+      .then((body) => { found = { ...body, utm: mergeAds(body.utm) }; state = 'ready'; error = ''; render(); })
       .catch((reason) => { state = 'error'; error = reason.message; render(); });
   };
 
@@ -12156,7 +12182,6 @@ if (cafe24Result) {
   };
 
   // UTM별 — 걸린 주문을 카페24UTM주문 탭과 주문번호로 이은 것 (Code.gs 의 cafe24LookupUtm_)
-  const blank = (text) => (text ? escapeHtml(text) : '<span class="tool-blank">—</span>');
   // 광고매체 · 콘텐츠로 거른다. 광고매체는 똑같아야, 콘텐츠는 글자가 들어 있으면 걸린다.
   const utmPass = (row) => {
     if (utmAd === '(없음)' && row.known) return false;
