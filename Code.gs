@@ -2318,7 +2318,14 @@ function metaAnswer_(response, where) {
    스크립트 속성 META_PAGE_ID · META_IG_USER_ID 가 있으면 그것을 쓴다.
    없으면 계정이 이미 만들어 둔 크리에이티브에서 page_id · instagram_user_id 를 꺼낸다 —
    지금 쓰고 있는 페이지라 가장 틀릴 일이 없다. */
-function metaStory_(account) {
+function metaStory_(account, payload) {
+  /* 화면에서 대표 계정(페이지 · 인스타)을 골라 보냈으면 그것을 쓴다.
+     옛 화면은 안 보내므로 아래 길(스크립트 속성 → 토큰 → 기존 소재)로 찾는다. */
+  var chosenPage = String((payload && payload.pageId) || '').replace(/[^0-9]/g, '');
+  if (chosenPage) {
+    var chosenIg = String((payload && payload.igId) || '').replace(/[^0-9]/g, '');
+    return { pageId: chosenPage, igId: chosenIg, from: '화면에서 고른 대표 계정' };
+  }
   var store = PropertiesService.getScriptProperties();
   var page = cleanToken_(store.getProperty('META_PAGE_ID'));
   var insta = cleanToken_(store.getProperty('META_IG_USER_ID'));
@@ -2610,7 +2617,7 @@ function metaMake_(payload) {
     if (names.length) log.push('광고세트에 이미 있는 광고 ' + names.length + '건은 건너뜁니다');
   } catch (error) { /* 못 읽으면 그냥 만든다 */ }
 
-  var story = metaStory_(account);
+  var story = metaStory_(account, payload);
   log.push('게시 주체: 페이지 ' + story.pageId
     + (story.igId ? ' · 인스타 ' + story.igId : '') + ' (' + story.from + ')');
 
@@ -2735,7 +2742,7 @@ function metaAd_(payload) {
   var cta = metaOneOf_(payload.cta || 'LEARN_MORE', META_CTAS, '행동 유도 버튼');
   var headline = String(payload.headline || '');
   var body = String(payload.body || '');
-  var story = metaStory_(account);
+  var story = metaStory_(account, payload);
 
   // 이미 같은 이름의 광고가 있으면 그것을 그대로 돌려준다.
   // 되묻기(구글이 답을 흘렸을 때)로 같은 요청이 두 번 와도 광고가 둘이 되지 않게 하는 자리다.

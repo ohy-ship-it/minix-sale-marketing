@@ -5105,6 +5105,13 @@ if (adSetup) {
   const TND_SHEET_NAME = '[DA] 메타';
 
   const ACCOUNTS = AD_ACCOUNTS;
+  /* 대표 계정 — 광고를 게시하는 페이지 · 인스타 계정. 광고 계정들이 쓰는 것은 이 둘이다
+     (CJ 계정이 가사노동해방소를 함께 쓴다). 고른 값을 서버에 실어 보내면 그 이름으로 게시한다. */
+  const IDENTITIES = [
+    ['미닉스', { page: '100739869635859', ig: '17841446818074113', handle: '@minix_official' }],
+    ['가사노동해방소', { page: '478495155337438', ig: '17841469528834728', handle: '@housework_finish' }],
+  ];
+  const identityOf = (name) => (IDENTITIES.find(([label]) => label === name) || IDENTITIES[0])[1];
   // 시트의 목적 열에는 영문 코드가 적힌다 (파일명 도구가 그렇게 넣는다). 한글 · 코드 둘 다로 찾는다.
   const PURPOSES = [['구매', 'purchase'], ['트래픽', 'traffic'], ['참여', 'participation'], ['잠재고객', 'prospect']];
   const purposeCode = (label) => (PURPOSES.find(([name]) => name === label) || [])[1] || '';
@@ -5169,7 +5176,7 @@ if (adSetup) {
   };
 
   const DEFAULT_STATE = {
-    acct: '', part: PARTS[0], purpose: '', urlType: 'url',
+    acct: '', identity: IDENTITIES[0][0], part: PARTS[0], purpose: '', urlType: 'url',
     setup: '', product: '', sheetUrl: '',
     campaignName: '', adsetName: '',
     budget: '', budgetType: 'daily',
@@ -5185,6 +5192,8 @@ if (adSetup) {
   } catch { /* 저장값이 깨졌으면 기본값으로 시작한다 */ }
   // 파트가 없던 때에 저장한 값이면 첫 파트로 돌린다
   if (PARTS.indexOf(state.part) < 0) state.part = PARTS[0];
+  // 대표 계정이 없던 때에 저장한 값이면 미닉스로 둔다
+  if (!IDENTITIES.some(([label]) => label === state.identity)) state.identity = IDENTITIES[0][0];
 
   let history = [];
   try { history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') || []; } catch { history = []; }
@@ -5686,6 +5695,7 @@ if (adSetup) {
         budget: parseInt(digitsOf(state.budget), 10) || 0,
         budgetType: state.budgetType, startAt: state.startAt, endAt: state.endAt,
         gender: state.gender, ageMin: state.ageMin, ageMax: state.ageMax,
+        pageId: identityOf(state.identity).page, igId: identityOf(state.identity).ig,
       });
     } catch (error) {
       work.running = false;
@@ -5726,6 +5736,7 @@ if (adSetup) {
           fileName: source ? source.name : pick.name, image: image,
           video: video, thumbUrl: thumbUrl,
           storyFileName: vertical ? vertical.name : '', story: story,
+          pageId: identityOf(state.identity).page, igId: identityOf(state.identity).ig,
         });
         work.done += 1;
         say(made.skipped
@@ -5982,6 +5993,10 @@ if (adSetup) {
       <section class="tool-card">
         <h3><span class="setup-req">광고 계정</span>${state.acct ? `<small>${escapeHtml(acctLabel())} · ${escapeHtml(state.acct)}</small>` : ''}</h3>
         ${pills('acct', ACCOUNTS, state.acct)}
+        <div class="setup-field">
+          <span>대표 계정<small class="setup-hint">광고를 게시할 페이지 · 인스타 계정 · ${escapeHtml(identityOf(state.identity).handle)}</small></span>
+          ${pills('identity', IDENTITIES.map(([label]) => [label, label]), state.identity)}
+        </div>
       </section>
 
       <section class="tool-card">
@@ -6215,9 +6230,11 @@ if (adSetup) {
     const part = event.target.closest('[data-part]');
     const purpose = event.target.closest('[data-purpose]');
     const urlType = event.target.closest('[data-urltype]');
+    const identity = event.target.closest('[data-identity]');
     const row = event.target.closest('[data-row]');
 
-    if (acct || part || purpose || urlType || row) {
+    if (acct || part || purpose || urlType || identity || row) {
+      if (identity) state.identity = identity.dataset.identity;
       if (acct && acct.dataset.acct !== state.acct) {
         state.acct = acct.dataset.acct;
         // 캠페인 목록은 계정마다 다르다. 계정을 바꾸면 버리고 다음에 다시 읽는다.
