@@ -23,13 +23,17 @@ var UTM_HEADERS = INPUT_HEADERS.concat(FORMULA_HEADERS);
 // 파트별 탭. 앱이 sheet 이름을 함께 보내면 그 탭에 적재한다.
 var PART_SHEETS = ['세일즈마케팅', '더플렌더_파트', '생활가전_파트'];
 
+// 그 탭에만 두는 사람 입력 칸. 타겟팅 바로 뒤에 놓는다.
+//   소재유형 → LINK(GA) 의 utm_term (검색광고는 예전처럼 {keyword})
+var SHEET_INPUT_HEADERS = { '세일즈마케팅': ['소재유형'] };
+
 // 맨 앞에 두는 열. 이 차례대로 왼쪽에 놓는다 (이미 있는 열도 여기로 끌어온다).
 // 세팅명 → 행사명 → 상품명 차례다. 시트를 열면 '어느 세팅의 무슨 행사, 무슨 제품' 이
 // 왼쪽 세 칸에서 한눈에 보여야 한다. 세팅명은 사람이 적는 칸이라 앱은 비운 채로 만든다.
 var FRONT_HEADERS = ['세팅명', '행사명', '상품명'];
 
 // 더 쓰지 않는 열. 값이 비어 있으면 지운다. (사람이 적은 값이 남아 있으면 손대지 않는다)
-var OBSOLETE_HEADERS = ['쇼핑라이브링크', '메시지 유형', '최종행사명', '연령', '소재유형'];
+var OBSOLETE_HEADERS = ['쇼핑라이브링크', '메시지 유형', '최종행사명', '연령'];
 
 // 수식으로 만들던 열. 링크 · 광고명 안에 이미 들어 있어 값이 있어도 지운다.
 var DROP_HEADERS = ['발번시각', 'NT', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
@@ -319,10 +323,13 @@ function ensureColumns_(sheet, columns) {
 
   // 어떤 화면이 보내든 차례는 늘 같다. 이번에 안 보낸 열도 제자리를 지킨다.
   var wanted = [];
+  var extra = SHEET_INPUT_HEADERS[sheet.getName()] || [];
+  var inputs = INPUT_HEADERS.slice();
+  inputs.splice.apply(inputs, [inputs.indexOf('타겟팅') + 1, 0].concat(extra));
   FRONT_HEADERS
     .concat(FALLBACK_COLUMNS.map(function (column) { return column.label; }))
     .concat(columns.map(function (column) { return column.label; }))
-    .concat(UTM_HEADERS)
+    .concat(inputs, FORMULA_HEADERS)
     .forEach(function (label) {
       if (OBSOLETE_HEADERS.indexOf(label) >= 0) return;   // 옛 앱이 보내도 다시 만들지 않는다
       if (wanted.indexOf(label) < 0) wanted.push(label);
@@ -437,6 +444,7 @@ function colLetter_(index) {
 
 // utm-builder 탭의 규칙을 그 행 안에서 그대로 계산한다.
 //   LINK(GA)     = 랜딩링크 ? utm 파라미터              ← 랜딩링크를 채우면 그때 만들어진다
+//                  utm_term = 소재유형 (검색광고는 {keyword}) — 소재유형이 비면 빠진다
 //   NT(일반)      = 랜딩링크 ?nt_source(소스_미디엄) · nt_medium(광고명)
 //   NT(쇼핑스토리) = 랜딩링크 &nt_source · nt_medium · nt_detail  ← 파라미터가 이미 붙은 주소 뒤에 잇는다
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
@@ -460,7 +468,8 @@ function utmFormulas_(map, row) {
   var source = 'IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,2,FALSE),""))';
   var medium = 'IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,3,FALSE),""))';
   var campaign = 'IF(' + purpose + '="","",IFERROR(VLOOKUP(' + purpose + ',' + cfg + '$E:$F,2,FALSE),' + purpose + '))';
-  var term = 'IF(REGEXMATCH(' + medium + '&"","sa"),"{keyword}","")';
+  // 검색광고는 {keyword}, 그 밖에는 소재유형 (세일즈마케팅 탭에만 있는 칸이다)
+  var term = 'IF(REGEXMATCH(' + medium + '&"","sa"),"{keyword}",' + creative + ')';
   var content = cell('광고명');
   // 행사일자는 날짜 · 글자 어느 쪽으로 들어와도 YYYYMMDD 로 만든다
   var dateCell = map['행사일자'] ? cell('행사일자') : '';
@@ -498,7 +507,7 @@ function utmFormulas_(map, row) {
     '=IF(' + source + '="","",TEXTJOIN("_",TRUE,' + source + ',' + productFull + ',' + campaign + '))',
     '=IF(TEXTJOIN("",TRUE,' + promo + ',' + age + ',' + targeting + ',' + sales + ')="","",'
       + '"["&' + promo + '&"]"&' + age + '&"_"&' + targeting + '&"_"&' + sales + ')',
-    '=IF(' + file + '="","",TEXTJOIN("_",TRUE,' + stamp + ',' + product + ',' + code + ',' + creative + ',' + owner + '))'
+    '=IF(' + file + '="","",TEXTJOIN("_",TRUE,' + stamp + ',' + product + ',' + code + ',' + owner + '))'
   ];
 }
 
