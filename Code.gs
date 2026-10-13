@@ -2196,24 +2196,34 @@ var META_OPT_GOALS = ['OFFSITE_CONVERSIONS', 'LINK_CLICKS', 'REACH', 'IMPRESSION
   'LANDING_PAGE_VIEWS', 'POST_ENGAGEMENT'];
 var META_BILL_EVENTS = ['IMPRESSIONS', 'LINK_CLICKS', 'POST_ENGAGEMENT'];
 
-/* 물려받은 promoted_object 에서 **카탈로그 자리**를 턴다.
-   자동세팅이 만드는 것은 픽셀 전환 광고세트다. 그런데 같은 캠페인에 어드밴티지+
-   카탈로그 광고세트가 하나라도 있으면 그 promoted_object 에 product_set_id 가 들어 있고,
-   그대로 베껴 보내면 메타가 '선택된 제품 세트가 유효하지 않습니다' 로 되돌려준다 —
-   제품 세트는 그 광고세트의 것이라 새 광고세트가 아무렇게나 쓸 수 있는 물건이 아니다.
-   그래서 **베낄 것만 골라 담는다** (모르는 자리가 생겨도 새어 나가지 않게 고르는 쪽으로 둔다). */
+/* 물려받은 promoted_object 에서 **베낄 자리만** 골라 담는다
+   (모르는 자리가 생겨도 새어 나가지 않게 고르는 쪽으로 둔다).
+
+   제품 세트(product_set_id)는 따로 다룬다 — keepSet 을 줄 때만 담는다.
+   CJ 계정처럼 캠페인의 광고세트가 **모두** 제품 세트를 달고 있는 캠페인이 있다.
+   그 캠페인에 제품 세트 없이 광고세트를 넣으면 메타가 '선택된 제품 세트가 유효하지
+   않습니다' 로 되돌려준다 (보내지도 않은 제품 세트를 탓하는 말이라 헷갈린다).
+   같은 캠페인 옆 광고세트의 제품 세트를 그대로 쓰면 들어간다 — 소재는 일반 이미지
+   광고 그대로 된다 (9/30 CJ 행사 광고세트가 그렇게 만들어져 돌고 있다).
+   반대로 제품 세트를 붙이면 막히는 캠페인도 있을 수 있어, 없는 쪽도 함께 써 본다. */
 var META_PROMOTED_KEEP = ['pixel_id', 'custom_event_type', 'custom_event_str',
   'page_id', 'application_id', 'object_store_url', 'offline_conversion_data_set_id'];
-function metaPromotedClean_(one) {
+function metaPromotedClean_(one, keepSet) {
   if (!one || typeof one !== 'object') return null;
   var out = {};
   var has = false;
-  META_PROMOTED_KEEP.forEach(function (key) {
+  META_PROMOTED_KEEP.concat(keepSet ? ['product_set_id'] : []).forEach(function (key) {
     if (one[key] === undefined || one[key] === null || one[key] === '') return;
     out[key] = String(one[key]);
     has = true;
   });
   return has ? out : null;
+}
+// 제품 세트를 붙여도 · 떼어도 안 들어갈 때 멈추며 보여 줄 말
+function metaCatalogStop_(campaignId) {
+  return '이름이 같은 캠페인 ' + campaignId + ' 은 광고세트마다 제품 세트를 요구하는 캠페인인데, '
+    + '옆 광고세트의 제품 세트로도 넣지 못했습니다 — '
+    + '캠페인명을 다르게 적어 새 캠페인으로 만들어 주세요 (또는 Ads Manager 에서 직접 추가해 주세요).';
 }
 // 카탈로그 광고세트인가 (제품 세트 · 카탈로그 번호가 붙어 있으면)
 function metaHasCatalog_(one) {
@@ -2402,15 +2412,12 @@ function metaMake_(payload) {
     campaignId = String(already[i].id);
     campaignCatalog = metaHasCatalog_(already[i].promoted_object);
   }
-  /* 카탈로그 판매 캠페인은 광고세트마다 제품 세트를 골라야 한다. 자동세팅은 그것을
-     고를 줄 모르니, 엉뚱한 제품 세트를 붙여 놓고 실패하기 전에 여기서 멈춘다. */
-  if (campaignCatalog) {
-    throw new Error('이름이 같은 캠페인 ' + campaignId + ' 은 카탈로그(어드밴티지+ 카탈로그) 캠페인입니다. '
-      + '자동세팅은 픽셀 전환 캠페인만 만듭니다 — 캠페인명을 다르게 적어 새로 만들어 주세요.');
-  }
+  /* 캠페인에 카탈로그가 걸려 있어도 여기서 멈추지 않는다 — 옆 광고세트의 제품 세트를
+     물려받아 넣어 본다. 그래도 안 되면 아래에서 까닭을 말하고 멈춘다. */
 
   if (campaignId) {
-    log.push('캠페인은 이미 있는 것을 씁니다 (' + campaignId + ')');
+    log.push('캠페인은 이미 있는 것을 씁니다 (' + campaignId + ')'
+      + (campaignCatalog ? ' — 카탈로그가 걸린 캠페인입니다' : ''));
   } else {
     var made = graphPost_('/' + account + '/campaigns', {
       name: campaignName, objective: objective, status: 'PAUSED',
@@ -2435,17 +2442,24 @@ function metaMake_(payload) {
     log.push('광고세트는 이미 있는 것을 씁니다 (' + adsetId + ')');
   } else {
     var promoted = '';
+    var productSet = '';   // 같은 캠페인 광고세트가 쓰는 제품 세트
     var sawCatalog = false;
+    var sawPlain = false;  // 제품 세트 없는 광고세트가 하나라도 있나
     try {
-      /* 하나만 보지 않는다 — 먼저 잡히는 광고세트가 카탈로그 것이면 베낄 픽셀이 없다.
+      /* 하나만 보지 않는다 — 먼저 잡히는 광고세트에 픽셀이 없을 수 있다.
          여럿을 보고 **픽셀이 붙은 광고세트**를 고른다. */
       var sample = graphAll_('/' + campaignId + '/adsets',
         { fields: 'promoted_object,optimization_goal,billing_event', limit: 25 }, 1);
       var pick = null;
       for (var s = 0; s < sample.length; s += 1) {
-        if (metaHasCatalog_(sample[s].promoted_object)) sawCatalog = true;
-        var clean = metaPromotedClean_(sample[s].promoted_object);
-        if (clean && clean.pixel_id) { pick = { row: sample[s], promoted: clean }; break; }
+        var raw = sample[s].promoted_object || {};
+        if (metaHasCatalog_(raw)) sawCatalog = true;
+        else sawPlain = true;
+        if (!productSet && raw.product_set_id) productSet = String(raw.product_set_id);
+        var clean = metaPromotedClean_(raw);
+        if (clean && clean.pixel_id && !(pick && pick.promoted && pick.promoted.pixel_id)) {
+          pick = { row: sample[s], promoted: clean };
+        }
         if (!pick) pick = { row: sample[s], promoted: clean };
       }
       if (pick) {
@@ -2456,21 +2470,19 @@ function metaMake_(payload) {
           + ' · 픽셀 ' + (promoted ? '있음' : '없음') + ')');
       }
     } catch (error) { /* 물려받을 것이 없으면 아래에서 픽셀을 찾는다 */ }
-    if (sawCatalog) {
-      log.push('카탈로그 광고세트의 제품 세트는 물려받지 않았습니다 (픽셀 전환으로 만듭니다)');
-    }
 
     /* 붙여 볼 promoted_object 를 **여러 개** 모은다.
        광고계정마다 쓸 수 있는 픽셀이 다르고, 목록에 보인다고 다 쓸 수 있는 것도 아니다 —
        제휴사 계정에 남의 픽셀이 섞여 있으면 메타가 '픽셀 ID가 유효하지 않거나 픽셀 ID를
        사용할 권한이 없습니다' 로 되돌려준다. 그래서 하나만 보고 포기하지 않는다.
-       차례는 ① 물려받은 것 ② 계정에 붙어 있는 픽셀들. */
-    var tries = [];
+       차례는 ① 물려받은 것 ② 계정에 붙어 있는 픽셀들.
+       옆 광고세트가 제품 세트를 쓰면 픽셀마다 **제품 세트를 붙인 것**도 함께 써 본다.
+       옆이 모두 제품 세트를 쓰면 붙인 쪽을 먼저, 섞여 있으면 뗀 쪽을 먼저 보낸다. */
+    var bases = [];
     var pixelName = {};
-    if (promoted) tries.push(promoted);
+    if (promoted) bases.push(JSON.parse(promoted));
     if (optGoal === 'OFFSITE_CONVERSIONS') {
-      var want = {};
-      if (promoted) { try { want = JSON.parse(promoted); } catch (ignore) { want = {}; } }
+      var want = bases[0] || {};
       try {
         graphAll_('/' + account + '/adspixels', { fields: 'id,name', limit: 10 }, 1)
           .forEach(function (one) {
@@ -2479,21 +2491,39 @@ function metaMake_(payload) {
             var mine = { pixel_id: String(one.id),
               custom_event_type: want.custom_event_type || 'PURCHASE' };
             if (want.custom_event_str) mine.custom_event_str = want.custom_event_str;
-            var text = JSON.stringify(mine);
-            if (tries.indexOf(text) < 0) tries.push(text);
+            bases.push(mine);
           });
       } catch (error) { /* 픽셀 목록을 못 읽으면 물려받은 것만 써 본다 */ }
     }
+    var setFirst = !!productSet && !sawPlain;
+    var tries = [];
+    var addTry = function (one) {
+      var text = one ? JSON.stringify(one) : '';
+      if (tries.indexOf(text) < 0) tries.push(text);
+    };
+    var withSet = function (one) {
+      var copy = {};
+      Object.keys(one || {}).forEach(function (key) { copy[key] = one[key]; });
+      copy.product_set_id = productSet;
+      return copy;
+    };
+    if (productSet && !bases.length) bases.push(null);   // 픽셀이 없어도 제품 세트만은 써 본다
+    bases.forEach(function (one) {
+      if (!productSet) { addTry(one); return; }
+      if (setFirst) { addTry(withSet(one)); if (one) addTry(one); }
+      else { if (one) addTry(one); addTry(withSet(one)); }
+    });
     if (!tries.length) tries.push('');   // 전환 목표가 아니면 붙일 것이 없다
 
-    // 어느 픽셀을 썼는지 사람이 알아볼 수 있게 이름을 함께 적는다
+    // 어느 픽셀 · 제품 세트를 썼는지 사람이 알아볼 수 있게 이름을 함께 적는다
     var pixelOf = function (text) {
       if (!text) return '(없음)';
       var one = {};
       try { one = JSON.parse(text); } catch (ignore) { one = {}; }
-      if (!one.pixel_id) return '(픽셀 없음)';
+      var set = one.product_set_id ? ' +제품세트 ' + one.product_set_id : '';
+      if (!one.pixel_id) return '(픽셀 없음)' + set;
       var name = pixelName[String(one.pixel_id)] || '';
-      return one.pixel_id + (name ? ' ' + name : '');
+      return one.pixel_id + (name ? ' ' + name : '') + set;
     };
 
     var targeting = {
@@ -2519,9 +2549,9 @@ function metaMake_(payload) {
     if (end > 0) params.end_time = String(end);
     params[budgetType === 'lifetime' ? 'lifetime_budget' : 'daily_budget'] = budget;
 
-    /* 픽셀 때문에 막히면 **다음 픽셀로 다시 해 본다.**
+    /* 픽셀 · 제품 세트 때문에 막히면 **다음 후보로 다시 해 본다.**
        실패한 POST 는 아무것도 만들지 않으므로 다시 보내도 광고세트가 겹치지 않는다.
-       픽셀과 상관없는 까닭이면 더 볼 것이 없으니 그 자리에서 멈춘다. */
+       그 밖의 까닭이면 더 볼 것이 없으니 그 자리에서 멈춘다. */
     var group = null;
     var trouble = '';
     var usedPixel = '';
@@ -2534,8 +2564,13 @@ function metaMake_(payload) {
         usedPixel = tries[t];
       } catch (error) {
         trouble = String((error && error.message) || error);
-        if (!/픽셀|pixel/i.test(trouble)) break;
+        if (!/픽셀|pixel|제품 세트|product set/i.test(trouble)) break;
       }
+    }
+    // 제품 세트를 붙여도 떼어도 안 됐다 — 자동세팅으로는 넣을 수 없는 캠페인이다
+    if (!group && /제품 세트|product set/i.test(trouble)) {
+      throw new Error(metaCatalogStop_(campaignId) + ' [써 본 값 — '
+        + tries.slice(0, tried).map(pixelOf).join(' · ') + ']');
     }
     if (!group) {
       // 메타가 어느 값을 물고 늘어지는지 알 수 있게, 써 본 픽셀과 보낸 시각을 함께 적는다.
@@ -2548,6 +2583,9 @@ function metaMake_(payload) {
         + JSON.stringify(String(payload.endAt || '')) + ']');
     }
     if (usedPixel) log.push('픽셀을 붙였습니다 (' + pixelOf(usedPixel) + ')');
+    if (sawCatalog && usedPixel.indexOf('product_set_id') < 0) {
+      log.push('옆 광고세트의 제품 세트는 붙이지 않았습니다 (없이도 들어갔습니다)');
+    }
     adsetId = String(group.id || '');
     if (!adsetId) throw new Error('광고세트를 만들었는데 번호를 못 받았습니다.');
     log.push('광고세트를 만들었습니다 (' + adsetId + ' · '
