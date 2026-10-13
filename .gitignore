@@ -7,6 +7,7 @@ __pycache__/
 .firebase/
 kakao_business_token.txt
 gfa-probe-*.json
+cafe24-probe-*.json
 gfa-report*.json
 
 # 적재 · 검사 기록 (다시 만들 수 있는 값이다)
@@ -33,3 +34,4 @@ docs/
 
 # 매체 제작 가이드 원본 (PDF · PSD). 저장소에도 호스팅에도 올리지 않는다 (firebase.json 도 뺀다).
 guides/
+cafe24-utm.json

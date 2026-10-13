@@ -1892,6 +1892,7 @@ function handleAction_(payload) {
     if (payload.action === 'mediaPush') return mediaPush_(payload);
     // 카페24 — 아침에 쌓아 둔 카페24주문 탭을 읽어 상품별 주문 건수를 센다
     if (payload.action === 'cafe24Lookup') return cafe24Lookup_(payload);
+    if (payload.action === 'cafe24CaAppend') return cafe24CaAppend_(payload);
     return { ok: false, error: '모르는 요청입니다: ' + payload.action };
   } catch (error) {
     return { ok: false, error: String(error && error.message ? error.message : error) };
@@ -9777,11 +9778,12 @@ function cafe24Lookup_(payload) {
   });
 
   var utm = cafe24LookupUtm_(book, mine);
+  var ca = cafe24LookupCa_(book, since, until);
 
   return { ok: true, since: since, until: until, q: words.join(','), lastRun: lastRun,
     dataSince: dataSince, dataUntil: dataUntil, total: total,
     products: products.slice(0, CAFE24_LOOKUP_PRODUCTS), productCount: products.length,
-    days: days, utm: utm, url: SHEET_URL_ + '#gid=' + sheet.getSheetId(), fetchedAt: new Date().toISOString() };
+    days: days, utm: utm, ca: ca, url: SHEET_URL_ + '#gid=' + sheet.getSheetId(), fetchedAt: new Date().toISOString() };
 }
 
 /* 걸린 주문을 카페24UTM주문 탭과 주문번호로 잇는다.
@@ -9830,6 +9832,117 @@ function cafe24LookupUtm_(book, mine) {
     .sort(function (a, b) { return b.orders - a.orders || b.amount - a.amount; });
   out.orders.sort(function (a, b) { return a.day < b.day ? 1 : (a.day > b.day ? -1 : (a.id < b.id ? 1 : -1)); });
   out.orders = out.orders.slice(0, CAFE24_LOOKUP_UTM_ORDERS);
+  return out;
+}
+
+// ── 카페24 애널리틱스 (기여기간 30일) ─────────────────────────────────
+// 카페24 API(/sales/orderdetails)는 같은 방문 안에서 산 주문만 광고에 붙여, 애널리틱스 화면의
+// '기여기간 30일' 숫자보다 적다. 30일 숫자는 API 에 없어서 PC 의 get_cafe24_utm.py 가
+// 애널리틱스 화면(광고 유입 상세 분석 · 일 단위)이 부르는 내부 API 를 읽어 이 탭에 쌓는다.
+// 한 줄 = 날짜 × 채널 × 유형 × 캠페인 × 세부항목 × 키워드. 엑셀 다운로드와 같은 칸이다.
+var CAFE24_CA_SHEET = '카페24UTM30일';
+var CAFE24_CA_HEADERS = ['날짜', '채널', '채널명', '유형', '캠페인', '세부항목', '키워드',
+  '매출액', '배송비', '구매건수', '유입수', '구매전환율', '적재시각'];
+
+// 30일 기여는 지난 날짜 숫자도 나중에 바뀐다. 그래서 받은 날짜는 통째로 지우고 새로 쓴다.
+// 스크립트는 날짜 묶음의 첫 조각에 clear(그 날짜들)를 실어 보낸다.
+function cafe24CaAppend_(payload) {
+  var rows = payload.rows || [];
+  var clear = (payload.clear || []).map(function (day) { return String(day).slice(0, 10); });
+  if (!rows.length && !clear.length) return { ok: false, error: '적재할 줄이 없습니다.' };
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(60000)) {
+    return { ok: false, error: '다른 곳에서 적재하는 중입니다. 잠시 뒤 다시 시도해 주세요.' };
+  }
+  try {
+    var book = SpreadsheetApp.openById(SHEET_ID);
+    var sheet = book.getSheetByName(CAFE24_CA_SHEET);
+    if (!sheet) {
+      sheet = book.insertSheet(CAFE24_CA_SHEET, book.getNumSheets());
+      sheet.getRange(1, 1, 1, CAFE24_CA_HEADERS.length).setValues([CAFE24_CA_HEADERS]).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+      sheet.getRange('A:A').setNumberFormat('@');   // 날짜를 글자로 둔다 (시간대에 밀리지 않게)
+    }
+
+    var removed = 0;
+    if (clear.length && sheet.getLastRow() > 1) {
+      var drop = {};
+      clear.forEach(function (day) { drop[day] = true; });
+      var days = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+      // 이어진 줄끼리 묶어 아래부터 지운다 (위부터 지우면 줄 번호가 밀린다)
+      var runs = [];
+      days.forEach(function (line, i) {
+        if (!drop[naverDay_(line[0])]) return;
+        var row = i + 2;
+        var last = runs[runs.length - 1];
+        if (last && last[0] + last[1] === row) last[1] += 1;
+        else runs.push([row, 1]);
+      });
+      for (var r = runs.length - 1; r >= 0; r -= 1) {
+        sheet.deleteRows(runs[r][0], runs[r][1]);
+        removed += runs[r][1];
+      }
+    }
+
+    if (rows.length) {
+      var stamp = new Date();
+      var grid = rows.map(function (row) {
+        return [String(row.date || '').slice(0, 10), String(row.channel || ''), String(row.channelName || ''),
+          String(row.medium || ''), String(row.campaign || ''), String(row.content || ''), String(row.term || ''),
+          Number(row.amount || 0), Number(row.deliveryFee || 0), Number(row.orders || 0), Number(row.inflow || 0),
+          Number(row.purchaseRate || 0), stamp];
+      });
+      sheet.getRange(sheet.getLastRow() + 1, 1, grid.length, CAFE24_CA_HEADERS.length).setValues(grid);
+    }
+    PropertiesService.getScriptProperties().setProperty('CAFE24_CA_LAST_RUN', new Date().toISOString());
+    return { ok: true, added: rows.length, removed: removed };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* 카페24 결과 화면용 — 고른 기간의 30일 기여 숫자를 UTM 조합별로 더한다.
+   애널리틱스는 상품을 모르므로 상품 검색과는 상관없이 기간 전체를 준다.
+   (유입수는 날짜별 값을 더한 것이라 화면의 '조회 기간 전체' 와 조금 다를 수 있다 — 같은 사람이
+   여러 날 들어오면 화면은 한 번, 여기는 날마다 센다) */
+var CAFE24_CA_GROUPS = 500;
+
+function cafe24LookupCa_(book, since, until) {
+  var out = { groups: [], loaded: false, dataSince: '', dataUntil: '', lastRun: cafe24Prop_('CAFE24_CA_LAST_RUN'),
+    total: { orders: 0, amount: 0, inflow: 0 }, groupCount: 0 };
+  var sheet = book.getSheetByName(CAFE24_CA_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  out.loaded = true;
+
+  var groups = {};
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, 11).getValues().forEach(function (line) {
+    var day = naverDay_(line[0]);
+    if (!day) return;
+    if (!out.dataSince || day < out.dataSince) out.dataSince = day;
+    if (!out.dataUntil || day > out.dataUntil) out.dataUntil = day;
+    if (day < since || day > until) return;
+    var tag = { channel: String(line[1] || ''), medium: String(line[3] || ''), campaign: String(line[4] || ''),
+      content: String(line[5] || ''), term: String(line[6] || '') };
+    var key = [tag.channel, tag.medium, tag.campaign, tag.content, tag.term].join('|');
+    if (!groups[key]) {
+      groups[key] = { channel: tag.channel, medium: tag.medium, campaign: tag.campaign, content: tag.content,
+        term: tag.term, orders: 0, amount: 0, inflow: 0 };
+    }
+    var one = groups[key];
+    one.amount += Number(line[7]) || 0;
+    one.orders += Number(line[9]) || 0;
+    one.inflow += Number(line[10]) || 0;
+    out.total.amount += Number(line[7]) || 0;
+    out.total.orders += Number(line[9]) || 0;
+    out.total.inflow += Number(line[10]) || 0;
+  });
+
+  var list = Object.keys(groups).map(function (key) { return groups[key]; })
+    .filter(function (one) { return one.orders > 0 || one.inflow > 0; })
+    .sort(function (a, b) { return b.orders - a.orders || b.amount - a.amount || b.inflow - a.inflow; });
+  out.groupCount = list.length;
+  out.groups = list.slice(0, CAFE24_CA_GROUPS);
   return out;
 }
 

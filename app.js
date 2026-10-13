@@ -12119,6 +12119,8 @@ if (cafe24Result) {
   let utmAd = '';          // '' 전체 · '(없음)' UTM 정보 없음 · 그 밖은 광고매체 이름
   let utmContent = '';     // 콘텐츠에 들어 있는 글자
   let utmOpen = false;     // 주문별 목록을 펼쳐 두었나 (다시 그려도 그대로 두려고)
+  let caAd = '';           // 애널리틱스 30일 표 — 채널
+  let caContent = '';      // 애널리틱스 30일 표 — 세부항목에 들어 있는 글자
 
   /* 같은 광고매체가 이름만 달리 들어오는 것을 하나로 합친다.
      카페24 는 utm_source 를 적힌 그대로 주고, 애널리틱스에 등록한 매체는 그 이름(페이스북)으로 준다.
@@ -12136,7 +12138,7 @@ if (cafe24Result) {
     const fix = (row) => ({ ...row, ad: row.known ? adKey(row.ad) : row.ad });
     const merged = {};
     utm.groups.map(fix).forEach((row) => {
-      const key = [row.known, row.ad, row.medium, row.campaign, row.content, row.keyword].join('|');
+      const key = [row.known, row.ad, row.content, row.keyword].join('|');
       if (!merged[key]) { merged[key] = { ...row }; return; }
       merged[key].orders += row.orders;
       merged[key].qty += row.qty;
@@ -12190,8 +12192,8 @@ if (cafe24Result) {
     return !want || String(row.content || '').toLowerCase().includes(want);
   };
 
-  // 유입 경로를 화살표로 잇는다 — 광고매체 → 매체 → 캠페인 → 콘텐츠 → 검색어 (빈 칸은 건너뛴다)
-  const HOPS = [['ad', '광고매체'], ['medium', '매체'], ['campaign', '캠페인'], ['content', '콘텐츠'], ['keyword', '검색어']];
+  // 유입 경로를 화살표로 잇는다 — 광고매체 → 콘텐츠 → 검색어 (매체 · 캠페인은 안 본다 · 빈 칸은 건너뛴다)
+  const HOPS = [['ad', '광고매체'], ['content', '콘텐츠'], ['keyword', '검색어']];
   const utmPath = (row) => {
     if (!row.known) return '<span class="tool-blank">UTM 정보 없음</span>';
     const hops = HOPS.filter(([key]) => row[key]).map(([key, label]) =>
@@ -12216,7 +12218,7 @@ if (cafe24Result) {
     return `${filtered ? `<p class="perf-note cafe24-utm-sum">거른 결과 <b>주문 ${num(sum.orders)}건</b>
         · 판매 수량 ${num(sum.qty)}개 · 매출 ${won(sum.amount)}</p>` : ''}
       <div class="tool-table-wrap"><table class="tool-table cafe24-table">
-        <thead><tr><th>유입 경로 <small>광고매체 → 매체 → 캠페인 → 콘텐츠 → 검색어</small></th>
+        <thead><tr><th>유입 경로 <small>광고매체 → 콘텐츠 → 검색어</small></th>
           <th class="perf-num">주문 건수</th><th class="perf-num">판매 수량</th><th class="perf-num">매출</th></tr></thead>
         <tbody>${groups || NONE_ROW(4)}</tbody>
       </table></div>`;
@@ -12295,6 +12297,98 @@ if (cafe24Result) {
     if (orders) orders.innerHTML = ordersBody();
   };
 
+  /* 애널리틱스 30일 기여 — PC 의 get_cafe24_utm.py 가 쌓은 카페24UTM30일 탭 (Code.gs 의 cafe24LookupCa_)
+     애널리틱스 '광고 유입 상세 분석' 화면 · 엑셀과 같은 숫자다. 상품을 모르므로 기간 전체를 본다.
+     채널 이름은 위 UTM 표와 같이 합친다 (facebook · facebook- · 페이스북). */
+  const caMerged = () => {
+    const ca = found && found.ca;
+    if (!ca || !ca.groups) return [];
+    const merged = {};
+    ca.groups.forEach((row) => {
+      const channel = adKey(row.channel);
+      const key = [channel, row.content, row.term].join('|');
+      if (!merged[key]) merged[key] = { channel, content: row.content, term: row.term, orders: 0, amount: 0, inflow: 0 };
+      merged[key].orders += row.orders;
+      merged[key].amount += row.amount;
+      merged[key].inflow += row.inflow;
+    });
+    return Object.values(merged).sort((a, b) => b.orders - a.orders || b.amount - a.amount || b.inflow - a.inflow);
+  };
+  const caPass = (row) => {
+    if (caAd && row.channel !== caAd) return false;
+    const want = caContent.trim().toLowerCase();
+    return !want || String(row.content || '').toLowerCase().includes(want);
+  };
+  const caPath = (row) => {
+    const hops = [['ad', '채널', row.channel], ['content', '세부항목', row.content], ['keyword', '키워드', row.term]]
+      .filter(([, , value]) => value)
+      .map(([key, label, value]) => `<span class="cafe24-hop cafe24-hop-${key}" title="${label}">${escapeHtml(value)}</span>`);
+    return hops.length ? `<span class="cafe24-path">${hops.join('<i class="cafe24-arrow">→</i>')}</span>`
+      : '<span class="tool-blank">UTM 없음</span>';
+  };
+  const rate = (orders, inflow) => (inflow ? `${(Math.round((orders / inflow) * 1000) / 10).toLocaleString('ko-KR')}%` : '—');
+  const CA_SHOW = 200;
+
+  const caBody = () => {
+    const picked = caMerged().filter(caPass);
+    const sum = picked.reduce((all, row) => ({ orders: all.orders + row.orders, amount: all.amount + row.amount,
+      inflow: all.inflow + row.inflow }), { orders: 0, amount: 0, inflow: 0 });
+    const rows = picked.slice(0, CA_SHOW).map((row) => `<tr>
+        <td>${caPath(row)}</td>
+        <td class="perf-num"><b>${num(row.orders)}</b></td>
+        <td class="perf-num">${won(row.amount)}</td>
+        <td class="perf-num">${num(row.inflow)}</td>
+        <td class="perf-num">${rate(row.orders, row.inflow)}</td>
+      </tr>`).join('');
+    const more = picked.length > CA_SHOW ? ` · 구매 많은 ${num(CA_SHOW)}줄만 표에` : '';
+    return `<p class="perf-note cafe24-utm-sum">${caAd || caContent.trim() ? '거른 결과' : '기간 전체'}
+        <b>구매 ${num(sum.orders)}건</b> · 매출 ${won(sum.amount)} · 유입 ${num(sum.inflow)}
+        <small>(${num(picked.length)}줄${more})</small></p>
+      <div class="tool-table-wrap"><table class="tool-table cafe24-table">
+        <thead><tr><th>유입 경로 <small>채널 → 세부항목 → 키워드</small></th>
+          <th class="perf-num">구매건수</th><th class="perf-num">매출액</th><th class="perf-num">유입수</th>
+          <th class="perf-num">구매전환율</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" class="tool-blank">걸린 줄이 없습니다.</td></tr>'}</tbody>
+      </table></div>`;
+  };
+
+  const caTable = () => {
+    const ca = found && found.ca;
+    if (!ca) return '';
+    if (!ca.loaded) {
+      return `<p class="perf-warn">애널리틱스 30일 기여 숫자가 아직 안 쌓였습니다 — PC 에서 <code>py get_cafe24_utm.py --push</code> 를 돌려 주세요.</p>`;
+    }
+    const all = caMerged();
+    const chans = {};
+    all.forEach((row) => { if (row.channel) chans[row.channel] = (chans[row.channel] || 0) + row.orders; });
+    const chanList = Object.keys(chans).sort((a, b) => chans[b] - chans[a]);
+    if (caAd && !chanList.includes(caAd)) caAd = '';
+    const contents = [...new Set(all.map((row) => row.content).filter(Boolean))].slice(0, 500);
+    const outside = ca.dataSince && (since < ca.dataSince || until > ca.dataUntil)
+      ? ` · 쌓인 날짜는 ${escapeHtml(ca.dataSince)} ~ ${escapeHtml(ca.dataUntil)}` : '';
+    return `<div class="tool-card">
+      <div class="tool-list-head"><h3>애널리틱스 기준 · 기여기간 30일
+        <small>상품과 상관없이 기간 전체${outside}</small></h3></div>
+      <div class="perf-filter cafe24-utm-filter">
+        <label class="cafe24-date">채널
+          <select data-cafe="ca-ad">
+            <option value="">전체</option>
+            ${chanList.map((name) => `<option value="${escapeHtml(name)}"${name === caAd ? ' selected' : ''}>
+              ${escapeHtml(name)} (${num(chans[name])})</option>`).join('')}
+          </select></label>
+        <label class="cafe24-date">세부항목
+          <input type="search" data-cafe="ca-content" list="cafe24-ca-contents" value="${escapeHtml(caContent)}"
+            placeholder="세부항목 일부 (예: 소재 이름)" autocomplete="off"></label>
+        <datalist id="cafe24-ca-contents">${contents.map((one) => `<option value="${escapeHtml(one)}">`).join('')}</datalist>
+        ${caAd || caContent ? '<button type="button" class="perf-chip" data-cafe="ca-clear">거르기 풀기</button>' : ''}
+      </div>
+      <div data-cafe="ca-body">${caBody()}</div>
+      <p class="perf-note">카페24 애널리틱스 '광고 유입 상세 분석'(기여기간 30일)과 같은 숫자입니다. 유입수는 날짜별 값을 더한 것이라
+        화면의 '조회 기간 전체' 보다 조금 많을 수 있습니다.
+        ${ca.lastRun ? `마지막 적재 <b>${escapeHtml(String(ca.lastRun).slice(0, 16).replace('T', ' '))}</b>` : ''}</p>
+    </div>`;
+  };
+
   // 날짜별 — 막대로 한눈에 보고, 옆에 숫자를 적는다
   const dayTable = () => {
     const rows = (found && found.days) || [];
@@ -12338,6 +12432,7 @@ if (cafe24Result) {
       ${productTable()}
       ${ordersCard()}
       ${utmTable()}
+      ${caTable()}
       ${dayTable()}`;
   };
 
@@ -12395,6 +12490,11 @@ if (cafe24Result) {
       utmContent = event.target.value;
       utmRedraw();
     }
+    if (event.target.matches('[data-cafe="ca-content"]')) {
+      caContent = event.target.value;
+      const body = cafe24Result.querySelector('[data-cafe="ca-body"]');
+      if (body) body.innerHTML = caBody();
+    }
   });
 
   // 주문별 목록을 펼치고 접은 것을 기억한다
@@ -12404,6 +12504,7 @@ if (cafe24Result) {
 
   cafe24Result.addEventListener('change', (event) => {
     if (event.target.matches('[data-cafe="utm-ad"]')) { utmAd = event.target.value; render(); return; }
+    if (event.target.matches('[data-cafe="ca-ad"]')) { caAd = event.target.value; render(); return; }
     if (event.target.matches('[data-cafe="since"]')) { since = event.target.value || since; look(); }
     if (event.target.matches('[data-cafe="until"]')) { until = event.target.value || until; look(); }
   });
@@ -12415,6 +12516,7 @@ if (cafe24Result) {
   cafe24Result.addEventListener('click', (event) => {
     if (event.target.closest('[data-cafe="go"]')) { look(); return; }
     if (event.target.closest('[data-cafe="utm-clear"]')) { utmAd = ''; utmContent = ''; render(); return; }
+    if (event.target.closest('[data-cafe="ca-clear"]')) { caAd = ''; caContent = ''; render(); return; }
     const range = event.target.closest('[data-cafe="range"]');
     if (range) {
       const picked = RANGES.find(([key]) => key === range.dataset.range);
