@@ -4578,8 +4578,65 @@ if (weeklyWrite) {
     }
   });
 
+  // 엑셀 · 구글시트에서 복사한 칸 → | 표 줄. 표가 아니면 null.
+  // 엑셀은 칸을 복사하면 그림(PNG)도 함께 실어 보낸다. 그래서 그림보다 먼저 봐야 표로 들어간다.
+  // HTML 쪽을 먼저 읽는다 — 칸 안 줄바꿈 · 병합이 글자(탭) 쪽보다 덜 깨진다.
+  const clipTable = (clip) => {
+    if (!clip) return null;
+    let rows = [];
+    const html = String(clip.getData('text/html') || '');
+    if (/<table/i.test(html)) {
+      const page = new DOMParser().parseFromString(html, 'text/html');
+      const table = page.querySelector('table');
+      if (table) {
+        rows = [...table.querySelectorAll('tr')].map((tr) => {
+          const line = [];
+          [...tr.querySelectorAll('td, th')].forEach((td) => {
+            line.push(td.textContent);
+            const span = Number(td.getAttribute('colspan')) || 1;
+            for (let i = 1; i < span; i += 1) line.push('');
+          });
+          return line;
+        });
+      }
+    }
+    if (!rows.length) {
+      const text = String(clip.getData('text/plain') || '').replace(/\r?\n$/, '');
+      if (text.indexOf('\t') < 0) return null;
+      rows = text.split(/\r?\n/).map((line) => line.split('\t'));
+    }
+    // 칸 안 줄바꿈은 띄어쓰기로, | 는 표를 깨므로 비슷한 글자로 바꾼다
+    rows = rows.map((line) => line.map((one) => String(one || '').replace(/\s+/g, ' ').trim().replace(/\|/g, '¦')));
+    while (rows.length && rows[rows.length - 1].every((one) => !one)) rows.pop();
+    const wide = rows.reduce((most, line) => {
+      let end = line.length;
+      while (end && !line[end - 1]) end -= 1;
+      return Math.max(most, end);
+    }, 0);
+    if (wide < 2 || !rows.length) return null;   // 한 줄 한 칸 · 한 열이면 그냥 글로 넣는다
+    const fit = rows.map((line) => {
+      const out = line.slice(0, wide);
+      while (out.length < wide) out.push('');
+      return `| ${out.map((one) => one || ' ').join(' | ')} |`;
+    });
+    fit.splice(1, 0, `|${' --- |'.repeat(wide)}`);   // 첫 줄을 머리글로
+    return fit.join('\n');
+  };
+
+  // 표 붙여넣기 — 그림 붙여넣기보다 먼저 본다 (아래 그림 쪽은 defaultPrevented 면 건너뛴다)
+  weeklyWrite.addEventListener('paste', (event) => {
+    if (!event.target.closest('.wk-text, .wk-live')) return;
+    const table = clipTable(event.clipboardData);
+    if (!table) return;
+    event.preventDefault();
+    if (event.target.closest('.wk-live')) putBlock(draw(table, true));
+    else putIn(table);
+    flashNote('표로 넣었습니다');
+  });
+
   // 붙여넣기는 글자만 받는다 (남의 서식이 그대로 들어와 어지러워지지 않게)
   weeklyWrite.addEventListener('paste', (event) => {
+    if (event.defaultPrevented) return;
     if (!event.target.closest('.wk-live')) return;
     const clip = event.clipboardData;
     const items = [...((clip && clip.items) || [])];
@@ -4739,6 +4796,7 @@ if (weeklyWrite) {
   });
 
   weeklyWrite.addEventListener('paste', (event) => {
+    if (event.defaultPrevented) return;          // 표로 이미 넣었다
     if (!event.target.closest('.wk-text, .wk-live')) return;
     const items = [...((event.clipboardData && event.clipboardData.items) || [])];
     const shot = items.find((one) => one.kind === 'file' && String(one.type).indexOf('image/') === 0);
