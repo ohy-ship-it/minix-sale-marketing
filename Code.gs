@@ -5398,6 +5398,54 @@ function kakaoCreative_(payload) {
     form.profileImageFile = kakaoProfileBlob_(payload.profileImageUrl);
   }
 
+  /* 같은 소재의 다른 사이즈(파일명(세로) 같은 것) — 디스플레이만 받는다.
+     모먼트 화면은 한 소재에 1200x600 · 500x500 처럼 사이즈를 여러 장 넣는다.
+     API 문서의 imageFile 도 사이즈를 여럿 적어 두었으니 **같은 칸 이름으로 여러 번** 붙여 보낸다.
+     UrlFetchApp 의 payload 는 같은 이름을 두 번 못 담아 multipart 를 손으로 짠다.
+     카카오가 거절하면 예전처럼 한 장씩 따로 만든다 (만든 것이 날아가지 않게). */
+  var extras = format === 'IMAGE_NATIVE' && Array.isArray(payload.extras)
+    ? payload.extras.filter(function (one) { return one && one.image; }) : [];
+  if (extras.length) {
+    var fields = [];
+    Object.keys(form).forEach(function (key) {
+      if (key !== 'imageFile') fields.push([key, form[key]]);
+    });
+    fields.push(['imageFile', blob]);
+    extras.forEach(function (one) {
+      var extraName = String(one.fileName || 'creative.jpg');
+      fields.push(['imageFile', Utilities.newBlob(Utilities.base64Decode(String(one.image)),
+        /\.png$/i.test(extraName) ? 'image/png' : 'image/jpeg', extraName)]);
+    });
+    try {
+      var together = kakaoAnswer_(kakaoMultipart_(fields, account),
+        'POST /creatives (' + name + ' · ' + (extras.length + 1) + '장)');
+      return { ok: true, source: 'kakao', creative: kakaoNewId_(together), name: name,
+        images: extras.length + 1 };
+    } catch (error) {
+      var why = String((error && error.message) || error);
+      if (!/HTTP 400/.test(why)) throw error;
+      // 한 장씩 따로 만든다. 다른 사이즈는 이름 뒤에 파일명의 (세로) 같은 꼬리를 붙인다.
+      var ids = [kakaoCreativeOne_(form, account, name)];
+      extras.forEach(function (one, at) {
+        var extraName = String(one.fileName || '');
+        var tail = (extraName.match(/\([^)]*\)/) || [])[0] || ' ' + (at + 2);
+        var copy = {};
+        Object.keys(form).forEach(function (key) { copy[key] = form[key]; });
+        copy.name = name + tail;
+        copy.imageFile = Utilities.newBlob(Utilities.base64Decode(String(one.image)),
+          /\.png$/i.test(extraName) ? 'image/png' : 'image/jpeg', extraName || 'creative.jpg');
+        ids.push(kakaoCreativeOne_(copy, account, copy.name));
+      });
+      return { ok: true, source: 'kakao', creative: ids.join(', '), name: name,
+        images: extras.length + 1, split: true,
+        note: '한 소재에 여러 장을 넣지 못해 ' + ids.length + '개로 나눠 만들었습니다 — ' + why };
+    }
+  }
+
+  return { ok: true, source: 'kakao', creative: kakaoCreativeOne_(form, account, name), name: name };
+}
+
+function kakaoCreativeOne_(form, account, name) {
   kakaoWait_(KAKAO_WRITE_GAP, false);
   var response = UrlFetchApp.fetch(KAKAO_URL + '/creatives', {
     method: 'post',
@@ -5405,8 +5453,37 @@ function kakaoCreative_(payload) {
     muteHttpExceptions: true,
     headers: { Authorization: 'Bearer ' + kakaoToken_(), adAccountId: String(account) }
   });
-  var body = kakaoAnswer_(response, 'POST /creatives (' + name + ')');
-  return { ok: true, source: 'kakao', creative: kakaoNewId_(body), name: name };
+  return kakaoNewId_(kakaoAnswer_(response, 'POST /creatives (' + name + ')'));
+}
+
+// 같은 칸 이름을 여러 번 담는 multipart. fields = [[이름, 글자 또는 Blob], …]
+function kakaoMultipart_(fields, account) {
+  var boundary = '----minix' + Utilities.getUuid().replace(/-/g, '');
+  var bytes = [];
+  var add = function (text) { bytes = bytes.concat(Utilities.newBlob(text).getBytes()); };
+  fields.forEach(function (pair) {
+    var value = pair[1];
+    add('--' + boundary + '\r\n');
+    if (value && typeof value.getBytes === 'function') {
+      add('Content-Disposition: form-data; name="' + pair[0] + '"; filename="'
+        + String(value.getName() || 'file').replace(/"/g, '') + '"\r\n'
+        + 'Content-Type: ' + (value.getContentType() || 'application/octet-stream') + '\r\n\r\n');
+      bytes = bytes.concat(value.getBytes());
+      add('\r\n');
+    } else {
+      add('Content-Disposition: form-data; name="' + pair[0] + '"\r\n\r\n'
+        + String(value === null || value === undefined ? '' : value) + '\r\n');
+    }
+  });
+  add('--' + boundary + '--\r\n');
+  kakaoWait_(KAKAO_WRITE_GAP, false);
+  return UrlFetchApp.fetch(KAKAO_URL + '/creatives', {
+    method: 'post',
+    contentType: 'multipart/form-data; boundary=' + boundary,
+    payload: bytes,
+    muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + kakaoToken_(), adAccountId: String(account) }
+  });
 }
 
 // 프로필 이미지 주소 → 파일. 소재마다 같은 그림이라 한 번 받은 것은 이 실행 안에서 다시 쓴다.

@@ -6791,6 +6791,24 @@ if (kakaoSetup) {
   const nameOf = (pick) => (pick.row && pick.row.ad ? pick.row.ad : pick.name.replace(/\.[^.]+$/, ''));
   const urlFor = (pick) => (pick.row ? urlOf(pick.row) : '');
 
+  /* 디스플레이는 같은 이름의 파일을 **한 소재에** 묶는다 (메타와 같다).
+     benefit-562 1.jpg + benefit-562(세로) 1.jpg → 소재 하나에 두 장.
+     파일명에서 (세로) · 확장자를 떼고 같은 것끼리 묶고, (세로) 가 없는 쪽을 앞에 둔다.
+     비즈보드는 한 장짜리 상품이라 묶지 않는다. */
+  const bundleKey = (pick) => pick.name.replace(/\.[^.]+$/, '').replace(/\s*\(세로\)\s*/g, ' ')
+    .replace(/\s+/g, ' ').trim().toLowerCase();
+  const bundles = (list) => {
+    if (isBoard()) return list.map((one) => [one]);
+    const groups = new Map();
+    list.forEach((one) => {
+      const key = bundleKey(one);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(one);
+    });
+    return Array.from(groups.values()).map((group) => group.slice()
+      .sort((a, b) => Number(/\(세로\)/.test(a.name)) - Number(/\(세로\)/.test(b.name))));
+  };
+
   const readBase64 = (file) => new Promise((done, fail) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -6864,9 +6882,14 @@ if (kakaoSetup) {
     render();
 
     // 소재는 하나씩 차례로 올린다 (카카오가 1초에 한 번만 받는다)
-    for (const pick of good) {
+    for (const bundle of bundles(good)) {
+      const pick = bundle[0];
       try {
         const image = await readBase64(pick.file);
+        const extras = [];
+        for (const more of bundle.slice(1)) {
+          extras.push({ fileName: more.name, image: await readBase64(more.file) });
+        }
         const answer = await askSheet({
           action: 'kakaoCreative',
           account: state.account,
@@ -6883,13 +6906,16 @@ if (kakaoSetup) {
           actionButton: state.action,
           profileName: tr(state.profileName),
           profileImageUrl: sampleImage(),
+          extras: extras,
         });
-        work.lines.push({ bad: false, text: `${nameOf(pick)} — 올렸습니다 (소재 ${answer.creative || '?'} · 심사 대기)` });
+        const count = bundle.length > 1 ? ` · ${bundle.map((one) => one.name).join(' + ')}` : '';
+        work.lines.push({ bad: !!answer.split,
+          text: `${nameOf(pick)} — 올렸습니다 (소재 ${answer.creative || '?'}${count} · 심사 대기)${answer.note ? ` — ${answer.note}` : ''}` });
       } catch (reason) {
-        work.failed += 1;
+        work.failed += bundle.length;
         work.lines.push({ bad: true, text: `${nameOf(pick)} — 실패: ${reason.message}` });
       }
-      work.done += 1;
+      work.done += bundle.length;
       render();
     }
 
