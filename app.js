@@ -6420,6 +6420,8 @@ if (kakaoSetup) {
     campaignName: '', groupName: '',
     beginDate: '', endDate: '', budget: '', bid: '',
     placements: [], bidStrategy: '', pricingType: '',
+    // 데모그래픽 · 맞춤타겟. 비어 있으면 '전체'. targetFrom 은 어느 기준 광고그룹에서 채웠는지다
+    genders: [], ages: [], audience: {}, targetFrom: '',
     altText: '', title: '', description: '', profileName: '', action: 'PURCHASE',
   };
 
@@ -6434,6 +6436,9 @@ if (kakaoSetup) {
 
   // 게재지면이 없던 때에 저장한 값이면 배열이 아니다
   if (!Array.isArray(state.placements)) state.placements = [];
+  if (!Array.isArray(state.genders)) state.genders = [];
+  if (!Array.isArray(state.ages)) state.ages = [];
+  if (!state.audience || typeof state.audience !== 'object') state.audience = {};
 
   let accounts = [];
   let base = null;                 // 기준 광고그룹 (서버가 찾아 준다)
@@ -6609,6 +6614,54 @@ if (kakaoSetup) {
       render();
     });
 
+  /* ── 데모그래픽 · 맞춤타겟 ─────────────────────────────────────────
+     카카오가 받는 값 그대로다 (나이는 5세 단위 시작 나이, 성별은 M · F).
+     맞춤타겟은 '종류:번호' 를 열쇠로 포함(INCLUDE) · 제외(EXCLUDE) 를 담는다. */
+  const AGE_CODES = ['15', '20', '25', '30', '35', '40', '45', '50', '55', '60', '65', '70'];
+  const ageLabel = (code) => (code === '70' ? '70+' : `${code}~${Number(code) + 4}`);
+  const GENDER_LABEL = { F: '여성', M: '남성' };
+  // 화면의 종류 → 카카오 타겟팅 칸 · 번호 칸
+  const AUDIENCE_KINDS = [
+    { key: 'cohort', label: '광고반응 타겟', field: 'cohortTargetings', id: 'cohortId' },
+    { key: 'customerData', label: '고객데이터', field: 'customerDataTargetings', id: 'customerDataId' },
+    { key: 'customerFile', label: '고객파일', field: 'customerFileTargetings', id: 'customerFileId' },
+    { key: 'talkChannel', label: '카카오톡 채널', field: 'talkChannelTargetings', id: 'profileId' },
+  ];
+
+  const fillTarget = (target, groupId) => {
+    state.genders = target.genderType === 'NOT_ALL' ? (target.genders || []).slice() : [];
+    state.ages = target.ageType === 'NOT_ALL' ? (target.ages || []).map(String) : [];
+    state.audience = {};
+    AUDIENCE_KINDS.forEach((kind) => {
+      (target[kind.field] || []).forEach((one) => {
+        const id = String(one[kind.id] || (one.cohort || {}).id || one.id || '');
+        if (id) state.audience[`${kind.key}:${id}`] = one.inclusionType === 'EXCLUDE' ? 'EXCLUDE' : 'INCLUDE';
+      });
+    });
+    state.targetFrom = String(groupId || '');
+  };
+
+  // 서버로 보낼 모양 (kakaoApplyTarget_ 이 받는 그대로)
+  const targetPayload = () => {
+    const audiences = {};
+    AUDIENCE_KINDS.forEach((kind) => { audiences[kind.field] = []; });
+    Object.keys(state.audience).forEach((key) => {
+      const [kindKey, id] = key.split(':');
+      const kind = AUDIENCE_KINDS.find((one) => one.key === kindKey);
+      if (!kind || !id) return;
+      audiences[kind.field].push({ [kind.id]: id, inclusionType: state.audience[key] });
+    });
+    return { demo: { genders: state.genders.slice(), ages: state.ages.slice() }, audiences: audiences };
+  };
+
+  const targetSummary = () => {
+    const picked = Object.keys(state.audience);
+    const inc = picked.filter((key) => state.audience[key] === 'INCLUDE').length;
+    return `성별 ${state.genders.length ? state.genders.map((one) => GENDER_LABEL[one] || one).join('·') : '전체'}`
+      + ` · 나이 ${state.ages.length ? state.ages.slice().sort((a, b) => a - b).map(ageLabel).join(', ') : '전체'}`
+      + ` · 맞춤타겟 ${picked.length ? `포함 ${inc} · 제외 ${picked.length - inc}` : '없음'}`;
+  };
+
   /* 기준 광고그룹 — 사람이 고르지 않는다.
      같은 종류 × 목표로 마지막에 만든 광고그룹을 서버가 찾아, 그 설정과 본보기 소재를 준다. */
   const loadBase = (refresh) => {
@@ -6629,6 +6682,8 @@ if (kakaoSetup) {
           state.bidStrategy = group.bidStrategy || '';
           state.pricingType = group.pricingType || '';
         }
+        // 성별 · 나이 · 맞춤타겟도 기준 광고그룹 값으로 한 번 채워 둔다 (그 뒤로는 사람이 고친 값을 지킨다)
+        if (state.targetFrom !== String(group.id || '')) fillTarget(group.targeting || {}, group.id);
         if (!tr(state.budget) && group.dailyBudgetAmount) state.budget = commaNum(group.dailyBudgetAmount);
         if (!tr(state.bid) && group.bidAmount) state.bid = commaNum(group.bidAmount);
         const sample = body.sample || {};
@@ -6752,6 +6807,7 @@ if (kakaoSetup) {
         placements: state.placements.slice(),
         bidStrategy: tr(state.bidStrategy),
         pricingType: tr(state.pricingType),
+        ...targetPayload(),
       });
     } catch (reason) {
       work.running = false;
@@ -6863,6 +6919,34 @@ if (kakaoSetup) {
     </div>`;
   };
 
+  /* 데모그래픽 · 맞춤타겟 — 기준 광고그룹 값이 켜져 있다. 지역 · 관심사 · 픽셀 타겟은 기준 그대로 간다. */
+  const targetBox = () => {
+    if (!base) return '';
+    const lists = base.audiences || {};
+    const genderPills = [['전체', ''], ['여성', 'F'], ['남성', 'M']].map(([label, code]) => {
+      const on = code ? (state.genders.length === 1 && state.genders[0] === code) : state.genders.length !== 1;
+      return `<button type="button" class="setup-pill${on ? ' is-on' : ''}" data-tgender="${code}">${label}</button>`;
+    }).join('');
+    const agePills = `<button type="button" class="setup-pill${state.ages.length ? '' : ' is-on'}" data-tage="">전체</button>`
+      + AGE_CODES.map((code) => `<button type="button" class="setup-pill${state.ages.indexOf(code) >= 0 ? ' is-on' : ''}" data-tage="${code}">${ageLabel(code)}</button>`).join('');
+    const audienceRows = AUDIENCE_KINDS.map((kind) => {
+      const items = lists[kind.key] || [];
+      if (!items.length) return '';
+      return `<div class="setup-aud-kind"><small class="setup-hint">${escapeHtml(kind.label)}</small><div class="setup-pills">${items.map((one) => {
+        const key = `${kind.key}:${one.id}`;
+        const mode = state.audience[key] || '';
+        const tag = mode === 'INCLUDE' ? '<em class="setup-pill-tag">포함</em>' : (mode === 'EXCLUDE' ? '<em class="setup-pill-tag">제외</em>' : '');
+        const size = one.size ? ` · 모수 ${commaNum(one.size)}` : '';
+        return `<button type="button" class="setup-pill${mode ? ' is-on' : ''}" data-aud="${escapeHtml(key)}" title="${escapeHtml(one.status + size)}">${escapeHtml(one.name)}${tag}</button>`;
+      }).join('')}</div></div>`;
+    }).join('');
+    return `<div class="setup-field setup-choice"><span><b>성별</b></span><div class="setup-pills">${genderPills}</div></div>
+      <div class="setup-field setup-choice"><span><b>나이</b><small class="setup-hint">여러 칸을 고를 수 있습니다 · 아무것도 안 고르면 전체</small></span><div class="setup-pills">${agePills}</div></div>
+      <div class="setup-field setup-choice"><span><b>맞춤타겟</b><small class="setup-hint">누를 때마다 포함 → 제외 → 안 씀 · 지역 · 관심사 · 픽셀 타겟은 기준 광고그룹 그대로 갑니다</small></span>
+        ${audienceRows || '<p class="tool-empty">이 계정에서 고를 수 있는 맞춤타겟이 없습니다.</p>'}</div>
+      <p class="setup-note">${escapeHtml(targetSummary())}</p>`;
+  };
+
   const sheetTable = () => {
     if (lookup.state === 'loading') return '<p class="tool-empty">시트를 읽는 중…</p>';
     if (lookup.state === 'error') return `<p class="setup-alert">${escapeHtml(lookup.message)}</p>`;
@@ -6923,7 +7007,7 @@ if (kakaoSetup) {
         <h2>카카오 광고 세팅</h2>
         <p>행사명을 적으면 시트에서 <b>캠페인명 · 광고그룹명 · 랜딩 URL</b> 을 가져옵니다.
         이미 있는 광고그룹 하나를 <b>틀</b>로 골라 타겟팅 · 요일시간표를 그대로 본뜨고,
-        <b>게재지면 · 입찰형태</b>는 아래에서 직접 고릅니다 (기준 광고그룹의 값이 미리 켜져 있습니다).
+        <b>게재지면 · 입찰형태 · 성별 · 나이 · 맞춤타겟</b>은 아래에서 직접 고릅니다 (기준 광고그룹의 값이 미리 켜져 있습니다).
         소재 파일까지 고른 뒤 <b>만들기</b> 한 번으로 카카오모먼트에 올립니다.
         만든 광고그룹은 <b>꺼진 상태(OFF)</b> 로 두고, 소재는 <b>카카오 심사</b>를 거쳐야 노출됩니다.</p>
       </div>
@@ -6961,6 +7045,7 @@ if (kakaoSetup) {
         ${baseBox()}
         ${placementBox()}
         ${bidBox()}
+        ${targetBox()}
         <div class="tool-grid setup-grid">
           ${textField('campaignName', '캠페인명', { required: true, hint: '시트에서 가져옵니다 · 같은 이름이 있으면 그 캠페인을 씁니다', placeholder: '시트 조회 후 자동 입력', wide: true })}
           ${textField('groupName', '광고그룹명', { required: true, hint: '시트에서 가져옵니다', placeholder: '시트 조회 후 자동 입력', wide: true })}
@@ -7050,6 +7135,36 @@ if (kakaoSetup) {
     const drop = event.target.closest('[data-drop]');
     const placement = event.target.closest('[data-placement]');
     const bid = event.target.closest('[data-bid]');
+    const tGender = event.target.closest('[data-tgender]');
+    const tAge = event.target.closest('[data-tage]');
+    const aud = event.target.closest('[data-aud]');
+
+    // 성별은 하나만 (전체 · 여성 · 남성)
+    if (tGender) {
+      state.genders = tGender.dataset.tgender ? [tGender.dataset.tgender] : [];
+      save();
+      return render();
+    }
+    // 나이는 여러 칸을 켰다 껐다 한다. '전체' 는 모두 끈다
+    if (tAge) {
+      const code = tAge.dataset.tage;
+      if (!code) state.ages = [];
+      else if (state.ages.indexOf(code) >= 0) state.ages = state.ages.filter((one) => one !== code);
+      else state.ages = state.ages.concat(code);
+      if (state.ages.length === AGE_CODES.length) state.ages = [];
+      save();
+      return render();
+    }
+    // 맞춤타겟은 누를 때마다 포함 → 제외 → 안 씀
+    if (aud) {
+      const key = aud.dataset.aud;
+      const now = state.audience[key];
+      if (!now) state.audience[key] = 'INCLUDE';
+      else if (now === 'INCLUDE') state.audience[key] = 'EXCLUDE';
+      else delete state.audience[key];
+      save();
+      return render();
+    }
 
     if (drop) { picks.splice(Number(drop.dataset.drop), 1); return render(); }
 
@@ -7089,6 +7204,11 @@ if (kakaoSetup) {
         state.placements = [];
         state.bidStrategy = '';
         state.pricingType = '';
+        // 맞춤타겟은 계정마다 다르다 — 새 기준에서 다시 채운다
+        state.genders = [];
+        state.ages = [];
+        state.audience = {};
+        state.targetFrom = '';
       }
       save();
       render();
@@ -7103,7 +7223,7 @@ if (kakaoSetup) {
     if (event.target.closest('.setup-make')) {
       if (work && work.running) return undefined;
       const list = problems();
-      if (!list.length && !window.confirm(`카카오모먼트에 실제로 만듭니다.\n\n광고그룹: ${tr(state.groupName)}\n게재지면: ${state.placements.map(placementLabel).join(' · ')}\n입찰형태: ${bidLabel({ bidStrategy: state.bidStrategy, pricingType: state.pricingType })}\n소재: ${picks.filter((one) => !sizeBad(one) && urlFor(one)).length}개\n\n진행할까요?`)) return undefined;
+      if (!list.length && !window.confirm(`카카오모먼트에 실제로 만듭니다.\n\n광고그룹: ${tr(state.groupName)}\n게재지면: ${state.placements.map(placementLabel).join(' · ')}\n입찰형태: ${bidLabel({ bidStrategy: state.bidStrategy, pricingType: state.pricingType })}\n타겟: ${targetSummary()}\n소재: ${picks.filter((one) => !sizeBad(one) && urlFor(one)).length}개\n\n진행할까요?`)) return undefined;
       work = null;
       return makeAll();
     }

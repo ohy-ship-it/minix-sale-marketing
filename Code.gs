@@ -5076,6 +5076,78 @@ function kakaoChoices_(account, kind) {
   return { placements: placements, deviceTypes: devices, bids: bids };
 }
 
+/* 이 계정에서 고를 수 있는 맞춤타겟 목록 (화면의 맞춤타겟 고르개가 쓴다).
+   광고반응 · 고객데이터 · 고객파일 · 카카오톡 채널 네 가지를 한꺼번에 묻는다.
+   픽셀&SDK 는 픽셀마다 따로 물어야 해서 여기서는 묻지 않는다 — 기준 광고그룹 값을 그대로 쓴다.
+   하나를 못 받아도 나머지는 그대로 준다 (빈 목록으로 둔다). */
+var KAKAO_AUDIENCE_PATHS = {
+  cohort: '/adGroups/targetings/cohort/availables',
+  customerData: '/adGroups/targetings/customerData/availables',
+  customerFile: '/adGroups/targetings/customerFiles/availables',
+  talkChannel: '/adGroups/targetings/talkChannels/availables'
+};
+
+function kakaoAudiences_(account) {
+  var out = { cohort: [], customerData: [], customerFile: [], talkChannel: [] };
+  var got = {};
+  try {
+    got = kakaoMany_(Object.keys(KAKAO_AUDIENCE_PATHS).map(function (key) {
+      return { key: key, path: KAKAO_AUDIENCE_PATHS[key] };
+    }), account);
+  } catch (error) { return out; }
+  Object.keys(out).forEach(function (key) {
+    out[key] = kakaoList_(got[key]).map(function (one) {
+      return {
+        id: String(one.id),
+        name: String(one.name || one.searchId || one.id),
+        status: String(one.status || ''),
+        size: one.populationScore === undefined ? '' : String(one.populationScore),
+        kind: String(one.audienceType || '')
+      };
+    });
+  });
+  return out;
+}
+
+// 데모그래픽 · 맞춤타겟에 받아 주는 값 (카카오 문서 그대로)
+var KAKAO_AGES = ['15', '20', '25', '30', '35', '40', '45', '50', '55', '60', '65', '70'];
+var KAKAO_AUDIENCE_FIELDS = {
+  cohortTargetings: 'cohortId',
+  customerDataTargetings: 'customerDataId',
+  customerFileTargetings: 'customerFileId',
+  talkChannelTargetings: 'profileId'
+};
+
+/* 화면에서 고른 데모그래픽 · 맞춤타겟을 기준 광고그룹의 타겟팅 위에 덮는다.
+   payload.demo 를 안 보내면(옛 화면) 기준 값 그대로, payload.audiences 도 마찬가지다.
+   맞춤타겟은 보낸 종류만 바꾼다 — 빈 목록을 보내면 그 종류는 빼는 것이다. */
+function kakaoApplyTarget_(targeting, payload) {
+  var demo = payload && payload.demo;
+  if (demo && typeof demo === 'object') {
+    var genders = (demo.genders || []).filter(function (one) { return one === 'M' || one === 'F'; });
+    var ages = (demo.ages || []).map(String).filter(function (one) { return KAKAO_AGES.indexOf(one) >= 0; });
+    // 둘 다 고르면 전체와 같다. 하나도 안 고른 것도 전체로 본다.
+    if (genders.length && genders.length < 2) { targeting.genderType = 'NOT_ALL'; targeting.genders = genders; }
+    else { targeting.genderType = 'ALL'; delete targeting.genders; }
+    if (ages.length && ages.length < KAKAO_AGES.length) { targeting.ageType = 'NOT_ALL'; targeting.ages = ages; }
+    else { targeting.ageType = 'ALL'; delete targeting.ages; }
+  }
+  var picked = payload && payload.audiences;
+  if (picked && typeof picked === 'object') {
+    Object.keys(KAKAO_AUDIENCE_FIELDS).forEach(function (field) {
+      if (!Array.isArray(picked[field])) return;
+      var idKey = KAKAO_AUDIENCE_FIELDS[field];
+      targeting[field] = picked[field].map(function (one) {
+        var row = { inclusionType: one && one.inclusionType === 'EXCLUDE' ? 'EXCLUDE' : 'INCLUDE' };
+        var id = String((one && one[idKey]) || '').trim();
+        row[idKey] = idKey === 'profileId' ? id : Number(id);
+        return row;
+      }).filter(function (row) { return !!row[idKey]; });
+    });
+  }
+  return targeting;
+}
+
 /* 화면에 보여 줄 기준값 — 무엇을 본떠 만들지 한 줄로 알려 주고,
    음성 안내(altText) · 프로필 이름 · 행동 버튼처럼 적기 번거로운 값을 미리 채워 준다. */
 function kakaoDefaults_(payload) {
@@ -5097,6 +5169,7 @@ function kakaoDefaults_(payload) {
 
   return { ok: true, source: 'kakao', account: account,
     campaign: base.campaign, group: base.group, sample: sample, choices: choices,
+    audiences: kakaoAudiences_(account),
     basedOn: { campaign: base.campaignName, group: base.groupName, matchedGoal: base.matchedGoal } };
 }
 
@@ -5164,6 +5237,8 @@ function kakaoMake_(payload) {
     if (from.targeting[key] === null) return;
     targeting[key] = from.targeting[key];
   });
+  // 화면에서 고른 성별 · 나이 · 맞춤타겟을 덮는다 (안 보냈으면 기준 그대로)
+  kakaoApplyTarget_(targeting, payload);
 
   var schedule = { beginDate: beginDate };
   if (endDate) schedule.endDate = endDate;
@@ -5179,11 +5254,23 @@ function kakaoMake_(payload) {
   var useStrategy = bidStrategy || from.bidStrategy;
   var usePricing = pricingType || from.pricingType;
 
+  /* 디바이스는 **늘 목록으로 콕 집어** 보낸다 (allAvailableDeviceType: false).
+     안 보내면 카카오가 '가능한 모든 디바이스' 로 받는데, 유형 × 목표에 따라서는 그게 막혀
+     '모든 디바이스 노출을 허용(true)으로 설정할 수 없습니다' 로 400 이 난다.
+     기준 광고그룹이 '모든 디바이스' 로 돼 있어 목록이 비어 오면 유형에 맞는 기본값을 쓴다
+     (비즈보드는 카카오톡 안이라 모바일만). */
+  var useDevices = (from.deviceTypes || []).filter(function (one) { return !!one; });
+  if (!useDevices.length) {
+    useDevices = String(payload.kind || 'bizboard') === 'display'
+      ? ['ANDROID', 'IOS', 'PC'] : ['ANDROID', 'IOS'];
+  }
+
   var groupBody = {
     campaign: { id: Number(campaignId) },
     name: groupName,
     placements: usePlacements,
-    deviceTypes: from.deviceTypes,
+    allAvailableDeviceType: false,
+    deviceTypes: useDevices,
     targeting: targeting,
     pricingType: usePricing,
     bidStrategy: useStrategy,
@@ -5196,8 +5283,17 @@ function kakaoMake_(payload) {
   if (!groupId) throw new Error('광고그룹을 만들었는데 번호를 못 받았습니다.');
   log.push('광고그룹을 만들었습니다 (' + groupId + ') — 게재지면 '
     + usePlacements.join(' · ') + (placements.length ? ' (고른 값)' : ' (기준 그대로)')
+    + ' / 디바이스 ' + useDevices.join(' · ')
     + ' / 입찰 ' + useStrategy + ' ' + usePricing
     + (bidStrategy || pricingType ? ' (고른 값)' : ' (기준 그대로)'));
+  var audienceCount = 0;
+  Object.keys(KAKAO_AUDIENCE_FIELDS).forEach(function (field) {
+    audienceCount += (targeting[field] || []).length;
+  });
+  log.push('타겟 — 성별 ' + (targeting.genderType === 'NOT_ALL' ? (targeting.genders || []).join('·') : '전체')
+    + ' / 나이 ' + (targeting.ageType === 'NOT_ALL' ? (targeting.ages || []).join('·') : '전체')
+    + ' / 맞춤타겟 ' + audienceCount + '개'
+    + (payload.demo || payload.audiences ? ' (고른 값)' : ' (기준 그대로)'));
 
   // ③ 바로 끈다. 심사를 통과한 뒤 사람이 켠다.
   var off = false;
@@ -5248,9 +5344,9 @@ function kakaoCreative_(payload) {
     imageFile: blob
   };
   if (format === 'IMAGE_BANNER') {
-    // 비즈보드는 랜딩을 landingInfo 로 넣는다 (계정에 있는 소재가 그 모양이다)
-    form['landingInfo.landingType'] = 'URL';
-    form['landingInfo.url'] = landing;
+    /* 비즈보드는 **모바일 랜딩 URL 하나만** 보낸다 (카카오톡 안 지면이라 PC 가 없다).
+       예전에는 landingInfo.* 도 같이 보냈는데, 카카오가 그것을 'URL 이 아닌 다른 랜딩 유형'
+       으로 읽어 '랜딩 URL 과 다른 랜딩 유형은 동시에 요청할 수 없습니다' 로 400 을 줬다. */
     form.mobileLandingUrl = landing;
   } else {
     // 반응형 랜딩은 다른 URL 과 같이 못 쓴다 — 이것 하나만 보낸다
