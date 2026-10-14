@@ -6625,8 +6625,12 @@ if (kakaoSetup) {
     { key: 'cohort', label: '광고반응 타겟', field: 'cohortTargetings', id: 'cohortId' },
     { key: 'customerData', label: '고객데이터', field: 'customerDataTargetings', id: 'customerDataId' },
     { key: 'customerFile', label: '고객파일', field: 'customerFileTargetings', id: 'customerFileId' },
-    { key: 'talkChannel', label: '카카오톡 채널', field: 'talkChannelTargetings', id: 'profileId' },
   ];
+  /* 카카오톡 채널은 고르지 않는다 — 늘 미닉스 채널을 포함으로 넣는다.
+     계정에서 미닉스 채널을 못 찾으면 보내지 않는다 (기준 광고그룹 값 그대로). */
+  const TALK_CHANNEL = { field: 'talkChannelTargetings', id: 'profileId', match: /미닉스|minix/i };
+  const minixChannel = () => (((base || {}).audiences || {}).talkChannel || [])
+    .find((one) => TALK_CHANNEL.match.test(one.name || '')) || null;
 
   const fillTarget = (target, groupId) => {
     state.genders = target.genderType === 'NOT_ALL' ? (target.genders || []).slice() : [];
@@ -6651,6 +6655,8 @@ if (kakaoSetup) {
       if (!kind || !id) return;
       audiences[kind.field].push({ [kind.id]: id, inclusionType: state.audience[key] });
     });
+    const minix = minixChannel();
+    if (minix) audiences[TALK_CHANNEL.field] = [{ [TALK_CHANNEL.id]: minix.id, inclusionType: 'INCLUDE' }];
     return { demo: { genders: state.genders.slice(), ages: state.ages.slice() }, audiences: audiences };
   };
 
@@ -6659,7 +6665,8 @@ if (kakaoSetup) {
     const inc = picked.filter((key) => state.audience[key] === 'INCLUDE').length;
     return `성별 ${state.genders.length ? state.genders.map((one) => GENDER_LABEL[one] || one).join('·') : '전체'}`
       + ` · 나이 ${state.ages.length ? state.ages.slice().sort((a, b) => a - b).map(ageLabel).join(', ') : '전체'}`
-      + ` · 맞춤타겟 ${picked.length ? `포함 ${inc} · 제외 ${picked.length - inc}` : '없음'}`;
+      + ` · 맞춤타겟 ${picked.length ? `포함 ${inc} · 제외 ${picked.length - inc}` : '없음'}`
+      + ` · 카카오톡 채널 ${minixChannel() ? '미닉스' : '기준 그대로'}`;
   };
 
   /* 기준 광고그룹 — 사람이 고르지 않는다.
@@ -6942,7 +6949,7 @@ if (kakaoSetup) {
     }).join('');
     return `<div class="setup-field setup-choice"><span><b>성별</b></span><div class="setup-pills">${genderPills}</div></div>
       <div class="setup-field setup-choice"><span><b>나이</b><small class="setup-hint">여러 칸을 고를 수 있습니다 · 아무것도 안 고르면 전체</small></span><div class="setup-pills">${agePills}</div></div>
-      <div class="setup-field setup-choice"><span><b>맞춤타겟</b><small class="setup-hint">누를 때마다 포함 → 제외 → 안 씀 · 지역 · 관심사 · 픽셀 타겟은 기준 광고그룹 그대로 갑니다</small></span>
+      <div class="setup-field setup-choice"><span><b>맞춤타겟</b><small class="setup-hint">누를 때마다 포함 → 제외 → 안 씀 · 카카오톡 채널은 늘 미닉스 · 지역 · 관심사 · 픽셀 타겟은 기준 광고그룹 그대로 갑니다</small></span>
         ${audienceRows || '<p class="tool-empty">이 계정에서 고를 수 있는 맞춤타겟이 없습니다.</p>'}</div>
       <p class="setup-note">${escapeHtml(targetSummary())}</p>`;
   };
