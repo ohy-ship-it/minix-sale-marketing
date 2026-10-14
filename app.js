@@ -6791,8 +6791,9 @@ if (kakaoSetup) {
   const nameOf = (pick) => (pick.row && pick.row.ad ? pick.row.ad : pick.name.replace(/\.[^.]+$/, ''));
   const urlFor = (pick) => (pick.row ? urlOf(pick.row) : '');
 
-  /* 디스플레이는 같은 이름의 파일을 **한 소재에** 묶는다 (메타와 같다).
-     benefit-562 1.jpg + benefit-562(세로) 1.jpg → 소재 하나에 두 장.
+  /* 디스플레이는 같은 이름의 파일을 한 번에 보낸다 — 서버가 소재를 장마다 따로 만든다
+     (카카오 API 는 소재 하나에 홍보 이미지 한 장만 받는다).
+     benefit-562 1.jpg + benefit-562(세로) 1.jpg → 소재 둘 (세로 쪽 이름에 (세로) 가 붙는다).
      파일명에서 (세로) · 확장자를 떼고 같은 것끼리 묶고, (세로) 가 없는 쪽을 앞에 둔다.
      비즈보드는 한 장짜리 상품이라 묶지 않는다. */
   const bundleKey = (pick) => pick.name.replace(/\.[^.]+$/, '').replace(/\s*\(세로\)\s*/g, ' ')
@@ -6909,7 +6910,7 @@ if (kakaoSetup) {
           extras: extras,
         });
         const count = bundle.length > 1 ? ` · ${bundle.map((one) => one.name).join(' + ')}` : '';
-        work.lines.push({ bad: !!answer.split,
+        work.lines.push({ bad: !!answer.note,
           text: `${nameOf(pick)} — 올렸습니다 (소재 ${answer.creative || '?'}${count} · 심사 대기)${answer.note ? ` — ${answer.note}` : ''}` });
       } catch (reason) {
         work.failed += bundle.length;
