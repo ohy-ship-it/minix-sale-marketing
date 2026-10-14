@@ -5148,6 +5148,41 @@ function kakaoApplyTarget_(targeting, payload) {
   return targeting;
 }
 
+/* 지역 — '국내 전체(ALL)' 라도 시/도 코드(A, B …)를 **전부** 담고 알 수 없음(U)도 넣어야 한다
+   (해외 Z 는 뺀다). 기준 광고그룹을 읽으면 ALL 일 때 locations 가 비어 오는 일이 있어,
+   그대로 보내면 '국내전체(ALL) 선택 시 locations 전체 코드값 … 포함해야 합니다' 로 400 이 난다.
+   시/도 목록은 카카오에 묻고(/targetings/location/depth1), 못 받으면 아래 표를 쓴다.
+   지역을 골라 둔(AREA) 기준이면 손대지 않는다. */
+var KAKAO_DEPTH1_FALLBACK = [
+  ['A', '강원특별자치도'], ['B', '경기도'], ['C', '경상남도'], ['D', '경상북도'], ['E', '광주광역시'],
+  ['F', '대구광역시'], ['G', '대전광역시'], ['H', '부산광역시'], ['I', '서울특별시'], ['J', '울산광역시'],
+  ['K', '인천광역시'], ['L', '전라남도'], ['M', '전북특별자치도'], ['N', '제주특별자치도'], ['O', '충청남도'],
+  ['P', '충청북도'], ['Q', '세종특별자치시']
+];
+
+function kakaoFillLocations_(targeting, account) {
+  if (String(targeting.locationType || 'ALL') !== 'ALL') return targeting;
+  var list = [];
+  try {
+    list = kakaoList_(kakao_('/targetings/location/depth1', {}, account, 0)).map(function (one) {
+      return { value: String(one.value), description: String(one.description || one.depth1Name || one.value),
+        depth1Name: String(one.depth1Name || one.description || one.value) };
+    });
+  } catch (error) { list = []; }
+  if (!list.length) {
+    list = KAKAO_DEPTH1_FALLBACK.map(function (one) {
+      return { value: one[0], description: one[1], depth1Name: one[1] };
+    });
+  }
+  list = list.filter(function (one) { return one.value && one.value !== 'Z'; });
+  if (!list.some(function (one) { return one.value === 'U'; })) {
+    list.push({ value: 'U', description: '알 수 없음', depth1Name: '알 수 없음' });
+  }
+  targeting.locationType = 'ALL';
+  targeting.locations = list;
+  return targeting;
+}
+
 /* 화면에 보여 줄 기준값 — 무엇을 본떠 만들지 한 줄로 알려 주고,
    음성 안내(altText) · 프로필 이름 · 행동 버튼처럼 적기 번거로운 값을 미리 채워 준다. */
 function kakaoDefaults_(payload) {
@@ -5239,6 +5274,7 @@ function kakaoMake_(payload) {
   });
   // 화면에서 고른 성별 · 나이 · 맞춤타겟을 덮는다 (안 보냈으면 기준 그대로)
   kakaoApplyTarget_(targeting, payload);
+  kakaoFillLocations_(targeting, account);
 
   var schedule = { beginDate: beginDate };
   if (endDate) schedule.endDate = endDate;
