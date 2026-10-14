@@ -6449,6 +6449,8 @@ if (kakaoSetup) {
   let picks = [];                // 고른 소재 파일 [{ file, name, size, width, height, row, bad }]
   let work = null;               // { running, done, total, lines: [], failed }
   let attempted = false;
+  // 캠페인명 고르개 — 고른 계정 × 종류에서 켜져 있는 캠페인. key 는 그 목록이 어느 계정 · 종류 것인지다.
+  let campaigns = { state: 'idle', list: [], key: '', message: '', open: false };
 
   // 시트의 목적(purchase · traffic …) 을 카카오 목표로 옮긴다.
   // 카카오가 API 로 만들 수 있는 목표는 방문 · 전환뿐이라 둘로만 나눈다.
@@ -6461,6 +6463,41 @@ if (kakaoSetup) {
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const saveHistory = () => localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
   const isBoard = () => state.kind === 'bizboard';
+
+  /* 켜져 있는 캠페인 목록 — 메타 자동세팅의 캠페인 고르개와 같다.
+     손으로 적으면 도는 캠페인과 한 글자가 달라 같은 캠페인이 하나 더 생긴다.
+     서버(kakaoMake_)는 같은 이름의 캠페인이 있으면 그것을 쓰므로, 여기서 고르면 그 캠페인에 붙는다.
+     종류가 다른 캠페인 밑에는 광고그룹을 못 만드니 고른 종류(비즈보드 · 디스플레이)만 보여 준다. */
+  const KAKAO_TYPE = { bizboard: 'TALK_BIZ_BOARD', display: 'DISPLAY' };
+  const campaignKey = () => `${state.account}|${state.kind}`;
+  const loadCampaigns = async (refresh) => {
+    if (!state.account) {
+      campaigns = { state: 'error', list: [], key: '', message: '광고 계정을 먼저 고르세요.', open: true };
+      return render();
+    }
+    const key = campaignKey();
+    if (!refresh && campaigns.state === 'done' && campaigns.key === key) {
+      campaigns.open = true;
+      return render();
+    }
+    campaigns = { state: 'loading', list: [], key: key, message: '', open: true };
+    render();
+    try {
+      const body = await askSheet({ action: 'kakaoTree', account: state.account, refresh: !!refresh });
+      if (campaignKey() !== key) return undefined;   // 기다리는 사이에 계정 · 종류를 바꿨다
+      const want = KAKAO_TYPE[state.kind] || 'TALK_BIZ_BOARD';
+      const list = (body.campaigns || [])
+        .filter((one) => one.config === 'ON' && one.type === want)
+        .sort((a, b) => Number(b.id) - Number(a.id));
+      campaigns = { state: 'done', list: list, key: key, open: true,
+        message: list.length ? '' : `이 계정에 켜져 있는 ${KIND_MEDIA[state.kind]} 캠페인이 없습니다.` };
+    } catch (error) {
+      if (campaignKey() !== key) return undefined;
+      campaigns = { state: 'error', list: [], key: key, open: true,
+        message: `캠페인을 못 읽었습니다 — ${error.message}` };
+    }
+    return render();
+  };
 
   // ── 시트 ─────────────────────────────────────────────────────────
   const parseCsv = (text) => {
@@ -6875,6 +6912,40 @@ if (kakaoSetup) {
       <input type="text" data-field="${field}" value="${escapeHtml(state[field])}" placeholder="${escapeHtml(placeholder)}">
     </label>`;
 
+  // 캠페인명 고르개 — 적어 둔 글자가 있으면 그것으로 목록을 좁힌다 (맞는 것이 없으면 다 보여 준다)
+  const campaignPicks = () => {
+    if (campaigns.key !== campaignKey()) return [];
+    const typed = tr(state.campaignName).toLowerCase();
+    if (!typed) return campaigns.list;
+    if (campaigns.list.some((one) => tr(one.name).toLowerCase() === typed)) return campaigns.list;
+    const near = campaigns.list.filter((one) => tr(one.name).toLowerCase().indexOf(typed) >= 0);
+    return near.length ? near : campaigns.list;
+  };
+
+  const comboInner = () => {
+    if (campaigns.state === 'loading') return '<p class="setup-combo-empty">켜져 있는 캠페인을 읽는 중…</p>';
+    if (campaigns.state === 'error') return `<p class="setup-combo-empty is-warn">${escapeHtml(campaigns.message)}</p>`;
+    const list = campaignPicks();
+    const narrowed = list.length < campaigns.list.length;
+    return `<div class="setup-combo-head">
+        <b>켜져 있는 ${escapeHtml(KIND_MEDIA[state.kind])} 캠페인 ${campaigns.list.length}개${narrowed ? ` · 적은 글자에 맞는 것 ${list.length}개` : ''}</b>
+        <button type="button" class="setup-combo-refresh">다시 읽기</button>
+      </div>
+      ${list.length
+        ? `<ul class="setup-combo-items">${list.map((one) => `<li><button type="button" data-campaign="${escapeHtml(one.name)}"${tr(one.name) === tr(state.campaignName) ? ' class="is-on"' : ''}><b>${escapeHtml(one.name)}</b><small>${escapeHtml(GOAL_LABEL[one.goal] || one.goal || '')}</small></button></li>`).join('')}</ul>`
+        : `<p class="setup-combo-empty">${escapeHtml(campaigns.message || '켜져 있는 캠페인이 없습니다.')}</p>`}`;
+  };
+
+  const campaignField = () => `
+    <div class="setup-field tool-wide setup-combo">
+      <span class="setup-req">캠페인명<small class="setup-hint">시트 조회 시 자동 입력 · 화살표를 누르면 계정에서 켜져 있는 캠페인을 가져옵니다 · 같은 이름이 있으면 그 캠페인에 붙습니다</small></span>
+      <div class="setup-combo-row">
+        <input type="text" data-field="campaignName" value="${escapeHtml(state.campaignName)}" placeholder="시트 조회 후 자동 입력 또는 직접 입력">
+        <button type="button" class="setup-combo-toggle${campaigns.open ? ' is-open' : ''}" title="켜져 있는 캠페인 고르기"><i data-lucide="chevron-${campaigns.open ? 'up' : 'down'}"></i></button>
+      </div>
+      ${campaigns.open ? `<div class="setup-combo-list">${comboInner()}</div>` : ''}
+    </div>`;
+
   // 무엇을 본떠 만드는지 한 줄로 보여 준다 (고르는 칸이 아니라 알림이다)
   const baseBox = () => {
     if (baseState.state === 'loading') return '<p class="tool-empty">기준 광고그룹을 찾는 중… (처음 한 번은 10초쯤 걸립니다)</p>';
@@ -7054,7 +7125,7 @@ if (kakaoSetup) {
         ${bidBox()}
         ${targetBox()}
         <div class="tool-grid setup-grid">
-          ${textField('campaignName', '캠페인명', { required: true, hint: '시트에서 가져옵니다 · 같은 이름이 있으면 그 캠페인을 씁니다', placeholder: '시트 조회 후 자동 입력', wide: true })}
+          ${campaignField()}
           ${textField('groupName', '광고그룹명', { required: true, hint: '시트에서 가져옵니다', placeholder: '시트 조회 후 자동 입력', wide: true })}
         </div>
         <div class="tool-grid setup-grid">
@@ -7122,6 +7193,11 @@ if (kakaoSetup) {
       field.value = raw ? commaNum(parseInt(raw, 10)) : '';
     }
     state[field.dataset.field] = field.value;
+    // 캠페인 고르개가 열려 있으면 적는 대로 목록을 좁힌다 (입력칸은 그대로 두고 목록만 바꿔 끼운다)
+    if (field.dataset.field === 'campaignName' && campaigns.open) {
+      const box = kakaoSetup.querySelector('.setup-combo-list');
+      if (box) box.innerHTML = comboInner();
+    }
     save();
   });
 
@@ -7136,6 +7212,24 @@ if (kakaoSetup) {
   });
 
   kakaoSetup.addEventListener('click', (event) => {
+    // 캠페인명 고르개 먼저 본다 (다른 것을 누르면 닫혀야 한다)
+    if (event.target.closest('.setup-combo-toggle')) {
+      if (campaigns.open) { campaigns.open = false; return render(); }
+      return loadCampaigns(false);
+    }
+    if (event.target.closest('.setup-combo-refresh')) return loadCampaigns(true);
+    const pickedCampaign = event.target.closest('[data-campaign]');
+    if (pickedCampaign) {
+      state.campaignName = pickedCampaign.dataset.campaign;
+      campaigns.open = false;
+      save();
+      return render();
+    }
+    if (campaigns.open && !event.target.closest('.setup-combo')) {
+      campaigns.open = false;
+      render();
+    }
+
     const account = event.target.closest('[data-account]');
     const kind = event.target.closest('[data-kind]');
     const urlType = event.target.closest('[data-urltype]');
