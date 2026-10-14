@@ -5391,7 +5391,11 @@ function kakaoCreative_(payload) {
     form.description = String(payload.description || '').trim();
     form.profileName = String(payload.profileName || '').trim();
     form.actionButton = String(payload.actionButton || 'PURCHASE').trim();
-    if (payload.profileImageUrl) form.profileImageFileUrl = String(payload.profileImageUrl);
+    /* 프로필 이미지는 **파일로** 붙인다. 카카오 문서: multipart 방식은 profileImageFile,
+       json 방식은 profileImageFileUrl 이 필수다. 소재 그림을 파일로 보내니 multipart 이고,
+       URL 로 보내면 '프로필 이미지 URL을 전달해야 합니다' 로 400 이 난다.
+       그래서 기준 소재의 프로필 이미지 주소를 여기서 받아 파일로 바꿔 넣는다. */
+    form.profileImageFile = kakaoProfileBlob_(payload.profileImageUrl);
   }
 
   kakaoWait_(KAKAO_WRITE_GAP, false);
@@ -5403,6 +5407,28 @@ function kakaoCreative_(payload) {
   });
   var body = kakaoAnswer_(response, 'POST /creatives (' + name + ')');
   return { ok: true, source: 'kakao', creative: kakaoNewId_(body), name: name };
+}
+
+// 프로필 이미지 주소 → 파일. 소재마다 같은 그림이라 한 번 받은 것은 이 실행 안에서 다시 쓴다.
+var kakaoProfileKept = {};
+function kakaoProfileBlob_(url) {
+  var link = String(url || '').trim();
+  if (link.indexOf('//') === 0) link = 'https:' + link;
+  if (!/^https?:\/\//.test(link)) {
+    throw new Error('프로필 이미지를 못 가져왔습니다 — 기준 광고그룹 소재에 프로필 이미지가 없습니다.');
+  }
+  if (kakaoProfileKept[link]) return kakaoProfileKept[link];
+  var response = UrlFetchApp.fetch(link, { muteHttpExceptions: true, followRedirects: true });
+  if (response.getResponseCode() >= 400) {
+    throw new Error('프로필 이미지를 받지 못했습니다 (HTTP ' + response.getResponseCode() + '): ' + link);
+  }
+  var blob = response.getBlob();
+  var type = String(blob.getContentType() || '');
+  var png = /png/i.test(type) || /\.png(\?|$)/i.test(link);
+  blob.setContentType(png ? 'image/png' : 'image/jpeg');
+  blob.setName(png ? 'profile.png' : 'profile.jpg');
+  kakaoProfileKept[link] = blob;
+  return blob;
 }
 
 function kakaoTokenShape_() {
