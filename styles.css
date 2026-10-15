@@ -2120,3 +2120,17 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .cafe24-orders>summary{cursor:pointer;font-weight:600;padding:6px 0}
 .cafe24-orders>summary small{font-weight:400;opacity:.7;margin-left:6px}
 @media (max-width:600px){.cafe24-bar{width:64px}}
+
+/* 행사별 결과 — 미닉스 행사 짝 */
+.er-mx{margin-left:4px;border:1px solid #cfe6d7;border-radius:999px;background:#f1f8f3;color:#1d6f42;font:600 10px inherit;padding:2px 8px;cursor:pointer;white-space:nowrap}
+.er-mx:hover{border-color:#1d6f42}
+.er-mx.is-wait{border-color:#f0c9a0;background:#fdf3e7;color:#b25e09}
+.er-mx.is-wait:hover{border-color:#b25e09}
+.mx-panel{width:min(460px,calc(100vw - 32px))}
+.mx-list{list-style:none;margin:0 0 14px;padding:0;max-height:min(360px,55vh);overflow:auto;border:1px solid #eeede8;border-radius:8px}
+.mx-list li+li{border-top:1px solid #f1f0ec}
+.mx-list button{display:flex;flex-direction:column;gap:2px;width:100%;border:0;background:none;text-align:left;padding:9px 12px;cursor:pointer;font:400 12px inherit;color:#37352f}
+.mx-list button:hover{background:#f6f6f3}
+.mx-list button.is-near b::after{content:'비슷함';margin-left:6px;font:600 9px inherit;color:#2f86d9}
+.mx-list button.is-on{background:#eef5fc}
+.mx-list small{color:#8c8c85;font-size:10px}

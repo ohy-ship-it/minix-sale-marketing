@@ -1707,6 +1707,9 @@ function mediaPush_(payload) {
   var body = null;
   try { body = JSON.parse(text); } catch (error) { body = null; }
 
+  if (code === 401 && /not logged in/i.test(text)) {
+    throw new Error('미닉스 워크스페이스가 로그인 검사에서 막았습니다 — 밀어넣기 창구가 로그인 검사 뒤에 있는 옛 서버입니다 (미닉스 쪽 배포가 필요합니다).');
+  }
   if (code === 401) {
     throw new Error('미닉스 워크스페이스가 열쇠를 거절했습니다 — 양쪽 MEDIA_PUSH_KEY 가 같은 값인지 확인해 주세요.');
   }

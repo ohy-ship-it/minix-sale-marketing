@@ -14616,6 +14616,10 @@ if (eventReport) {
         </label>
         ${own.length ? `<button type="button" class="er-off" data-er="offone" data-channel="${escape(key)}"
           title="이 줄에 붙인 파일을 지웁니다 (담아 둔 것까지)"><i data-lucide="x"></i></button>` : ''}
+        ${minixWaiting(row) ? `<button type="button" class="er-mx is-wait" data-er="mxopen" data-row="${id}"
+          title="미닉스 행사와 짝이 아직 없어 미닉스 워크스페이스로 보내지 못했습니다 — 눌러서 골라 주세요">미닉스 고르기</button>`
+    : linkOf(row) ? `<button type="button" class="er-mx" data-er="mxopen" data-row="${id}"
+          title="미닉스 행사: ${escape(linkOf(row).event || linkOf(row).id)} — 눌러서 바꿉니다">미닉스 ✓</button>` : ''}
       </td>
     </tr>${open === row.id
       ? `<tr class="er-more"><td colspan="${HEAD.length}">${detailCard(row, alarm)}</td></tr>` : ''}`;
@@ -15702,6 +15706,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       ${names.length ? names.map(skuCard).join('')
     : `<div class="tool-card bg-none">${escape(monthName(month))} 에 짜 둔 프로모션이 없습니다 —
         <b>월별 예산</b> 에서 먼저 짜 주세요.</div>`}`;
+    if (minixPick) eventReport.insertAdjacentHTML('beforeend', minixPicker());
     lucide.createIcons();
   };
 
@@ -15899,7 +15904,14 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
      들어간 줄 알고, 조용히 아무 행사에나 넣으면 남의 행사 숫자가 어긋난다. */
   let calRows = [];        // 그 달 캘린더 (채널 · 행사명 · 행사제품 · ID)
   let calAt = '';          // 어느 달 것을 들고 있나
+  let calFail = '';        // 캘린더를 못 읽은 까닭 (고르개에 적는다)
   let pushNote = '';
+  /* 미닉스 행사 고르개 — 이름으로 짝이 안 지어진 줄을 사람이 골라 잇는다.
+     미닉스 캘린더에는 행사가 **늦게** 등록되는 일이 많다. 그래서 월별 예산을 짤 때가 아니라
+     파일을 보낼 때 짝을 짓고, 못 지으면 그 줄에 [미닉스 고르기] 를 띄워 둔다.
+     골라 준 짝(미닉스 행사 ID)은 월별 예산의 그 줄에 담아 두어 다음부터는 묻지 않는다. */
+  let minixPick = '';      // 고르개를 연 줄 번호
+  let minixBusy = false;   // 캘린더를 읽는 중
 
   // 이름을 견주기 전에 띄어쓰기 · 괄호 · 가운뎃점 따위를 턴다.
   // '더 플렌더(MAX)' 와 '더 플렌더 MAX' 가 같은 제품인데 다르다고 나오면 짝이 안 맞는다.
@@ -15924,16 +15936,49 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
           id: String(line[iId] || '').trim(),
         })).filter((one) => one.id);
         calAt = month;
+        calFail = '';
         return calRows;
       })
-      .catch(() => { calRows = []; calAt = ''; return []; });
+      .catch((reason) => { calRows = []; calAt = ''; calFail = reason.message; return []; });
   };
+
+  /* 골라 준 짝을 월별 예산의 그 줄에 담는다 (putUsed 와 같은 길 — 쓰기 전에 그 달을 다시 읽는다).
+     link 가 null 이면 짝을 푼다. 담는 일이 겹치면 서로 덮으므로 하나씩 줄 세운다. */
+  let minixChain = Promise.resolve();
+  const putMinix = (rowId, link) => {
+    const mine = month;
+    minixChain = minixChain.catch(() => null).then(() => askSheet({ action: 'budgetGet', month: month })
+      .then((body) => {
+        const found = (body.budget || {}).plan;
+        const now = (found && typeof found === 'object') ? found : { skus: [], rows: [] };
+        if (!Array.isArray(now.rows)) now.rows = [];
+        const row = now.rows.find((one) => String(one.id) === String(rowId));
+        if (!row) throw new Error('월별 예산에서 그 줄을 찾지 못했습니다 (그새 지워진 듯합니다).');
+        if (link) row.minix = link;
+        else delete row.minix;
+        return askSheet({ action: 'budgetPut', month: month, plan: now, by: '' }).then(() => now);
+      })
+      .then((now) => {
+        if (mine !== month) return;
+        plan = now;
+        keepBudget(month, { plan: plan, updatedAt: new Date().toISOString(), updatedBy: saved.by });
+        render();
+      }));
+    return minixChain;
+  };
+
+  // 이미 골라 둔 짝. 행사명을 나중에 고쳐도 이 번호로 간다.
+  const linkOf = (row) => (row && row.minix && row.minix.id ? row.minix : null);
+  // 파일은 붙였는데 미닉스 짝이 없는 줄 — [미닉스 고르기] 를 띄운다
+  const minixWaiting = (row) => !linkOf(row) && (byChannel[slotOf(row)] || []).length > 0;
 
   /* 월별 예산 줄 하나에 맞는 캘린더 줄을 고른다.
      행사명이 **같아야** 한다 (그게 행사를 가리는 이름이다). 판매채널까지 같으면 더 좋고,
      한 행사가 채널 여럿에 걸쳐 있으면 행사명만 같아도 받는다.
      제품은 그 줄의 SKU 와 가장 가까운 캘린더 줄에서 가져온다 — 없으면 SKU 를 그대로 쓴다. */
   const calMatch = (row) => {
+    const link = linkOf(row);
+    if (link) return { id: link.id, product: link.product || '', event: link.event || '', channel: link.channel || '' };
     const ev = calKey(row.event);
     if (!ev) return null;
     const mine = calRows.filter((one) => calKey(one.event) === ev);
@@ -15954,8 +15999,10 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     pushNote = '미닉스 워크스페이스로 보내는 중…';
     render();
     pullCalendar().then((cal) => {
-      if (!cal.length) {
-        pushNote = '미닉스 행사 캘린더를 읽지 못해 보내지 못했습니다.';
+      // 짝을 골라 둔 줄은 캘린더가 없어도 번호로 보낼 수 있다
+      const linked = allPlanRows().some((row) => (!rowIds.length || rowIds.indexOf(String(row.id)) >= 0) && linkOf(row));
+      if (!cal.length && !linked) {
+        pushNote = '미닉스 행사 캘린더를 읽지 못해 보내지 못했습니다 — 그 줄의 <b>미닉스 고르기</b> 로 다시 해 볼 수 있습니다.';
         render();
         return;
       }
@@ -15966,31 +16013,112 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         const found = calMatch(row);
         const what = `${row.event || '(행사명 없음)'}${row.channel ? ` · ${row.channel}` : ''}`;
         if (!found) { lost.push(what); return; }
-        jobs.push({ row: row, promoId: found.id,
+        jobs.push({ row: row, promoId: found.id, found: found,
           product: found.product || row.sku || '', what: what });
       });
+      const lostSay = lost.length
+        ? `미닉스 캘린더에서 같은 이름을 못 찾았습니다 — <b>${escape(lost.join(' · '))}</b>.
+          그 줄의 <b>미닉스 고르기</b> 로 골라 주면 붙여 둔 파일을 그때 보냅니다 (아직 미닉스에 없으면 등록된 뒤에 골라 주세요).`
+        : '';
       if (!jobs.length) {
-        pushNote = lost.length
-          ? `미닉스에 보내지 못했습니다 — 캘린더에서 못 찾은 행사: <b>${escape(lost.join(' · '))}</b>`
-          : '미닉스로 보낼 줄이 없습니다.';
+        pushNote = lostSay || '미닉스로 보낼 줄이 없습니다.';
         render();
         return;
       }
       return Promise.all(jobs.map((job) => askSheet({ action: 'mediaPush',
         promoId: job.promoId, product: job.product, files: files, by: '' })
-        .then(() => ({ ok: true, what: job.what }))
+        .then(() => ({ ok: true, what: job.what, job: job }))
         .catch((reason) => ({ ok: false, what: job.what, why: reason.message }))))
         .then((done) => {
           const good = done.filter((one) => one.ok);
           const bad = done.filter((one) => !one.ok);
+          /* 이름으로 짝이 맞아 보낸 줄은 그 짝을 담아 둔다 — 다음부터는 이름이 바뀌어도 번호로 간다. */
+          good.forEach((one) => {
+            if (linkOf(one.job.row)) return;
+            const f = one.job.found;
+            putMinix(one.job.row.id, { id: f.id, event: f.event || '', channel: f.channel || '',
+              product: f.product || '' }).catch(() => null);
+          });
           pushNote = [
             good.length ? `미닉스 워크스페이스에도 넣었습니다 — ${escape(good.map((one) => one.what).join(' · '))}` : '',
             bad.length ? `<b>미닉스에 못 넣은 줄</b> — ${escape(bad.map((one) => `${one.what}: ${one.why}`).join(' / '))}` : '',
-            lost.length ? `캘린더에서 못 찾아 건너뛴 행사 — ${escape(lost.join(' · '))}` : '',
+            lostSay,
           ].filter(Boolean).join('<br>');
           render();
         });
     });
+  };
+
+  /* 미닉스 행사 고르개. 그 달 캘린더 행사를 늘어놓고, 이 줄과 이름 · 채널 · 제품이
+     비슷한 것을 위로 올린다. 고르면 짝을 담고 붙여 둔 파일을 바로 보낸다. */
+  const minixPicker = () => {
+    const row = allPlanRows().find((one) => String(one.id) === String(minixPick));
+    if (!row) return '';
+    const link = linkOf(row);
+    const ev = calKey(row.event);
+    const ch = calKey(row.channel);
+    const sku = calKey(row.sku);
+    const score = (one) => {
+      const e = calKey(one.event);
+      let n = 0;
+      if (ev && e === ev) n += 8;
+      else if (ev && e && (e.indexOf(ev) >= 0 || ev.indexOf(e) >= 0)) n += 4;
+      if (ch && calKey(one.channel) === ch) n += 2;
+      if (sku && calKey(one.product) === sku) n += 1;
+      return n;
+    };
+    const list = calRows.slice().sort((a, b) => score(b) - score(a));
+    const own = (byChannel[slotOf(row)] || []).length;
+    const body = minixBusy ? '<p class="tool-modal-hint">미닉스 행사 캘린더를 읽는 중…</p>'
+      : calFail ? `<p class="tool-modal-error">캘린더를 못 읽었습니다 — ${escape(calFail)}</p>`
+        : !list.length ? `<p class="tool-modal-hint">${escape(monthName(month))} 캘린더에 행사가 없습니다.
+          미닉스에 먼저 등록한 뒤 <b>다시 읽기</b> 를 눌러 주세요.</p>`
+          : `<ul class="mx-list">${list.map((one) => `<li><button type="button" data-er="mxchoose" data-id="${escape(one.id)}"
+              class="${link && link.id === one.id ? 'is-on' : ''}${score(one) >= 4 ? ' is-near' : ''}">
+              <b>${escape(one.event || '(행사명 없음)')}</b>
+              <small>${escape([one.channel, one.product].filter(Boolean).join(' · ') || '—')}</small></button></li>`).join('')}</ul>`;
+    return `<div class="tool-modal-backdrop" data-er="mxclose"></div>
+      <div class="tool-modal-panel mx-panel" role="dialog" aria-label="미닉스 행사 고르기">
+        <h3>미닉스 행사 고르기</h3>
+        <p class="tool-modal-hint">이 줄 — <b>${escape(row.event || '(행사명 없음)')}</b>
+          ${escape([row.channel, row.sku].filter(Boolean).join(' · '))}<br>
+          ${own ? `고르면 붙여 둔 파일 ${own}개를 그 행사로 바로 보냅니다.` : '고르면 다음에 붙이는 파일부터 그 행사로 보냅니다.'}
+          골라 둔 짝은 월별 예산의 이 줄에 담겨 다음부터는 묻지 않습니다.</p>
+        ${link ? `<p class="tool-modal-hint">지금 짝 — <b>${escape(link.event || link.id)}</b></p>` : ''}
+        ${body}
+        <div class="tool-modal-actions">
+          ${link ? '<button type="button" data-er="mxunlink">짝 풀기</button>' : ''}
+          <button type="button" data-er="mxreload">다시 읽기</button>
+          <button type="button" data-er="mxclose">나중에</button>
+        </div>
+      </div>`;
+  };
+
+  const openPicker = (rowId, again) => {
+    minixPick = String(rowId);
+    if (again) calAt = '';
+    minixBusy = calAt !== month;
+    render();
+    if (!minixBusy) return;
+    pullCalendar().then(() => { minixBusy = false; render(); });
+  };
+
+  const chooseMinix = (calId) => {
+    const row = allPlanRows().find((one) => String(one.id) === String(minixPick));
+    const hit = calRows.find((one) => one.id === calId);
+    if (!row || !hit) return;
+    const link = { id: hit.id, event: hit.event, channel: hit.channel, product: hit.product };
+    row.minix = link;                 // 바로 보내려고 화면 쪽에도 먼저 단다 (담는 것은 뒤따른다)
+    minixPick = '';
+    pushNote = '미닉스 행사 짝을 담는 중…';
+    render();
+    putMinix(row.id, link)
+      .then(() => {
+        const own = byChannel[slotOf(row)] || [];
+        if (own.length) pushToMinix([String(row.id)], own);
+        else { pushNote = `미닉스 짝을 담았습니다 — ${escape(hit.event)}. 이 줄에 파일을 붙이면 그 행사로 보냅니다.`; render(); }
+      })
+      .catch((reason) => { pushNote = `미닉스 짝을 담지 못했습니다 — ${escape(reason.message)}`; render(); });
   };
 
   // 붙인 파일이 전매체에서 내려받은 것인지 본다. 아니면 이유를 그대로 알려 준다.
@@ -16183,6 +16311,19 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (!hit) return;
     const what = hit.dataset.er;
     if (what === 'reload') { opening = false; load(true); return; }
+    if (what === 'mxopen') { event.stopPropagation(); openPicker(hit.dataset.row, false); return; }
+    if (what === 'mxreload') { openPicker(minixPick, true); return; }
+    if (what === 'mxclose') { minixPick = ''; render(); return; }
+    if (what === 'mxchoose') { chooseMinix(hit.dataset.id); return; }
+    if (what === 'mxunlink') {
+      const rowId = minixPick;
+      if (!window.confirm('이 줄의 미닉스 짝을 풉니다. 이미 미닉스에 들어간 숫자는 그대로 남습니다. 풀까요?')) return;
+      minixPick = '';
+      putMinix(rowId, null)
+        .then(() => { pushNote = '미닉스 짝을 풀었습니다.'; render(); })
+        .catch((reason) => { pushNote = `미닉스 짝을 풀지 못했습니다 — ${escape(reason.message)}`; render(); });
+      return;
+    }
     if (what === 'cut') {
       cutBy = hit.dataset.cut === 'channel' ? 'channel' : 'cat';
       try { window.localStorage.setItem(CUT_KEY, cutBy); } catch (error) { /* 거들기다 */ }
