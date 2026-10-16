@@ -19217,6 +19217,28 @@ if (kolLiveView) {
 const GFA_STALE_HOURS = 24;
 const GFA_HUSH_KEY = 'minix-gfa-hush-v1';      // '오늘은 그만 보기' — 날짜 한 줄만 담는다
 
+/* 누구에게 띄울지. 적재 PC 를 돌리는 사람만 보면 된다 — 그 PC 가 없는 사람은
+   팝업을 봐도 할 수 있는 일이 없어 잔소리가 된다.
+   여기에 메일을 더하면 그 사람에게도 뜬다. **목록을 비우면 미닉스 계정 모두에게** 뜬다. */
+const GFA_WATCHERS = ['o_hy@athomecorp.com'];
+
+const gfaWho = () => {
+  try {
+    const user = firebase.auth().currentUser;
+    if (user && user.email) return String(user.email).toLowerCase();
+  } catch { /* 로그인을 아직 못 읽었다 */ }
+  const line = document.querySelector('#side-mail');     // 왼쪽 아래에 적히는 그 메일
+  return String((line && line.textContent) || '').trim().toLowerCase();
+};
+
+// 누구인지 못 읽으면 띄우지 않는다 (틀 안에서 열면 그렇다 — 거기선 파이어베이스
+// 로그인을 안 쓴다). '나만 본다' 가 뜻이라, 모를 때는 안 띄우는 쪽이 맞다.
+const gfaMine = () => {
+  if (!GFA_WATCHERS.length) return true;
+  const who = gfaWho();
+  return !!who && GFA_WATCHERS.indexOf(who) >= 0;
+};
+
 const gfaDay = () => {
   // sv-SE 로 뽑으면 YYYY-MM-DD 다 (보는 사람의 시간대로)
   try { return new Date().toLocaleDateString('sv-SE'); } catch { return String(new Date().getDate()); }
@@ -19284,7 +19306,7 @@ const gfaShow = (body) => {
 };
 
 const gfaWatch = () => {
-  if (gfaHushed()) return;
+  if (gfaHushed() || !gfaMine()) return;
   askSheet({ action: 'naverFresh' })
     .then((body) => {
       if (!body || typeof body.hours !== 'number') return;   // 적재 기록이 아예 없으면 조용히 둔다
