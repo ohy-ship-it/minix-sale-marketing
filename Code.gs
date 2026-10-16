@@ -1727,6 +1727,41 @@ function mediaPush_(payload) {
     promo: body.promo || '', done: body.done || [], bad: body.bad || [] };
 }
 
+/* 짝을 풀 때 — 그 행사에 밀어넣었던 파일의 숫자를 미닉스에서 뺀다.
+   payload: { promoId, product, files: ['파일명', …], by }
+   미닉스는 그 파일이 넣은 줄만 빼고, 손으로 올린 파일은 건드리지 않는다. */
+function mediaUnpush_(payload) {
+  var promoId = String((payload && payload.promoId) || '').trim();
+  var product = String((payload && payload.product) || '').trim();
+  var files = ((payload && payload.files) || []).map(function (one) { return String(one || ''); })
+    .filter(function (one) { return !!one; });
+  if (!promoId) throw new Error('행사 ID 가 비어 있습니다.');
+  if (!product) throw new Error('제품이 비어 있습니다.');
+  if (!files.length) throw new Error('뺄 파일이 없습니다.');
+
+  var url = myPagesUrl_() + '/api/promos/' + encodeURIComponent(promoId) + '/media-unpush';
+  var answer = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json; charset=utf-8',
+    muteHttpExceptions: true,
+    headers: { 'x-media-key': mediaPushKey_() },
+    payload: JSON.stringify({ product: product, files: files, by: String((payload && payload.by) || '') })
+  });
+  var code = answer.getResponseCode();
+  var text = answer.getContentText() || '';
+  var body = null;
+  try { body = JSON.parse(text); } catch (error) { body = null; }
+  if (code === 404 && !body) {
+    throw new Error('미닉스 워크스페이스에 빼기 창구가 아직 없습니다 (미닉스 쪽 배포가 필요합니다).');
+  }
+  if (code === 401) throw new Error('미닉스 워크스페이스가 열쇠를 거절했습니다.');
+  if (code >= 400 || !body || !body.ok) {
+    throw new Error('미닉스 워크스페이스 (HTTP ' + code + '): ' + ((body && body.error) || text.slice(0, 300)));
+  }
+  return { ok: true, source: 'mediaUnpush', promoId: promoId, product: product,
+    removed: body.removed || 0, gone: !!body.gone, promo: body.promo || '' };
+}
+
 // 밀어넣기 연결 확인 — 시트 UTM 메뉴에서 부른다 (열쇠 · 주소가 제대로 들어갔는지)
 function checkMediaPush() {
   var lines = [];
@@ -1910,6 +1945,7 @@ function handleAction_(payload) {
     if (payload.action === 'filenameSeq') return filenameSeq_();
     if (payload.action === 'partTabs') return partTabs_();
     if (payload.action === 'mediaPush') return mediaPush_(payload);
+    if (payload.action === 'mediaUnpush') return mediaUnpush_(payload);
     // 카페24 — 아침에 쌓아 둔 카페24주문 탭을 읽어 상품별 주문 건수를 센다
     if (payload.action === 'cafe24Lookup') return cafe24Lookup_(payload);
     if (payload.action === 'cafe24CaAppend') return cafe24CaAppend_(payload);

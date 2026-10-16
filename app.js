@@ -16033,11 +16033,16 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
           const good = done.filter((one) => one.ok);
           const bad = done.filter((one) => !one.ok);
           /* 이름으로 짝이 맞아 보낸 줄은 그 짝을 담아 둔다 — 다음부터는 이름이 바뀌어도 번호로 간다. */
+          /* 보낸 파일 이름 · 제품도 함께 담는다 — 짝을 풀 때 미닉스에서 **그 파일만** 빼려고. */
           good.forEach((one) => {
-            if (linkOf(one.job.row)) return;
             const f = one.job.found;
-            putMinix(one.job.row.id, { id: f.id, event: f.event || '', channel: f.channel || '',
-              product: f.product || '' }).catch(() => null);
+            const was = linkOf(one.job.row) || {};
+            const sent = (was.files || []).concat(files.map((file) => file.name))
+              .filter((name, at, all) => name && all.indexOf(name) === at);
+            const link = { id: f.id, event: f.event || '', channel: f.channel || '',
+              product: f.product || '', sent: one.job.product, files: sent };
+            one.job.row.minix = link;
+            putMinix(one.job.row.id, link).catch(() => null);
           });
           pushNote = [
             good.length ? `미닉스 워크스페이스에도 넣었습니다 — ${escape(good.map((one) => one.what).join(' · '))}` : '',
@@ -16103,22 +16108,42 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     pullCalendar().then(() => { minixBusy = false; render(); });
   };
 
+  /* 짝을 풀거나 다른 행사로 바꿀 때 — 그 행사에 밀어넣은 파일의 숫자를 미닉스에서 뺀다.
+     어떤 파일을 보냈는지는 짝에 담아 둔 이름(files)을 쓰고, 그 전에 맺은 짝이라 이름이
+     없으면 지금 이 줄에 붙어 있는 파일 이름으로 뺀다. 손으로 올린 파일은 미닉스가 건드리지 않는다. */
+  const unpushMinix = (row, link) => {
+    const names = (link.files && link.files.length) ? link.files
+      : (byChannel[slotOf(row)] || []).map((file) => file.name);
+    const product = link.sent || link.product || row.sku || '';
+    if (!names.length || !product) return Promise.resolve({ removed: 0, skipped: true });
+    return askSheet({ action: 'mediaUnpush', promoId: link.id, product: product, files: names, by: '' });
+  };
+
   const chooseMinix = (calId) => {
     const row = allPlanRows().find((one) => String(one.id) === String(minixPick));
     const hit = calRows.find((one) => one.id === calId);
     if (!row || !hit) return;
+    const old = linkOf(row);
     const link = { id: hit.id, event: hit.event, channel: hit.channel, product: hit.product };
+    // 다른 행사로 바꾸면 옛 행사에 넣은 숫자부터 뺀다 (안 빼면 두 행사에 같은 광고비가 잡힌다)
+    const drop = old && old.id !== hit.id
+      ? unpushMinix(row, old).catch((reason) => { throw new Error(`옛 미닉스 행사(${old.event || old.id})에서 숫자를 빼지 못해 바꾸지 않았습니다 — ${reason.message}`); })
+      : Promise.resolve();
     row.minix = link;                 // 바로 보내려고 화면 쪽에도 먼저 단다 (담는 것은 뒤따른다)
     minixPick = '';
     pushNote = '미닉스 행사 짝을 담는 중…';
     render();
-    putMinix(row.id, link)
+    drop.then(() => putMinix(row.id, link))
       .then(() => {
         const own = byChannel[slotOf(row)] || [];
         if (own.length) pushToMinix([String(row.id)], own);
         else { pushNote = `미닉스 짝을 담았습니다 — ${escape(hit.event)}. 이 줄에 파일을 붙이면 그 행사로 보냅니다.`; render(); }
       })
-      .catch((reason) => { pushNote = `미닉스 짝을 담지 못했습니다 — ${escape(reason.message)}`; render(); });
+      .catch((reason) => {
+        if (old) row.minix = old; else delete row.minix;
+        pushNote = `미닉스 짝을 담지 못했습니다 — ${escape(reason.message)}`;
+        render();
+      });
   };
 
   // 붙인 파일이 전매체에서 내려받은 것인지 본다. 아니면 이유를 그대로 알려 준다.
@@ -16317,11 +16342,23 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (what === 'mxchoose') { chooseMinix(hit.dataset.id); return; }
     if (what === 'mxunlink') {
       const rowId = minixPick;
-      if (!window.confirm('이 줄의 미닉스 짝을 풉니다. 이미 미닉스에 들어간 숫자는 그대로 남습니다. 풀까요?')) return;
+      const row = allPlanRows().find((one) => String(one.id) === String(rowId));
+      const link = linkOf(row);
+      if (!row || !link) return;
+      if (!window.confirm(`이 줄의 미닉스 짝(${link.event || link.id})을 풀고, 여기서 미닉스에 넣은 숫자도 함께 뺍니다.
+미닉스에서 손으로 올린 파일은 그대로 둡니다. 풀까요?`)) return;
       minixPick = '';
-      putMinix(rowId, null)
-        .then(() => { pushNote = '미닉스 짝을 풀었습니다.'; render(); })
-        .catch((reason) => { pushNote = `미닉스 짝을 풀지 못했습니다 — ${escape(reason.message)}`; render(); });
+      pushNote = '미닉스에서 숫자를 빼는 중…';
+      render();
+      /* 미닉스에서 먼저 뺀다. 못 빼면 짝을 남겨 둔다 — 짝까지 풀어 버리면 무엇을 빼야 하는지 잊는다. */
+      unpushMinix(row, link)
+        .then((got) => putMinix(rowId, null).then(() => {
+          pushNote = got && got.skipped
+            ? '미닉스 짝을 풀었습니다 (보낸 파일 기록이 없어 미닉스 숫자는 건드리지 않았습니다 — 미닉스에서 직접 지워 주세요).'
+            : `미닉스 짝을 풀고 숫자를 뺐습니다 — ${escape(link.event || link.id)}${got && got.gone ? ' (그 제품 매체결과가 비어 칸째 지웠습니다)' : ` (${(got && got.removed) || 0}줄)`}`;
+          render();
+        }))
+        .catch((reason) => { pushNote = `미닉스 숫자를 빼지 못해 짝을 그대로 두었습니다 — ${escape(reason.message)}`; render(); });
       return;
     }
     if (what === 'cut') {
