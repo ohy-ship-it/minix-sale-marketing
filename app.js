@@ -15975,7 +15975,20 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
   // 이미 골라 둔 짝. 행사명을 나중에 고쳐도 이 번호로 간다.
   const linkOf = (row) => (row && row.minix && row.minix.id ? row.minix : null);
   // 파일은 붙였는데 미닉스 짝이 없는 줄 — [미닉스 고르기] 를 띄운다
-  const minixWaiting = (row) => !linkOf(row) && (byChannel[slotOf(row)] || []).length > 0;
+  /* 이 줄에 손으로 적은 매체 — { 단계: [{ media, campaign, spend, imp, clk, conv, rev }] }.
+     미닉스 수기 매체 칸과 모양이 같아 그대로 보낸다 (파일에 안 잡히는 제휴 · 인플루언서 같은 것). */
+  const handExtra = (row) => {
+    const phases = typedOf(slotOf(row)).phases || {};
+    const out = {};
+    Object.keys(phases).forEach((name) => {
+      const list = ((phases[name] || {}).media || []).filter((one) => one && one.media);
+      if (list.length) out[name] = list;
+    });
+    return out;
+  };
+  const hasHand = (row) => Object.keys(handExtra(row)).length > 0;
+  const minixWaiting = (row) => !linkOf(row)
+    && ((byChannel[slotOf(row)] || []).length > 0 || hasHand(row));
 
   /* 월별 예산 줄 하나에 맞는 캘린더 줄을 고른다.
      행사명이 **같아야** 한다 (그게 행사를 가리는 이름이다). 판매채널까지 같으면 더 좋고,
@@ -16000,7 +16013,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
 
   /* 붙인 파일을 미닉스로 보낸다. 줄마다 따로 보낸다 — 행사 · 제품이 줄마다 다르다. */
   const pushToMinix = (rowIds, files) => {
-    if (!files.length) return;
+    // 파일이 없어도 손으로 적은 매체가 있으면 보낸다
+    if (!files.length && !allPlanRows().some((row) => rowIds.indexOf(String(row.id)) >= 0 && hasHand(row))) return;
     pushNote = '미닉스 워크스페이스로 보내는 중…';
     render();
     pullCalendar().then((cal) => {
@@ -16031,7 +16045,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         return;
       }
       return Promise.all(jobs.map((job) => askSheet({ action: 'mediaPush',
-        promoId: job.promoId, product: job.product, files: files, by: '' })
+        promoId: job.promoId, product: job.product, files: files,
+        extra: handExtra(job.row), by: '' })
         .then(() => ({ ok: true, what: job.what, job: job }))
         .catch((reason) => ({ ok: false, what: job.what, why: reason.message }))))
         .then((done) => {
@@ -16120,7 +16135,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     const names = (link.files && link.files.length) ? link.files
       : (byChannel[slotOf(row)] || []).map((file) => file.name);
     const product = link.sent || link.product || row.sku || '';
-    if (!names.length || !product) return Promise.resolve({ removed: 0, skipped: true });
+    if (!product) return Promise.resolve({ removed: 0, skipped: true });
     return askSheet({ action: 'mediaUnpush', promoId: link.id, product: product, files: names, by: '' });
   };
 
@@ -16141,7 +16156,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     drop.then(() => putMinix(row.id, link))
       .then(() => {
         const own = byChannel[slotOf(row)] || [];
-        if (own.length) pushToMinix([String(row.id)], own);
+        if (own.length || hasHand(row)) pushToMinix([String(row.id)], own);
         else { pushNote = `미닉스 짝을 담았습니다 — ${escape(hit.event)}. 이 줄에 파일을 붙이면 그 행사로 보냅니다.`; render(); }
       })
       .catch((reason) => {
@@ -16338,6 +16353,14 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     manual[typedKey(promo)] = one;
     render();                  // 적은 값으로 광고비 · CPS · ROAS 가 그 자리에서 다시 셈해진다
     putTyped(promo, one, hit);
+    /* 미닉스와 짝이 있으면 손으로 적은 매체도 그쪽 수기 매체 칸에 맞춘다 (지운 것은 그쪽에서도 빠진다) */
+    const row = allPlanRows().find((r) => String(r.id) === String(promo));
+    const link = linkOf(row);
+    if (!row || !link) return;
+    askSheet({ action: 'mediaPush', promoId: link.id, product: link.sent || link.product || row.sku || '',
+      files: [], extra: handExtra(row), by: '' })
+      .then(() => { pushNote = `손으로 적은 매체를 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)}`; render(); })
+      .catch((reason) => { pushNote = `손으로 적은 매체를 미닉스에 못 넣었습니다 — ${escape(reason.message)}`; render(); });
   };
 
   eventReport.addEventListener('click', (event) => {

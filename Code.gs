@@ -1677,16 +1677,19 @@ function myPagesUrl_() {
 }
 
 /* 행사 하나에 파일을 밀어넣는다.
-   payload: { promoId, product, files: [{ name, body }], by }
+   payload: { promoId, product, files: [{ name, body }], extra: { 단계: [수기 매체] }, by }
+   extra 는 세일즈마케팅에서 손으로 적은 매체다 — 보내면 미닉스 수기 매체 칸의 밀어넣은 줄을 갈아 끼운다.
+   파일 없이 extra 만 보내도 된다 (수기 매체만 고쳤을 때).
    promoId 는 **미닉스 행사 캘린더의 ID 칸** 값이다 — 이름이 아니라 번호로 짝지어야
    미닉스에서 행사명을 고쳐도 안 끊긴다. */
 function mediaPush_(payload) {
   var promoId = String((payload && payload.promoId) || '').trim();
   var product = String((payload && payload.product) || '').trim();
   var files = (payload && payload.files) || [];
+  var extra = (payload && payload.extra && typeof payload.extra === 'object') ? payload.extra : null;
   if (!promoId) throw new Error('행사 ID 가 비어 있습니다 (미닉스 행사 캘린더의 ID 칸).');
   if (!product) throw new Error('제품이 비어 있습니다.');
-  if (!files.length) throw new Error('보낼 파일이 없습니다.');
+  if (!files.length && !extra) throw new Error('보낼 파일이 없습니다.');
 
   var url = myPagesUrl_() + '/api/promos/' + encodeURIComponent(promoId) + '/media-push';
   var answer = UrlFetchApp.fetch(url, {
@@ -1697,6 +1700,7 @@ function mediaPush_(payload) {
     payload: JSON.stringify({
       product: product,
       files: files,
+      extra: extra || undefined,
       by: String((payload && payload.by) || ''),
       at: new Date().toISOString()
     })
@@ -1724,7 +1728,7 @@ function mediaPush_(payload) {
       + ((body && body.error) || text.slice(0, 300)));
   }
   return { ok: true, source: 'mediaPush', promoId: promoId, product: product,
-    promo: body.promo || '', done: body.done || [], bad: body.bad || [] };
+    promo: body.promo || '', done: body.done || [], bad: body.bad || [], hand: body.hand || 0 };
 }
 
 /* 짝을 풀 때 — 그 행사에 밀어넣었던 파일의 숫자를 미닉스에서 뺀다.
@@ -1737,7 +1741,7 @@ function mediaUnpush_(payload) {
     .filter(function (one) { return !!one; });
   if (!promoId) throw new Error('행사 ID 가 비어 있습니다.');
   if (!product) throw new Error('제품이 비어 있습니다.');
-  if (!files.length) throw new Error('뺄 파일이 없습니다.');
+  // 파일 이름이 없어도 보낸다 — 미닉스가 밀어넣은 수기 매체는 이름 없이도 뺀다
 
   var url = myPagesUrl_() + '/api/promos/' + encodeURIComponent(promoId) + '/media-unpush';
   var answer = UrlFetchApp.fetch(url, {
