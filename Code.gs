@@ -1882,6 +1882,7 @@ function handleAction_(payload) {
     if (payload.action === 'kakaoReport') return kakaoReport_(payload);
     if (payload.action === 'metaCreatives') return metaCreatives_(payload);
     if (payload.action === 'manyCreatives') return manyCreatives_(payload);
+    if (payload.action === 'findCreatives') return findCreatives_(payload);
     if (payload.action === 'googleCreatives') return adsCreatives_(payload);
     if (payload.action === 'kakaoCreatives') return kakaoCreatives_(payload);
     if (payload.action === 'metaBreakdown') return metaBreakdown_(payload);
@@ -3651,6 +3652,119 @@ function manyCreatives_(payload) {
 
   return { ok: true, rows: rows, notes: notes, packs: order.length, adsets: asked,
     range: { since: since, until: until }, fetchedAt: new Date().toISOString() };
+}
+
+/* ── 모든 계정에서 소재 찾기 (소재별 결과 · 전매체) ─────────────────────
+   화면이 계정마다 보고서를 따로 부르면 그 왕복(1.5~4초)이 계정 수 × 매체 수만큼 쌓인다
+   (메타 계정이 여덟이라 그것만 수십 초). 그래서 **매체 하나를 한 번에** 여기서 끝낸다:
+     ① 계정을 다 훑어 광고그룹 · 캠페인 이름에 검색어가 든 광고그룹을 찾고
+     ② 걸린 계정만 그 광고그룹의 소재를 받는다.
+   메타는 계정마다 보고서를 통째로 받지 않고, 인사이트를 이름 조건(CONTAIN)으로 걸러
+   **모든 계정을 한꺼번에**(fetchAll) 묻는다 — 보고서 여덟 번이 요청 한 묶음이 된다.
+   다른 매체는 보고서를 읽어 거른다 (보고서는 5분 담아 두므로 다시 찾으면 빠르다). */
+var FIND_LIMIT_GROUPS = 60;
+
+function findHit_(words, row) {
+  var name = String((row && row.name) || '').toLowerCase();
+  var camp = String((row && row.campaignName) || '').toLowerCase();
+  return words.some(function (w) { return name.indexOf(w) >= 0 || (camp && camp.indexOf(w) >= 0); });
+}
+
+function findMetaGroups_(accounts, words, since, until) {
+  var range = JSON.stringify({ since: since, until: until });
+  var jobs = [];
+  accounts.forEach(function (acc) {
+    var id = String(acc.id || '');
+    if (id.indexOf('act_') !== 0) id = 'act_' + String(acc.accountId || id);
+    words.forEach(function (w, wi) {
+      ['adset.name', 'campaign.name'].forEach(function (field, fi) {
+        jobs.push({ key: id + '|' + wi + '|' + fi, account: id, path: '/' + id + '/insights',
+          params: { level: 'adset', fields: 'adset_id,adset_name,campaign_name,spend', time_range: range,
+            limit: 500, filtering: JSON.stringify([{ field: field, operator: 'CONTAIN', value: w }]) } });
+      });
+    });
+  });
+  var got = graphMany_(jobs);
+  var out = {};
+  var answered = 0;
+  jobs.forEach(function (job) {
+    var body = got[job.key];
+    if (!body) return;
+    answered += 1;
+    (body.data || []).forEach(function (row) {
+      if (!out[job.account]) out[job.account] = [];
+      var id = String(row.adset_id || '');
+      if (id && out[job.account].indexOf(id) < 0) out[job.account].push(id);
+    });
+  });
+  return { groups: out, answered: answered };
+}
+
+function findCreatives_(payload) {
+  var source = String((payload && payload.source) || '');
+  var words = ((payload && payload.words) || []).map(function (w) { return String(w || '').trim().toLowerCase(); })
+    .filter(function (w) { return !!w; });
+  var since = String((payload && payload.since) || '');
+  var until = String((payload && payload.until) || '');
+  var refresh = !!(payload && payload.refresh);
+  if (!words.length) throw new Error('찾을 말이 없습니다.');
+  var fns = {
+    meta: [metaAccounts_, metaReport_, metaCreatives_],
+    google: [adsAccounts_, adsReport_, adsCreatives_],
+    kakao: [kakaoAccounts_, kakaoReport_, kakaoCreatives_],
+    naver: [naverAccounts_, naverReport_, naverCreatives_],
+    naverSa: [naverSaAccounts_, naverSaReport_, naverSaCreatives_]
+  }[source];
+  if (!fns) throw new Error('모르는 매체입니다: ' + source);
+
+  var accounts = (fns[0]() || []).filter(function (one) { return one && !one.disabled; });
+  var notes = [];
+  var groups = {};          // 계정 → [광고그룹 id]
+
+  if (source === 'meta') {
+    var fast = findMetaGroups_(accounts, words, since, until);
+    groups = fast.groups;
+    if (!fast.answered) notes.push('메타 이름 거르기가 안 돼 보고서로 찾았습니다.');
+  }
+  if (source !== 'meta' || !Object.keys(groups).length && notes.length) {
+    accounts.forEach(function (acc) {
+      var id = String(acc.accountId || acc.id);
+      try {
+        var body = fns[1]({ account: id, since: since, until: until, refresh: refresh, all: source === 'naverSa' });
+        var named = {};
+        (body.campaigns || []).forEach(function (one) { named[one.id] = one.name; });
+        // 브랜드검색은 캠페인 자리에 광고그룹이 온다
+        var pool = source === 'naverSa' ? (body.campaigns || []) : (body.adsets || []);
+        pool.forEach(function (row) {
+          var look = { name: row.name, campaignName: row.campaignName || named[row.campaignId] || '' };
+          if (!findHit_(words, look)) return;
+          if (!groups[id]) groups[id] = [];
+          if (groups[id].indexOf(String(row.id)) < 0) groups[id].push(String(row.id));
+        });
+      } catch (error) {
+        notes.push((acc.name || id) + ' — ' + String((error && error.message) || error));
+      }
+    });
+  }
+
+  var rows = [];
+  var count = 0;
+  Object.keys(groups).forEach(function (id) {
+    var ids = groups[id].slice(0, Math.max(FIND_LIMIT_GROUPS - count, 0));
+    if (!ids.length) return;
+    count += ids.length;
+    try {
+      var body = fns[2]({ account: id, adsets: ids, since: since, until: until, refresh: refresh });
+      ((body && body.creatives) || []).forEach(function (one) { one.source = source; rows.push(one); });
+      if (body && body.notice) notes.push(body.notice);
+    } catch (error) {
+      notes.push(id + ' — ' + String((error && error.message) || error));
+    }
+  });
+  var total = Object.keys(groups).reduce(function (n, id) { return n + groups[id].length; }, 0);
+  if (total > count) notes.push('광고그룹이 많아 앞의 ' + count + '개만 받았습니다 (' + total + '개 중).');
+  return { ok: true, source: source, rows: rows, groups: total, accounts: Object.keys(groups).length,
+    notes: notes, fetchedAt: new Date().toISOString() };
 }
 
 // ── 소재별 결과 ────────────────────────────────────────────────────

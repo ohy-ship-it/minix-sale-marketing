@@ -11674,7 +11674,9 @@ if (creativePerformance) {
     // **한꺼번에 부르지 않는다.** Apps Script 는 같은 사람의 실행을 줄 세우기 때문에
     // 넷을 동시에 던지면 서로를 기다려 첫 결과가 110초 뒤에 나왔다 (직접 재 봤다).
     // 하나씩 차례로 부르면 빠른 매체(메타 6초)가 먼저 뜨고, 흘리는 일도 줄어든다.
-    keys.reduce((chain, key) => chain.then(() => mixOne(key, range, refresh, mine)), Promise.resolve())
+    // 카카오(가장 느림)는 맨 뒤로 — 다른 매체가 먼저 뜬다
+    keys.filter((key) => key !== 'kakao').concat(keys.indexOf('kakao') >= 0 ? ['kakao'] : [])
+      .reduce((chain, key) => chain.then(() => mixOne(key, range, refresh, mine)), Promise.resolve())
       .then(() => {
         if (mine !== epoch) return;
         const bad = keys.filter((key) => mix[key].status === 'error');
@@ -11699,6 +11701,26 @@ if (creativePerformance) {
      카카오는 보고서가 광고비 큰 캠페인 다섯 개까지만 광고그룹을 펼쳐 그 밖은 못 찾을 수 있다. */
   const deepWords = () => String(groupQuery || '').split(',')
     .map((one) => one.trim().toLowerCase()).filter(Boolean);
+  /* 빠른 길 — 매체 하나를 Apps Script 한 번에 끝낸다 (findCreatives). 계정마다 보고서를
+     따로 부르면 그 왕복이 계정 수만큼 쌓여 메타만 수십 초였다. 시트가 옛 판이면 옛 길로 간다. */
+  const deepFast = (key, range, words, refresh, turn) => askSheet({ action: 'findCreatives',
+    source: key, words: words, since: range.since, until: range.until, refresh: Boolean(refresh) })
+    .then((body) => {
+      if (turn !== epoch) return;
+      const rows = (body.rows || []).map((row) => ({ ...row, media: key }));
+      creatives = creatives.concat(rows);
+      mix[key] = { status: 'ready', error: '', count: rows.length,
+        account: body.groups ? `광고그룹 ${body.groups}개` : '걸린 광고그룹 없음' };
+      if ((body.notes || []).length) notice = [notice].concat(body.notes).filter(Boolean).join(' · ');
+      status = 'ready';
+      render();
+    }, (reason) => {
+      if (/모르는 요청/.test(reason.message)) return deepOne(key, range, words, refresh, turn);
+      if (turn !== epoch) return undefined;
+      mix[key] = { status: 'error', error: reason.message, count: 0, account: '' };
+      render();
+      return undefined;
+    });
   const deepOne = (key, range, words, refresh, turn) => askSheet({ action: `${key}Accounts` })
     .then((body) => (body.accounts || []).filter((one) => one && (one.accountId || one.id)))
     .then((list) => Promise.all(list.map((acc) => askSheet({
@@ -11759,8 +11781,10 @@ if (creativePerformance) {
     keys.forEach((key) => { mix[key] = { status: 'loading', error: '', count: 0, account: '' }; });
     beginLoad();
     render();
-    // 매체는 하나씩 차례로 (Apps Script 가 같은 사람의 실행을 줄 세운다 — loadAll 과 같은 까닭)
-    keys.reduce((chain, key) => chain.then(() => deepOne(key, range, words, refresh, mine)), Promise.resolve())
+    // 매체는 하나씩 차례로 (Apps Script 가 같은 사람의 실행을 줄 세운다 — loadAll 과 같은 까닭).
+    // 카카오는 보고서가 5초에 한 번이라 가장 느리다 — 맨 뒤로 보내 다른 매체가 먼저 뜨게 한다.
+    const order = keys.filter((key) => key !== 'kakao').concat(keys.indexOf('kakao') >= 0 ? ['kakao'] : []);
+    order.reduce((chain, key) => chain.then(() => deepFast(key, range, words, refresh, mine)), Promise.resolve())
       .then(() => {
         if (mine !== epoch) return;
         status = 'ready';
