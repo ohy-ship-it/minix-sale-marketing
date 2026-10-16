@@ -19220,7 +19220,7 @@ const GFA_HUSH_KEY = 'minix-gfa-hush-v1';      // '오늘은 그만 보기' — 
 /* 누구에게 띄울지. 적재 PC 를 돌리는 사람만 보면 된다 — 그 PC 가 없는 사람은
    팝업을 봐도 할 수 있는 일이 없어 잔소리가 된다.
    여기에 메일을 더하면 그 사람에게도 뜬다. **목록을 비우면 미닉스 계정 모두에게** 뜬다. */
-const GFA_WATCHERS = ['o_hy@athomecorp.com'];
+const GFA_WATCHERS = ['o_hy@athomecorp.com', 'k_jb@athomecorp.com'];
 
 const gfaWho = () => {
   try {
