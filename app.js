@@ -16020,7 +16020,9 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     const sent = Object.keys(handExtra(row)).reduce((n, k) => n + handExtra(row)[k].length, 0);
     if (!sent) return '';
     const took = got && got.hand;
-    if (!took) return ` (수기 매체 ${sent}줄을 보냈는데 미닉스가 0줄 받았습니다)`;
+    // 옛 Apps Script 는 hand 칸 자체를 안 돌려준다. 새 Apps Script 는 미닉스가 모르면 0 을 돌려준다.
+    if (took === undefined) return ` (수기 매체 ${sent}줄을 보냈는데 Apps Script 가 옛 판이라 안 넘겼습니다 — 새 버전으로 배포해 주세요)`;
+    if (!took) return ` (수기 매체 ${sent}줄을 보냈는데 미닉스 서버가 0줄 받았습니다 — 미닉스 쪽이 옛 판입니다)`;
     return ` (수기 매체 ${took}줄)`;
   };
   const minixWaiting = (row) => !linkOf(row)
