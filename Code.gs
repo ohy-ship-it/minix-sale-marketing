@@ -1852,6 +1852,8 @@ function handleAction_(payload) {
     if (payload.action === 'naverReport') return naverReport_(payload);
     if (payload.action === 'naverCreatives') return naverCreatives_(payload);
     if (payload.action === 'naverAppend') return naverAppend_(payload);
+    // 적재가 멈췄는지만 가볍게 — 화면이 팝업을 띄울지 가리는 데 쓴다
+    if (payload.action === 'naverFresh') return naverFresh_();
     // 네이버 검색광고(브랜드검색) — GFA 와 달리 공개 API 가 있어 여기서 바로 부른다
     if (payload.action === 'naverSaAccounts') return { ok: true, accounts: naverSaAccounts_() };
     if (payload.action === 'naverSaReport') return naverSaReport_(payload);
@@ -6144,6 +6146,48 @@ function naverCoverage_(since, until, days) {
     at.setDate(at.getDate() + 1);
   }
   return { loaded: loaded, missing: missing };
+}
+
+// ── GFA 적재가 멈췄는지 (화면이 열릴 때마다 묻는다) ──────────────────────
+// 성과를 통째로 읽는 naverReport_ 는 10초가 걸린다. 화면을 열 때마다 그걸 부를 수는 없으니
+// 여기서는 **적재시각 한 칸만** 훑는다 (열 하나라 몇 백 밀리초다).
+//
+// 왜 두는가: GFA 만 공개 API 가 없어 어느 PC 가 하루 세 번 받아 와야 하는데, 그 PC 의
+// 크롬이 닫히거나 네이버 로그인이 풀리면 **조용히** 멈춘다. 예약 작업은 꼬박꼬박 도는데
+// 매번 실패만 한다. 2026-10 에 일주일을 그렇게 흘렸다 — 아무도 로그를 안 열어 봤다.
+var NAVER_FRESH_CACHE_SECONDS = 600;   // 10분
+
+function naverFresh_() {
+  var cache = CacheService.getScriptCache();
+  // 적재하면 판 번호가 올라가 옛 열쇠는 아무도 안 찾는다 (naverStamp_ 와 같은 방법)
+  var key = ['naverFresh', naverStamp_(false)].join('|');
+  var hit = cacheGet_(cache, key);
+  if (hit) {
+    try { return JSON.parse(hit); } catch (error) { /* 깨졌으면 다시 읽는다 */ }
+  }
+
+  var sheet = naverSheet_();
+  var last = sheet.getLastRow();
+  var newest = 0;
+  if (last > 1) {
+    // 20번째 칸이 적재시각이다 (NAVER_HEADERS). 고친 줄에도 그때 시각을 다시 적으므로
+    // 가장 큰 값이 곧 '마지막으로 적재가 성공한 때' 다.
+    sheet.getRange(2, 20, last - 1, 1).getValues().forEach(function (line) {
+      var when = line[0] instanceof Date ? line[0].getTime() : 0;
+      if (when > newest) newest = when;
+    });
+  }
+
+  var result = {
+    ok: true,
+    source: 'naver',
+    loadedAt: newest ? new Date(newest).toISOString() : '',
+    hours: newest ? Math.floor((Date.now() - newest) / 3600000) : null,
+    rows: Math.max(last - 1, 0),
+    checkedAt: new Date().toISOString()
+  };
+  cachePut_(cache, key, JSON.stringify(result), NAVER_FRESH_CACHE_SECONDS);
+  return result;
 }
 
 // ── 네이버 검색광고 (브랜드검색) ──────────────────────────────────

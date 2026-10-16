@@ -19205,3 +19205,94 @@ if (kolLiveView) {
   new MutationObserver(openKolOnce).observe(kolLiveView, { attributes: true, attributeFilter: ['hidden'] });
   openKolOnce();
 }
+
+// ── GFA 적재가 멈췄으면 알린다 (워크스페이스에 들어올 때 한 번) ──────────
+// 네이버 GFA 만 공개 API 가 없어, 어느 PC 가 하루 세 번 스크래퍼를 돌려 줘야 숫자가 들어온다.
+// 그 PC 의 크롬이 닫히거나 네이버 로그인이 풀리면 **조용히** 멈춘다 — 예약 작업은 꼬박꼬박
+// 도는데 매번 실패만 한다. 로그를 열어 보기 전에는 알 수가 없어, 2026-10 에 일주일을
+// 그렇게 흘렸다 (그 사이 10/09 오후치는 7일 창 밖으로 밀려 따로 메워야 했다).
+//
+// 그래서 들어올 때 한 번 묻고, 하루 넘게 안 들어왔으면 팝업으로 알린다.
+// 고치는 사람이 따로 있어서, 무엇을 눌러야 하는지까지 팝업에 적어 둔다.
+const GFA_STALE_HOURS = 24;
+const GFA_HUSH_KEY = 'minix-gfa-hush-v1';      // '오늘은 그만 보기' — 날짜 한 줄만 담는다
+
+const gfaDay = () => {
+  // sv-SE 로 뽑으면 YYYY-MM-DD 다 (보는 사람의 시간대로)
+  try { return new Date().toLocaleDateString('sv-SE'); } catch { return String(new Date().getDate()); }
+};
+const gfaHushed = () => {
+  try { return localStorage.getItem(GFA_HUSH_KEY) === gfaDay(); } catch { return false; }
+};
+const gfaHush = () => {
+  try { localStorage.setItem(GFA_HUSH_KEY, gfaDay()); } catch { /* 거들기다 */ }
+};
+
+const gfaWhen = (iso) => {
+  const when = new Date(iso);
+  if (!iso || Number.isNaN(when.getTime())) return '기록 없음';
+  return when.toLocaleString('ko-KR',
+    { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+
+// 몇 시간째인지 사람 말로. 하루가 넘으면 날로 센다.
+const gfaGap = (hours) => (hours >= 48 ? `${Math.floor(hours / 24)}일`
+  : hours >= 24 ? '하루' : `${hours}시간`);
+
+const gfaShow = (body) => {
+  if (document.querySelector('.gfa-stale')) return;         // 이미 떠 있다
+  const box = document.createElement('div');
+  box.className = 'gfa-stale';
+  box.innerHTML = `<div class="gfa-stale-card" role="alertdialog" aria-labelledby="gfa-stale-title">
+      <div class="gfa-stale-mark"><i data-lucide="alert-triangle"></i></div>
+      <h2 id="gfa-stale-title">네이버 GFA 성과가 <b class="gfa-stale-gap"></b>째 안 들어오고 있습니다</h2>
+      <p class="gfa-stale-when">마지막 적재 <b class="gfa-stale-at"></b></p>
+      <p class="gfa-stale-why">GFA 는 공개 API 가 없어 <b>적재 PC</b> 가 하루 세 번 받아 와야 합니다.
+        그 PC 의 크롬이 닫혔거나 네이버 로그인이 풀린 것입니다 —
+        <b>매체별 성과 · 소재별 결과의 네이버 숫자가 그만큼 비어 있습니다.</b></p>
+      <ol class="gfa-stale-how">
+        <li>적재 PC 에서 <b>gfa_login.bat</b> → 네이버 로그인
+          (<b>'로그인 상태 유지' 체크</b>) → <b>그 크롬 창을 닫지 말고 최소화</b></li>
+        <li><b>gfa_load.bat</b> 을 두 번 누르기 (30초~1분)</li>
+        <li>이 화면을 새로고침</li>
+      </ol>
+      <p class="gfa-stale-note">며칠 넘게 멈춰 있었으면 2번만으로는 모자랍니다 (한 번에 최근 7일만 받습니다).
+        자세한 순서는 적재 폴더의 <b>GFA적재-읽어주세요.txt</b> 에 있습니다.</p>
+      <div class="gfa-stale-acts">
+        <button type="button" class="gfa-stale-hush">오늘은 그만 보기</button>
+        <button type="button" class="gfa-stale-close">닫기</button>
+      </div>
+    </div>`;
+
+  // 숫자 · 날짜는 글자로 넣는다 (덧붙이는 자리에 꺾쇠가 섞여도 안전하게)
+  box.querySelector('.gfa-stale-gap').textContent = gfaGap(body.hours);
+  box.querySelector('.gfa-stale-at').textContent = gfaWhen(body.loadedAt);
+
+  const shut = () => { box.remove(); document.documentElement.classList.remove('is-gfa-stale'); };
+  box.querySelector('.gfa-stale-close').addEventListener('click', shut);
+  box.querySelector('.gfa-stale-hush').addEventListener('click', () => { gfaHush(); shut(); });
+  box.addEventListener('click', (event) => { if (event.target === box) shut(); });
+  document.addEventListener('keydown', function escOnce(event) {
+    if (event.key !== 'Escape') return;
+    document.removeEventListener('keydown', escOnce);
+    shut();
+  });
+
+  document.body.appendChild(box);
+  document.documentElement.classList.add('is-gfa-stale');
+  try { lucide.createIcons(); } catch { /* 아이콘은 거들기다 */ }
+};
+
+const gfaWatch = () => {
+  if (gfaHushed()) return;
+  askSheet({ action: 'naverFresh' })
+    .then((body) => {
+      if (!body || typeof body.hours !== 'number') return;   // 적재 기록이 아예 없으면 조용히 둔다
+      if (body.hours < GFA_STALE_HOURS) return;
+      gfaShow(body);
+    })
+    .catch(() => { /* 로그인 전이거나 시트가 느린 것이다. 알림 때문에 화면을 막지 않는다 */ });
+};
+
+// 로그인이 끝나고 화면이 자리를 잡은 뒤에 묻는다 (첫 화면 그리기와 겹치지 않게)
+window.setTimeout(gfaWatch, 4000);
