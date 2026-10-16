@@ -15707,6 +15707,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     : `<div class="tool-card bg-none">${escape(monthName(month))} 에 짜 둔 프로모션이 없습니다 —
         <b>월별 예산</b> 에서 먼저 짜 주세요.</div>`}`;
     if (minixPick) eventReport.insertAdjacentHTML('beforeend', minixPicker());
+    pushToast();
     lucide.createIcons();
   };
 
@@ -15911,6 +15912,28 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
   let calAt = '';          // 어느 달 것을 들고 있나
   let calFail = '';        // 캘린더를 못 읽은 까닭 (고르개에 적는다)
   let pushNote = '';
+  /* 미닉스로 보낸 결과는 화면 맨 위 안내줄에만 적혀, 아래쪽 줄을 보고 있으면 안 보였다.
+     그래서 바뀔 때마다 화면 아래에 따로 띄운다 (보내는 중에는 남겨 두고, 끝나면 12초 뒤 닫는다). */
+  let toastShown = '';
+  let toastTimer = 0;
+  const pushToast = () => {
+    if (pushNote === toastShown) return;
+    toastShown = pushNote;
+    let box = document.getElementById('er-toast');
+    if (!pushNote) { if (box) box.remove(); return; }
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'er-toast';
+      box.className = 'er-toast';
+      box.addEventListener('click', (event) => {
+        if (event.target.closest('[data-toast-close]')) box.remove();
+      });
+      document.body.appendChild(box);
+    }
+    box.innerHTML = `<div>${pushNote}</div><button type="button" data-toast-close aria-label="닫기">✕</button>`;
+    window.clearTimeout(toastTimer);
+    if (!/중…$/.test(pushNote)) toastTimer = window.setTimeout(() => { if (box.isConnected) box.remove(); }, 12000);
+  };
   /* 미닉스 행사 고르개 — 이름으로 짝이 안 지어진 줄을 사람이 골라 잇는다.
      미닉스 캘린더에는 행사가 **늦게** 등록되는 일이 많다. 그래서 월별 예산을 짤 때가 아니라
      파일을 보낼 때 짝을 짓고, 못 지으면 그 줄에 [미닉스 고르기] 를 띄워 둔다.

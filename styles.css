@@ -2162,3 +2162,32 @@ html.is-gfa-stale,html.is-gfa-stale body{overflow:hidden}
 .gfa-stale-acts button:hover{background:#faf9f6}
 .gfa-stale-close{background:var(--ink);color:#fff;border-color:var(--ink)}
 .gfa-stale-close:hover{background:#34352f}
+
+/* 미닉스로 보낸 결과 알림 — 화면 아래에 따로 띄운다 (맨 위 안내줄은 스크롤하면 안 보인다) */
+.er-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  max-width: min(720px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.er-toast b { color: #fde68a; }
+.er-toast button {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 14px;
+}
