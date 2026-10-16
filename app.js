@@ -15773,8 +15773,10 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
   };
 
   let pushing = false;
+  let filesTick = 0;   // 이 화면에서 파일을 고친 횟수 — 늦게 온 시트 목록이 덮지 않게 본다
 
   const saveFiles = (quiet) => {
+    filesTick += 1;
     const trouble = keepFiles();
     const many = fileCount();
     pushing = true;
@@ -15803,9 +15805,12 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
      팀이 같이 보는 자리라 남이 올린 것이 기준이다. */
   const pullFiles = () => {
     const mine = month;
+    const tick = filesTick;
     return askSheet({ action: 'eventFilesGet', month: month })
       .then((body) => {
         if (mine !== month) return;
+        // 읽는 사이에 여기서 붙이거나 뺐다 — 그게 더 새 값이다 (곧 시트에도 올라간다)
+        if (tick !== filesTick) return;
         files = body.files || [];
         Object.keys(byChannel).forEach((key) => { delete byChannel[key]; });
         Object.keys(body.byChannel || {}).forEach((key) => { byChannel[key] = body.byChannel[key]; });
@@ -16300,7 +16305,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
           const where = channel ? `<b>${escape(channel)}</b> 에 ` : '';
           fileNote = [
             good.length ? `${where}파일 ${good.length}개를 붙였습니다 — ${good
-              .map((one) => escape(one.name)).join(' · ')} (담아 두려면 <b>저장</b> 을 눌러 주세요)` : '',
+              .map((one) => escape(one.name)).join(' · ')} — 시트에도 바로 담습니다` : '',
             bad.length ? `<b>못 붙인 파일</b> — ${bad.map((one) => escape(one)).join(' · ')}` : '',
           ].filter(Boolean).join('<br>');
           /* 붙이는 길에 **브검제외 광고비를 저절로 채운다** (브랜드검색은 뺀다).
@@ -16308,6 +16313,10 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
           /* **줄에 붙인 파일만 미닉스로 보낸다.** 맨 위에 붙이는 파일은 그 달 전체에
              걸리는 것이라 어느 행사 것인지 알 수 없다 — 아무 행사에나 보내면 남의 행사
              숫자가 어긋나므로 보내지 않고, 대신 줄 클립을 쓰라고 적어 둔다. */
+          /* 붙이면 **바로 시트에 담는다.** 예전에는 [저장] 을 눌러야 담겼는데, 그 사이에
+             화면을 다시 읽으면(짝 풀기 · 달 바꾸기 · 새로고침) 시트의 옛 목록이 덮어써
+             붙인 파일이 사라졌다 — 미닉스에는 이미 들어갔는데 여기서만 없어지는 꼴이 된다. */
+          if (good.length) saveFiles(true);
           if (good.length && channel) pushToMinix([channel], good);
           else if (good.length) pushNote = '맨 위에 붙인 파일은 어느 행사 것인지 알 수 없어 미닉스로 보내지 않았습니다 — 줄의 📎 로 붙이면 그 행사로 같이 들어갑니다.';
           if (good.length) { fillUsed(true); return; }
