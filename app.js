@@ -15934,10 +15934,14 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         const iName = at('행사명');
         const iProduct = at('행사제품');
         const iId = at('ID');
+        const iBegin = at('시작일');
+        const iEnd = at('종료일');
         calRows = (body.rows || []).map((line) => ({
           channel: String(line[iCh] || '').trim(),
           event: String(line[iName] || '').trim(),
           product: String(line[iProduct] || '').trim(),
+          begin: iBegin >= 0 ? String(line[iBegin] || '').trim() : '',
+          end: iEnd >= 0 ? String(line[iEnd] || '').trim() : '',
           id: String(line[iId] || '').trim(),
         })).filter((one) => one.id);
         calAt = month;
@@ -16047,7 +16051,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       return Promise.all(jobs.map((job) => askSheet({ action: 'mediaPush',
         promoId: job.promoId, product: job.product, files: files,
         extra: handExtra(job.row), by: '' })
-        .then(() => ({ ok: true, what: job.what, job: job }))
+        .then((got) => ({ ok: true, what: `${job.what}${got && got.hand ? ` (수기 매체 ${got.hand}줄)` : ''}`, job: job }))
         .catch((reason) => ({ ok: false, what: job.what, why: reason.message }))))
         .then((done) => {
           const good = done.filter((one) => one.ok);
@@ -16101,7 +16105,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
           : `<ul class="mx-list">${list.map((one) => `<li><button type="button" data-er="mxchoose" data-id="${escape(one.id)}"
               class="${link && link.id === one.id ? 'is-on' : ''}${score(one) >= 4 ? ' is-near' : ''}">
               <b>${escape(one.event || '(행사명 없음)')}</b>
-              <small>${escape([one.channel, one.product].filter(Boolean).join(' · ') || '—')}</small></button></li>`).join('')}</ul>`;
+              <small>${escape([one.begin ? `${one.begin}${one.end && one.end !== one.begin ? ` ~ ${one.end}` : ''}` : '시작일 미정',
+    one.channel, one.product].filter(Boolean).join(' · '))}</small></button></li>`).join('')}</ul>`;
     return `<div class="tool-modal-backdrop" data-er="mxclose"></div>
       <div class="tool-modal-panel mx-panel" role="dialog" aria-label="미닉스 행사 고르기">
         <h3>미닉스 행사 고르기</h3>
@@ -16112,6 +16117,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         ${link ? `<p class="tool-modal-hint">지금 짝 — <b>${escape(link.event || link.id)}</b></p>` : ''}
         ${body}
         <div class="tool-modal-actions">
+          ${link ? '<button type="button" data-er="mxresend" title="붙인 파일과 손으로 적은 매체를 이 행사로 다시 보냅니다">다시 보내기</button>' : ''}
           ${link ? '<button type="button" data-er="mxunlink">짝 풀기</button>' : ''}
           <button type="button" data-er="mxreload">다시 읽기</button>
           <button type="button" data-er="mxclose">나중에</button>
@@ -16359,7 +16365,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (!row || !link) return;
     askSheet({ action: 'mediaPush', promoId: link.id, product: link.sent || link.product || row.sku || '',
       files: [], extra: handExtra(row), by: '' })
-      .then(() => { pushNote = `손으로 적은 매체를 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)}`; render(); })
+      .then((got) => { pushNote = `손으로 적은 매체를 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)} (${(got && got.hand) || 0}줄)`; render(); })
       .catch((reason) => { pushNote = `손으로 적은 매체를 미닉스에 못 넣었습니다 — ${escape(reason.message)}`; render(); });
   };
 
@@ -16372,6 +16378,16 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (what === 'mxreload') { openPicker(minixPick, true); return; }
     if (what === 'mxclose') { minixPick = ''; render(); return; }
     if (what === 'mxchoose') { chooseMinix(hit.dataset.id); return; }
+    if (what === 'mxresend') {
+      const rowId = minixPick;
+      const row = allPlanRows().find((one) => String(one.id) === String(rowId));
+      minixPick = '';
+      if (!row) return;
+      const own = byChannel[slotOf(row)] || [];
+      if (!own.length && !hasHand(row)) { pushNote = '이 줄에는 보낼 파일도 손으로 적은 매체도 없습니다.'; render(); return; }
+      pushToMinix([String(row.id)], own);
+      return;
+    }
     if (what === 'mxunlink') {
       const rowId = minixPick;
       const row = allPlanRows().find((one) => String(one.id) === String(rowId));
