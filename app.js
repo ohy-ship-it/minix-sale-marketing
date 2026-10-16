@@ -9085,7 +9085,9 @@ if (mediaPerformance) {
   const crossFlat = () => Object.keys(SOURCES).reduce((into, key) => into.concat(
     (((cross[key] || {}).rows) || []).map((row) => ({ key: key, row: row })),
   ), []);
-  let crossBracket = true;   // 전매체 검색: 대괄호 안(행사 이름)만 볼지
+  /* 전매체 검색은 **늘 이름 전체**로 본다. '대괄호 안만' 체크는 뺐다 —
+     협력광고 · 브랜드검색처럼 대괄호를 안 쓰는 이름이 안 걸려 결과가 비기만 했다. */
+  const crossBracket = false;
   let crossProd = [];        // 전매체 검색: 체크해 둔 제품 (빈 목록이면 전 제품)
   let loadStart = 0;         // 매체 성과를 부르기 시작한 시각
   let loadTick = null;       // 흐른 시간을 고쳐 쓰는 타이머
@@ -10391,8 +10393,7 @@ if (mediaPerformance) {
           <input type="search" data-perf="cross-text" value="${escapeHtml(crossText)}"
             placeholder="광고그룹 이름 · 쉼표로 여러 개 (예: kakao, 카카오)" autocomplete="off">
         </div>
-        <label class="perf-check" title="[cj-260901]_none_cj 에서 대괄호 안의 cj-260901 만 봅니다 · 네이버 검색광고는 대괄호를 안 써서 늘 이름 전체로 봅니다">
-          <input type="checkbox" data-perf="cross-bracket"${crossBracket ? ' checked' : ''}>대괄호 안만</label>
+
         <button type="button" class="tool-add" data-perf="cross-go"${busy ? ' disabled' : ''}>
           <i data-lucide="search"></i>${busy ? '찾는 중…' : '찾기'}</button>
       </div>
@@ -10422,7 +10423,7 @@ if (mediaPerformance) {
       ${searched ? `<div class="tool-table-wrap"><table class="tool-table perf-table">
         ${crossHead('매체 · 광고그룹')}
         <tbody>${lines}
-          <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>합계</b><small>${escapeHtml(crossWords(crossFor).join(' 또는 ') || crossFor)}${crossBracket ? ' (대괄호 안)' : ' (이름 전체)'}${crossProdText() ? ` · ${escapeHtml(crossProdText())}` : ''}
+          <tr class="perf-row perf-cross-sum"><td class="perf-name"><span><b>합계</b><small>${escapeHtml(crossWords(crossFor).join(' 또는 ') || crossFor)}${crossProdText() ? ` · ${escapeHtml(crossProdText())}` : ''}
             · ${escapeHtml(currentRange().since)} ~ ${escapeHtml(currentRange().until)} · 광고그룹 ${count(found)}</small></span></td>
             <td></td>
             ${crossCells(sum, true)}</tr>
@@ -10746,14 +10747,6 @@ if (mediaPerformance) {
       render();
       return;
     }
-    if (field === 'cross-bracket') {
-      crossBracket = event.target.checked;
-      // 이미 받아 둔 값이 있으면 다시 부르지 않고 기준만 바꿔 다시 걸러 준다
-      if (crossFor) crossSearch();
-      else render();
-      return;
-    }
-
     if (field === 'detail-table') { detail.table = event.target.checked; render(); return; }
     if (field === 'breakdown') {
       const key = event.target.dataset.breakdown;
@@ -11024,7 +11017,8 @@ if (creativePerformance) {
   let kind = '';        // '' 전체 · image · video
   let picked = [];      // 고른 목적 (여럿이면 OR)
   let groupQuery = '';  // 광고그룹 이름으로 검색
-  let groupBracket = true;   // 광고그룹 검색은 대괄호 안(행사 이름)만 본다
+  let groupBracket = false;  // 광고그룹 검색은 이름 전체로 본다 (협력광고는 대괄호를 안 쓴다)
+  let deepFor = '';          // '모든 계정에서 찾기' 로 찾은 말 (비면 보통 불러오기)
   let mix = {};         // 전매체 — 매체 → { status, error, count, account }
   let onlyMedia = '';   // 전매체에서 한 매체만 보기
   // 불러오기 차례. 매체 탭을 바꾸면 앞 탭의 답이 늦게 도착하는데, 그것이 새 화면에 섞이면
@@ -11126,7 +11120,9 @@ if (creativePerformance) {
       if (picked.length && picked.indexOf(objectiveOf(row)) < 0) return false;
       // 소재 이름에는 대괄호가 없다 (6108_20260827_flender-mini_price-66_image_ljm).
       // 그래서 대괄호 조건은 광고그룹 이름에만 쓴다.
-      if (!perfNameHit(row.adsetName, groupQuery.trim().toLowerCase(), groupBracket)) return false;
+      // 모든 계정에서 찾은 줄은 이미 그 말로 골라 온 것이다 (캠페인 이름으로 걸린 것도 있어 다시 거르지 않는다)
+      const deepNow = deepFor && groupQuery.trim() === deepFor;
+      if (!deepNow && !perfNameHit(row.adsetName, groupQuery.trim().toLowerCase(), groupBracket)) return false;
       return !query || String(row.name).toLowerCase().indexOf(query.toLowerCase()) >= 0;
     });
 
@@ -11456,6 +11452,10 @@ if (creativePerformance) {
         </div>
         <label class="perf-check" title="[cj-260901]_none_cj 에서 대괄호 안의 cj-260901 만 봅니다">
           <input type="checkbox" data-creative="group-bracket"${groupBracket ? ' checked' : ''}>대괄호 안만</label>
+        ${isAll() ? `<button type="button" class="tool-copy-all" data-creative="deep"${status === 'loading' ? ' disabled' : ''}
+          title="매체마다 볼 수 있는 계정을 다 훑어 광고그룹 이름에 이 말이 든 소재를 가져옵니다 (협력광고 계정 포함)">
+          <i data-lucide="search-check"></i>모든 계정에서 찾기</button>` : ''}
+        ${isAll() && deepFor ? `<span class="perf-note">'${perfEscape(deepFor)}' — 모든 계정에서 찾은 결과입니다</span>` : ''}
         ${CROSS_PRODUCTS.map((one) => `<label class="perf-check"
           title="캠페인 이름에 '${perfEscape(one.words.join(' · '))}' 가 든 소재만 봅니다">
           <input type="checkbox" data-creative="prod" data-prod="${perfEscape(one.id)}"${state.prod
@@ -11642,6 +11642,7 @@ if (creativePerformance) {
     });
 
   const loadAll = (refresh) => {
+    deepFor = '';
     const mine = nextEpoch();
     const range = currentRange();
     const backwards = perfBackwards(range);
@@ -11670,6 +11671,86 @@ if (creativePerformance) {
         } else {
           status = 'ready';
         }
+        fetchedAt = new Date().toISOString();
+        render();
+      });
+  };
+
+  /* ── 모든 계정에서 찾기 ────────────────────────────────────────
+     전매체는 매체마다 **첫 계정 하나**에서, 광고비 큰 소재 120개만 받아 그 안에서 걸렀다.
+     그래서 다른 계정(CJ · 컬리 같은 협력광고 계정)의 소재나 광고비가 작은 소재는 검색해도 안 나왔다.
+
+     여기서는 매체별 성과의 전매체 검색처럼 **매체마다 볼 수 있는 계정을 다 훑어**
+     광고그룹 이름(또는 캠페인 이름)에 검색어가 든 광고그룹을 찾고, 그 광고그룹의 소재만 받는다
+     (manyCreatives — 같은 계정끼리 묶어 한 번에). 광고그룹으로 좁혀 받으므로 120개 끝에 안 걸린다.
+     카카오는 보고서가 광고비 큰 캠페인 다섯 개까지만 광고그룹을 펼쳐 그 밖은 못 찾을 수 있다. */
+  const deepWords = () => String(groupQuery || '').split(',')
+    .map((one) => one.trim().toLowerCase()).filter(Boolean);
+  const deepOne = (key, range, words, refresh, turn) => askSheet({ action: `${key}Accounts` })
+    .then((body) => (body.accounts || []).filter((one) => one && (one.accountId || one.id)))
+    .then((list) => Promise.all(list.map((acc) => askSheet({
+      action: `${key}Report`, account: acc.accountId || acc.id, since: range.since, until: range.until,
+      refresh: Boolean(refresh) || undefined, all: key === 'naverSa' ? true : undefined,
+    }).then((body) => {
+      const named = {};
+      (body.campaigns || []).forEach((one) => { named[one.id] = one.name; });
+      // 브랜드검색은 캠페인 자리에 광고그룹이 온다 — 그쪽에서 찾는다
+      const pool = key === 'naverSa' ? (body.campaigns || []) : (body.adsets || []);
+      const hit = pool.filter((row) => words.some((w) => perfNameHit(row.name, w, false)
+        || perfNameHit(row.campaignName || named[row.campaignId] || '', w, false)));
+      return { acc: acc, ids: hit.map((row) => String(row.id)) };
+    }).catch(() => ({ acc: acc, ids: [] })))))
+    .then((packs) => {
+      const jobs = [];
+      packs.forEach((pack) => pack.ids.forEach((id) => jobs.push({ source: key,
+        sourceName: PERF_SOURCES[key].name, account: pack.acc.accountId || pack.acc.id, adset: id })));
+      if (!jobs.length) return { rows: [], groups: 0 };
+      const chunks = [];
+      for (let at = 0; at < jobs.length; at += 60) chunks.push(jobs.slice(at, at + 60));
+      return chunks.reduce((chain, part) => chain.then((all) => askSheet({ action: 'manyCreatives',
+        since: range.since, until: range.until, refresh: Boolean(refresh), jobs: part })
+        .then((body) => all.concat(body.rows || []))), Promise.resolve([]))
+        .then((rows) => ({ rows: rows, groups: jobs.length }));
+    })
+    .then((got) => {
+      if (turn !== epoch) return;
+      const rows = got.rows.map((row) => ({ ...row, media: key }));
+      creatives = creatives.concat(rows);
+      mix[key] = { status: 'ready', error: '', count: rows.length,
+        account: got.groups ? `광고그룹 ${got.groups}개` : '걸린 광고그룹 없음' };
+      status = 'ready';
+      render();
+    })
+    .catch((reason) => {
+      if (turn !== epoch) return;
+      mix[key] = { status: 'error', error: reason.message, count: 0, account: '' };
+      render();
+    });
+
+  const deepFind = (refresh) => {
+    const words = deepWords();
+    if (!words.length) { window.alert('광고그룹 이름 칸에 찾을 말을 적어 주세요 (쉼표로 여러 개).'); return; }
+    const mine = nextEpoch();
+    const range = currentRange();
+    const backwards = perfBackwards(range);
+    if (backwards) { status = 'error'; error = backwards; render(); return; }
+    const keys = Object.keys(PERF_SOURCES);
+    deepFor = groupQuery.trim();
+    status = 'loading';
+    error = '';
+    notice = '';
+    cached = false;
+    creatives = [];
+    report = null;
+    mix = {};
+    keys.forEach((key) => { mix[key] = { status: 'loading', error: '', count: 0, account: '' }; });
+    beginLoad();
+    render();
+    // 매체는 하나씩 차례로 (Apps Script 가 같은 사람의 실행을 줄 세운다 — loadAll 과 같은 까닭)
+    keys.reduce((chain, key) => chain.then(() => deepOne(key, range, words, refresh, mine)), Promise.resolve())
+      .then(() => {
+        if (mine !== epoch) return;
+        status = 'ready';
         fetchedAt = new Date().toISOString();
         render();
       });
@@ -11761,6 +11842,13 @@ if (creativePerformance) {
     const field = event.target.dataset.creative;
     if (field !== 'search' && field !== 'group') return;
     takeCreativeSearch(event.target, field, !event.isComposing);
+  });
+  // 전매체에서 광고그룹 칸에 적고 Enter — 모든 계정에서 찾는다
+  creativePerformance.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    if (event.target.dataset.creative !== 'group' || !isAll()) return;
+    groupQuery = event.target.value;
+    deepFind(false);
   });
   creativePerformance.addEventListener('compositionend', (event) => {
     const field = event.target.dataset.creative;
@@ -11912,7 +12000,9 @@ if (creativePerformance) {
       render();
       return;
     }
+    if (event.target.closest('[data-creative="deep"]')) { deepFind(false); return; }
     if (event.target.closest('[data-creative="reload"]')) {
+      if (isAll() && deepFor) { groupQuery = groupQuery || deepFor; deepFind(true); return; }
       if (isAll()) loadAll(true);
       else loadReport(true);
       return;
