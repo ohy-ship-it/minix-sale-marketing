@@ -16234,7 +16234,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       }
       return Promise.all(jobs.map((job) => askSheet({ action: 'mediaPush',
         promoId: job.promoId, product: job.product, files: files,
-        extra: handExtra(job.row), by: '' })
+        extra: handExtra(job.row), setting: String(job.row.setting || ''), by: '' })
         .then((got) => ({ ok: true, what: job.what + handSay(job.row, got), job: job }))
         .catch((reason) => ({ ok: false, what: job.what, why: reason.message }))))
         .then((done) => {
@@ -16452,6 +16452,13 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       if (row) row.setting = text;              // 다시 그려도 적은 값이 보이게 먼저 단다
       putRowField(rowId, 'setting', text, hit, '세팅명')
         .then(() => { if (String(settingDraft[rowId] || '').trim() === text) delete settingDraft[rowId]; });
+      /* 미닉스와 짝이 있으면 세팅명도 그쪽 매체결과 카드에 맞춘다 (지우면 그쪽에서도 빠진다) */
+      const link = linkOf(row);
+      if (!row || !link) return;
+      askSheet({ action: 'mediaPush', promoId: link.id, product: link.sent || link.product || row.sku || '',
+        files: [], setting: text, by: '' })
+        .then(() => { pushNote = `세팅명을 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)} · ${escape(text || '(지움)')}`; render(); })
+        .catch((reason) => { pushNote = `세팅명을 미닉스에 못 넣었습니다 — ${escape(reason.message)}`; render(); });
     };
     if (now) go(); else settingTimer[rowId] = window.setTimeout(go, 1000);
   };
@@ -16569,7 +16576,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     const link = linkOf(row);
     if (!row || !link) return;
     askSheet({ action: 'mediaPush', promoId: link.id, product: link.sent || link.product || row.sku || '',
-      files: [], extra: handExtra(row), by: '' })
+      files: [], extra: handExtra(row), setting: String(row.setting || ''), by: '' })
       .then((got) => { pushNote = `손으로 적은 매체를 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)}${escape(handSay(row, got) || ' (수기 매체 0줄)')}`; render(); })
       .catch((reason) => { pushNote = `손으로 적은 매체를 미닉스에 못 넣었습니다 — ${escape(reason.message)}`; render(); });
   };

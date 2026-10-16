@@ -1687,9 +1687,11 @@ function mediaPush_(payload) {
   var product = String((payload && payload.product) || '').trim();
   var files = (payload && payload.files) || [];
   var extra = (payload && payload.extra && typeof payload.extra === 'object') ? payload.extra : null;
+  // 세팅명 — 세일즈마케팅 행사별 결과에 적은 이름. 미닉스 매체결과 카드 맨 앞에 들어간다 (빈 글자면 지운다)
+  var setting = (payload && typeof payload.setting === 'string') ? payload.setting : null;
   if (!promoId) throw new Error('행사 ID 가 비어 있습니다 (미닉스 행사 캘린더의 ID 칸).');
   if (!product) throw new Error('제품이 비어 있습니다.');
-  if (!files.length && !extra) throw new Error('보낼 파일이 없습니다.');
+  if (!files.length && !extra && setting === null) throw new Error('보낼 파일이 없습니다.');
 
   var url = myPagesUrl_() + '/api/promos/' + encodeURIComponent(promoId) + '/media-push';
   var answer = UrlFetchApp.fetch(url, {
@@ -1701,6 +1703,7 @@ function mediaPush_(payload) {
       product: product,
       files: files,
       extra: extra || undefined,
+      setting: setting === null ? undefined : setting,
       by: String((payload && payload.by) || ''),
       at: new Date().toISOString()
     })
@@ -1728,7 +1731,8 @@ function mediaPush_(payload) {
       + ((body && body.error) || text.slice(0, 300)));
   }
   return { ok: true, source: 'mediaPush', promoId: promoId, product: product,
-    promo: body.promo || '', done: body.done || [], bad: body.bad || [], hand: body.hand || 0 };
+    promo: body.promo || '', done: body.done || [], bad: body.bad || [], hand: body.hand || 0,
+    setting: body.setting || '' };
 }
 
 /* 짝을 풀 때 — 그 행사에 밀어넣었던 파일의 숫자를 미닉스에서 뺀다.
