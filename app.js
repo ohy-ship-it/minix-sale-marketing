@@ -11203,7 +11203,14 @@ if (creativePerformance) {
   const mixLine = () => {
     const keys = Object.keys(PERF_SOURCES);
     if (!keys.some((key) => mix[key])) return '';
-    return `<p class="perf-note perf-mix">${keys.map((key) => {
+    /* 매체는 하나씩 차례로 불러와 결과가 시간차를 두고 붙는다. 먼저 온 매체만 보고
+       '안 나온다' 로 오해하기 쉬워, 아직 오는 매체가 있으면 기다려 달라고 크게 적는다. */
+    const waiting = keys.filter((key) => (mix[key] || {}).status === 'loading');
+    const done = keys.length - waiting.length;
+    const wait = waiting.length ? `<p class="perf-warn perf-mix-wait">아직 불러오는 중입니다 —
+      매체를 하나씩 차례로 가져와 결과가 시간차를 두고 붙습니다. <b>다 나올 때까지 기다려 주세요</b>
+      (${done}/${keys.length} 완료 · 남은 매체: ${waiting.map((key) => PERF_SOURCES[key].name).join(', ')})</p>` : '';
+    return wait + `<p class="perf-note perf-mix">${keys.map((key) => {
     const one = mix[key] || {};
     const name = PERF_SOURCES[key].name;
     if (one.status === 'loading') return `<span class="perf-mix-one is-wait">${name} 불러오는 중…</span>`;
