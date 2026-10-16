@@ -8406,6 +8406,24 @@ function budgetGet_(payload) {
   };
 }
 
+/* 행사별 결과가 줄에 다는 칸(세팅명 · 미닉스 짝)은 월별 예산 화면이 모른다.
+   월별 예산 화면이 예전에 읽어 둔 판으로 저장하면 그 칸이 없는 줄이 와서 지워졌다.
+   그래서 **보낸 줄에 그 칸이 아예 없으면** 시트에 있던 값을 살려 둔다.
+   지울 때는 행사별 결과가 빈 값('' · null)을 실어 보내므로 여기서 되살아나지 않는다. */
+var BUDGET_ROW_KEEP = ['setting', 'minix'];
+function budgetKeepRowFields_(plan, before) {
+  if (!plan || !before || !plan.rows || !before.rows) return;
+  var old = {};
+  before.rows.forEach(function (row) { if (row && row.id) old[String(row.id)] = row; });
+  plan.rows.forEach(function (row) {
+    var was = row && old[String(row.id)];
+    if (!was) return;
+    BUDGET_ROW_KEEP.forEach(function (key) {
+      if (row[key] === undefined && was[key] !== undefined) row[key] = was[key];
+    });
+  });
+}
+
 // 한 달의 줄만 고친다. 다른 달은 건드리지 않는다 (달마다 짜는 사람이 다르다).
 // spend 를 안 보내면 이미 담아 둔 사용액을 그대로 살려 둔다 — 예산을 고칠 때마다
 // 몇 분 걸려 받아 둔 사용액이 지워지면 안 된다.
@@ -8434,6 +8452,7 @@ function budgetPut_(payload) {
     }
 
     var plan = (payload && payload.plan) || (kept ? kept.plan : { skus: [], rows: [] });
+    budgetKeepRowFields_(plan, kept && kept.plan);
     var total = payload && payload.total !== undefined && payload.total !== null
       ? Number(payload.total) || 0 : (kept ? kept.total : 0);
     var spend = payload && payload.spend !== undefined ? payload.spend : (kept ? kept.spend : null);

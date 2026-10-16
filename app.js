@@ -14585,7 +14585,7 @@ if (eventReport) {
       <td>${escape(row.channel || '') || dash}</td>
       <td class="er-event">${escape(row.event || '') || dash}</td>
       <td class="er-setting-cell" data-er="skip"><input type="text" class="er-setting-in" data-er="setting"
-        data-row="${id}" value="${escape(row.setting || '')}" placeholder="—"
+        data-row="${id}" value="${escape(settingDraft[row.id] !== undefined ? settingDraft[row.id] : (row.setting || ''))}" placeholder="—"
         title="세팅명을 손으로 적습니다 — 월별 예산의 그 줄에 담겨 다른 사람에게도 보입니다"></td>
       <td class="bg-live">${escape(row.live || '') || dash}</td>
       <td class="bg-span">${at}</td>
@@ -15650,7 +15650,22 @@ if (eventReport) {
     return isNaN(when.getTime()) ? '' : when.toLocaleString('ko-KR');
   };
 
+  /* 세팅명은 적는 중에 화면이 다시 그려지면(파일 · 추이 읽기가 늦게 도착할 때) 적던 글자가
+     통째로 사라져 change 가 안 왔다 — 저장이 '가끔' 안 되던 까닭이다.
+     그래서 적는 동안의 값을 줄마다 기억해 두고, 다시 그릴 때 그 값과 커서를 되살린다. */
+  const settingDraft = {};
+  const settingTimer = {};
   const render = () => {
+    const typing = document.activeElement && document.activeElement.classList
+      && document.activeElement.classList.contains('er-setting-in') ? document.activeElement : null;
+    const caret = typing ? { row: typing.dataset.row, at: typing.selectionStart } : null;
+    renderNow();
+    if (caret) {
+      const back = eventReport.querySelector(`.er-setting-in[data-row="${CSS.escape(caret.row)}"]`);
+      if (back) { back.focus(); try { back.setSelectionRange(caret.at, caret.at); } catch (ignore) { /* 거들기다 */ } }
+    }
+  };
+  const renderNow = () => {
     if (status === 'loading') {
       eventReport.innerHTML = '<div class="tool-head"><h2>행사별 결과</h2></div>'
         + `<div class="tool-card page-loading">${escape(monthName(month))} 프로모션을 읽는 중…</div>`;
@@ -15857,8 +15872,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         if (!Array.isArray(now.rows)) now.rows = [];
         const row = now.rows.find((one) => String(one.id) === String(rowId));
         if (!row) throw new Error('월별 예산에서 그 줄을 찾지 못했습니다 (그새 지워진 듯합니다).');
-        if (value === '' || value === null || value === undefined) delete row[key];
-        else row[key] = value;
+        row[key] = value === null || value === undefined ? '' : value;
         return askSheet({ action: 'budgetPut', month: month, plan: now, by: '' }).then(() => now);
       })
       .then((now) => {
@@ -15996,7 +16010,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         const row = now.rows.find((one) => String(one.id) === String(rowId));
         if (!row) throw new Error('월별 예산에서 그 줄을 찾지 못했습니다 (그새 지워진 듯합니다).');
         if (link) row.minix = link;
-        else delete row.minix;
+        else row.minix = null;   // 지운 것도 남겨야 월별 예산 저장이 되살리지 않는다
         return askSheet({ action: 'budgetPut', month: month, plan: now, by: '' }).then(() => now);
       })
       .then((now) => {
@@ -16299,6 +16313,26 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       });
   };
 
+  // 세팅명 담기 — 같은 값이면 다시 보내지 않는다. 빈 값은 '' 로 담는다 (지운 것도 남아야 덮이지 않는다)
+  const saveSetting = (hit, now) => {
+    const rowId = hit.dataset.row;
+    const text = String(hit.value || '').trim();
+    settingDraft[rowId] = hit.value;
+    window.clearTimeout(settingTimer[rowId]);
+    const go = () => {
+      const row = allPlanRows().find((one) => String(one.id) === String(rowId));
+      if (row && String(row.setting || '') === text) { delete settingDraft[rowId]; return; }
+      if (row) row.setting = text;              // 다시 그려도 적은 값이 보이게 먼저 단다
+      putRowField(rowId, 'setting', text, hit, '세팅명')
+        .then(() => { if (String(settingDraft[rowId] || '').trim() === text) delete settingDraft[rowId]; });
+    };
+    if (now) go(); else settingTimer[rowId] = window.setTimeout(go, 1000);
+  };
+  eventReport.addEventListener('input', (event) => {
+    const hit = event.target.closest('[data-er="setting"]');
+    if (hit) saveSetting(hit, false);
+  });
+
   eventReport.addEventListener('change', (event) => {
     const hit = event.target.closest('[data-er]');
     if (!hit) return;
@@ -16311,13 +16345,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       putUsed(hit.dataset.row, money, hit);
       return;
     }
-    if (what === 'setting') {
-      // 세팅명은 손으로 적는 칸이다 — 월별 예산 그 줄의 setting 에 담는다
-      const text = String(hit.value || '').trim();
-      hit.value = text;
-      putRowField(hit.dataset.row, 'setting', text, hit, '세팅명');
-      return;
-    }
+    if (what === 'setting') { saveSetting(hit, true); return; }
     if (what === 'usedFile') {
       const picked = Array.from(hit.files || []);
       hit.value = '';                   // 같은 파일을 다시 골라도 change 가 오게
