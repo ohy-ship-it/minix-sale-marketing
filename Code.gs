@@ -1737,7 +1737,13 @@ function checkMediaPush() {
     lines.push('· MY_PAGES_URL : ' + myPagesUrl_());
     lines.push('· MEDIA_PUSH_KEY : ' + key.length + '자, ' + key.slice(0, 4) + '… 로 시작');
     lines.push('');
-    lines.push('미닉스 워크스페이스 Render 환경변수의 MEDIA_PUSH_KEY 와 같은 값이어야 합니다.');
+    /* 지문(SHA-256) — 열쇠를 되돌려 알 수 없는 값이라 남에게 보여도 된다.
+       미닉스 Render 에 열쇠를 넣을 수 없을 때 이 지문을 미닉스 코드에 적어 두면 열린다. */
+    var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, key, Utilities.Charset.UTF_8);
+    var hex = digest.map(function (b) { return ('0' + (b & 255).toString(16)).slice(-2); }).join('');
+    lines.push('· 지문 (SHA-256) : ' + hex);
+    lines.push('');
+    lines.push('미닉스 워크스페이스에 같은 열쇠가 있거나, 위 지문이 미닉스 코드에 적혀 있어야 합니다.');
   } catch (error) {
     lines.push('아직 쓸 수 없습니다.');
     lines.push('');
