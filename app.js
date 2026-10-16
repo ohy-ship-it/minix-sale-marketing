@@ -11125,7 +11125,7 @@ if (creativePerformance) {
       if (picked.length && picked.indexOf(objectiveOf(row)) < 0) return false;
       // 소재 이름에는 대괄호가 없다 (6108_20260827_flender-mini_price-66_image_ljm).
       // 그래서 대괄호 조건은 광고그룹 이름에만 쓴다.
-      // 모든 계정에서 찾은 줄은 이미 그 말로 골라 온 것이다 (캠페인 이름으로 걸린 것도 있어 다시 거르지 않는다)
+      // 모든 계정에서 찾은 줄은 이미 그 말로 골라 온 것이다 (브랜드검색은 소재 이름으로도 걸려 다시 거르지 않는다)
       const deepNow = deepFor && groupQuery.trim() === deepFor;
       if (!deepNow && groupWords.length
         && !groupWords.some((one) => perfNameHit(row.adsetName, one, groupBracket))) return false;
@@ -11696,7 +11696,7 @@ if (creativePerformance) {
      그래서 다른 계정(CJ · 컬리 같은 협력광고 계정)의 소재나 광고비가 작은 소재는 검색해도 안 나왔다.
 
      여기서는 매체별 성과의 전매체 검색처럼 **매체마다 볼 수 있는 계정을 다 훑어**
-     광고그룹 이름(또는 캠페인 이름)에 검색어가 든 광고그룹을 찾고, 그 광고그룹의 소재만 받는다
+     광고그룹 이름에 검색어가 든 광고그룹을 찾고(매체별 성과와 같은 규칙), 그 광고그룹의 소재만 받는다
      (manyCreatives — 같은 계정끼리 묶어 한 번에). 광고그룹으로 좁혀 받으므로 120개 끝에 안 걸린다.
      카카오는 보고서가 광고비 큰 캠페인 다섯 개까지만 광고그룹을 펼쳐 그 밖은 못 찾을 수 있다. */
   const deepWords = () => String(groupQuery || '').split(',')
@@ -11727,12 +11727,10 @@ if (creativePerformance) {
       action: `${key}Report`, account: acc.accountId || acc.id, since: range.since, until: range.until,
       refresh: Boolean(refresh) || undefined, all: key === 'naverSa' ? true : undefined,
     }).then((body) => {
-      const named = {};
-      (body.campaigns || []).forEach((one) => { named[one.id] = one.name; });
       // 브랜드검색은 캠페인 자리에 광고그룹이 온다 — 그쪽에서 찾는다
       const pool = key === 'naverSa' ? (body.campaigns || []) : (body.adsets || []);
-      const hit = pool.filter((row) => words.some((w) => perfNameHit(row.name, w, false)
-        || perfNameHit(row.campaignName || named[row.campaignId] || '', w, false)));
+      // 매체별 성과 전매체와 같은 규칙 — 광고그룹 이름만 본다 (캠페인 이름까지 보면 남의 광고그룹이 섞인다)
+      const hit = pool.filter((row) => words.some((w) => perfNameHit(row.name, w, false)));
       return { acc: acc, ids: hit.map((row) => String(row.id)) };
     }).catch(() => ({ acc: acc, ids: [] })))))
     .then((packs) => {

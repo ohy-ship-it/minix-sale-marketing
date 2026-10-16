@@ -3661,17 +3661,25 @@ function manyCreatives_(payload) {
 /* ── 모든 계정에서 소재 찾기 (소재별 결과 · 전매체) ─────────────────────
    화면이 계정마다 보고서를 따로 부르면 그 왕복(1.5~4초)이 계정 수 × 매체 수만큼 쌓인다
    (메타 계정이 여덟이라 그것만 수십 초). 그래서 **매체 하나를 한 번에** 여기서 끝낸다:
-     ① 계정을 다 훑어 광고그룹 · 캠페인 이름에 검색어가 든 광고그룹을 찾고
+     ① 계정을 다 훑어 광고그룹 이름에 검색어가 든 광고그룹을 찾고
      ② 걸린 계정만 그 광고그룹의 소재를 받는다.
-   메타는 계정마다 보고서를 통째로 받지 않고, 인사이트를 이름 조건(CONTAIN)으로 걸러
-   **모든 계정을 한꺼번에**(fetchAll) 묻는다 — 보고서 여덟 번이 요청 한 묶음이 된다.
-   다른 매체는 보고서를 읽어 거른다 (보고서는 5분 담아 두므로 다시 찾으면 빠르다). */
-var FIND_LIMIT_GROUPS = 60;
 
-function findHit_(words, row) {
-  var name = String((row && row.name) || '').toLowerCase();
-  var camp = String((row && row.campaignName) || '').toLowerCase();
-  return words.some(function (w) { return name.indexOf(w) >= 0 || (camp && camp.indexOf(w) >= 0); });
+   **고르는 규칙은 매체별 성과 전매체와 같다** — 광고그룹 이름만 본다 (브랜드검색만 소재 이름 ·
+   광고그룹 이름 둘 다). 예전에는 캠페인 이름도 봤더니, 캠페인 이름에 검색어가 든 남의 광고그룹까지
+   걸려 두 화면이 다른 숫자를 말했다.
+
+   빨리 찾는 길 (보고서를 통째로 받지 않는다):
+     메타    인사이트를 이름 조건(CONTAIN)으로 걸러 모든 계정을 한꺼번에(fetchAll)
+     구글    계정마다 광고그룹 이름 한 줄짜리 질의를 한꺼번에(fetchAll) — 보고서는 질의가 일곱 번이다
+     GFA     적재 시트를 **한 번만** 훑는다 (계정마다 두 번씩 훑던 것)
+     브랜드검색 짜임새 · 숫자를 담아 둔 것에서 바로 거른다
+     카카오   보고서로 찾는다 (이름으로 거르는 길이 없다) */
+var FIND_LIMIT_GROUPS = 150;     // 매체 하나에서 받을 광고그룹 수
+var FIND_CREATIVE_LIMIT = 300;   // 계정 하나에서 받을 소재 수 (보통은 120 — 찾을 때만 넉넉히)
+
+function findHit_(words, name) {
+  var text = String(name || '').toLowerCase();
+  return words.some(function (w) { return text.indexOf(w) >= 0; });
 }
 
 function findMetaGroups_(accounts, words, since, until) {
@@ -3681,11 +3689,9 @@ function findMetaGroups_(accounts, words, since, until) {
     var id = String(acc.id || '');
     if (id.indexOf('act_') !== 0) id = 'act_' + String(acc.accountId || id);
     words.forEach(function (w, wi) {
-      ['adset.name', 'campaign.name'].forEach(function (field, fi) {
-        jobs.push({ key: id + '|' + wi + '|' + fi, account: id, path: '/' + id + '/insights',
-          params: { level: 'adset', fields: 'adset_id,adset_name,campaign_name,spend', time_range: range,
-            limit: 500, filtering: JSON.stringify([{ field: field, operator: 'CONTAIN', value: w }]) } });
-      });
+      jobs.push({ key: id + '|' + wi, account: id, path: '/' + id + '/insights',
+        params: { level: 'adset', fields: 'adset_id,adset_name,spend', time_range: range,
+          limit: 500, filtering: JSON.stringify([{ field: 'adset.name', operator: 'CONTAIN', value: w }]) } });
     });
   });
   var got = graphMany_(jobs);
@@ -3696,12 +3702,103 @@ function findMetaGroups_(accounts, words, since, until) {
     if (!body) return;
     answered += 1;
     (body.data || []).forEach(function (row) {
+      // 메타가 대소문자를 어떻게 견주든 화면과 같은 규칙으로 한 번 더 본다
+      if (!findHit_(words, row.adset_name)) return;
       if (!out[job.account]) out[job.account] = [];
       var id = String(row.adset_id || '');
       if (id && out[job.account].indexOf(id) < 0) out[job.account].push(id);
     });
   });
-  return { groups: out, answered: answered };
+  return { groups: out, answered: answered, asked: jobs.length };
+}
+
+// 구글 — 계정마다 광고그룹 이름만 묻는 질의 하나를 한꺼번에 보낸다 (한 쪽 = 1만 줄까지)
+function findAdsGroups_(accounts, words, since, until) {
+  var token = adsAccessToken_();
+  var dev = adsProperty_('GOOGLE_ADS_DEVELOPER_TOKEN');
+  var login = adsProperty_('GOOGLE_ADS_LOGIN_CUSTOMER_ID').replace(/[^0-9]/g, '');
+  var query = 'SELECT ad_group.id, ad_group.name FROM ad_group WHERE segments.date BETWEEN "'
+    + since + '" AND "' + until + '" AND metrics.impressions > 0';
+  var ids = accounts.map(function (acc) { return String(acc.accountId || acc.id).replace(/[^0-9]/g, ''); })
+    .filter(function (id) { return !!id; });
+  var answers = [];
+  try {
+    answers = UrlFetchApp.fetchAll(ids.map(function (id) {
+      return { url: ADS_URL + '/customers/' + id + '/googleAds:search', method: 'post',
+        contentType: 'application/json', muteHttpExceptions: true,
+        headers: { Authorization: 'Bearer ' + token, 'developer-token': dev, 'login-customer-id': login },
+        payload: JSON.stringify({ query: query }) };
+    }));
+  } catch (error) { answers = []; }
+  var out = {};
+  var notes = [];
+  ids.forEach(function (id, i) {
+    var response = answers[i];
+    var rows = null;
+    if (response && response.getResponseCode() < 400) {
+      try {
+        var body = JSON.parse(response.getContentText() || '{}');
+        if (!body.nextPageToken) rows = body.results || [];
+      } catch (ignore) { rows = null; }
+    }
+    if (rows === null) {
+      // 한 쪽에 다 안 들어왔거나 실패했으면 그 계정만 예전 길로 (쪽을 넘기며) 받는다
+      try { rows = adsQuery_(id, query, 8); }
+      catch (error) { notes.push(id + ' — ' + String((error && error.message) || error)); return; }
+    }
+    rows.forEach(function (row) {
+      var group = row.adGroup || {};
+      if (!findHit_(words, group.name)) return;
+      if (!out[id]) out[id] = [];
+      var gid = String(group.id || '');
+      if (gid && out[id].indexOf(gid) < 0) out[id].push(gid);
+    });
+  });
+  return { groups: out, notes: notes };
+}
+
+// GFA — 시트를 한 번만 훑어 광고그룹(애셋그룹)을 고르고 그 소재를 바로 준다
+function findNaver_(words, since, until, refresh) {
+  // 시트를 통째로 훑는 일이라 담아 둔다 (적재하면 판 번호가 바뀌어 옛 값은 안 쓴다)
+  var cache = CacheService.getScriptCache();
+  var key = ['naverFind', naverStamp_(false), words.join(','), since, until].join('|');
+  if (!refresh) {
+    var hit0 = cacheGet_(cache, key);
+    if (hit0) { try { return JSON.parse(hit0); } catch (ignore) { /* 다시 훑는다 */ } }
+  }
+  var result = findNaverScan_(words, since, until);
+  cachePut_(cache, key, JSON.stringify(result), META_CACHE_SECONDS);
+  return result;
+}
+
+function findNaverScan_(words, since, until) {
+  var found = naverGather_('', since, until);
+  var hit = {};
+  ['AD_SET', 'ASSET_GROUP'].forEach(function (level) {
+    var bucket = found.levels[level] || {};
+    Object.keys(bucket).forEach(function (id) {
+      if (findHit_(words, bucket[id].name)) hit[id] = true;
+    });
+  });
+  var bucket = found.levels.CREATIVE || {};
+  var rows = Object.keys(bucket).map(function (id) { return bucket[id]; })
+    .filter(function (row) { return !!hit[String(row.adsetId)]; })
+    .sort(function (a, b) { return b.spend - a.spend; });
+  rows.forEach(function (row) { row.video = ''; row.source = 'naver'; });
+  return { rows: rows, groups: Object.keys(hit).length };
+}
+
+// 브랜드검색 — 매체별 성과와 같게 소재 이름 · 광고그룹 이름 둘 다 본다 (꺼진 것도)
+function findNaverSa_(words, since, until, refresh) {
+  var body = naverSaCreatives_({ since: since, until: until, refresh: refresh, all: true });
+  var groups = {};
+  var rows = (body.creatives || []).filter(function (row) {
+    if (!findHit_(words, row.name) && !findHit_(words, row.adsetName)) return false;
+    groups[String(row.adsetId)] = true;
+    return true;
+  });
+  rows.forEach(function (row) { row.source = 'naverSa'; });
+  return { rows: rows, groups: Object.keys(groups).length };
 }
 
 function findCreatives_(payload) {
@@ -3712,36 +3809,44 @@ function findCreatives_(payload) {
   var until = String((payload && payload.until) || '');
   var refresh = !!(payload && payload.refresh);
   if (!words.length) throw new Error('찾을 말이 없습니다.');
+
+  if (source === 'naver' || source === 'naverSa') {
+    var quick = source === 'naver' ? findNaver_(words, since, until, refresh)
+      : findNaverSa_(words, since, until, refresh);
+    return { ok: true, source: source, rows: quick.rows, groups: quick.groups, accounts: 0,
+      notes: [], fetchedAt: new Date().toISOString() };
+  }
+
   var fns = {
     meta: [metaAccounts_, metaReport_, metaCreatives_],
     google: [adsAccounts_, adsReport_, adsCreatives_],
-    kakao: [kakaoAccounts_, kakaoReport_, kakaoCreatives_],
-    naver: [naverAccounts_, naverReport_, naverCreatives_],
-    naverSa: [naverSaAccounts_, naverSaReport_, naverSaCreatives_]
+    kakao: [kakaoAccounts_, kakaoReport_, kakaoCreatives_]
   }[source];
   if (!fns) throw new Error('모르는 매체입니다: ' + source);
 
   var accounts = (fns[0]() || []).filter(function (one) { return one && !one.disabled; });
   var notes = [];
   var groups = {};          // 계정 → [광고그룹 id]
+  var done = false;
 
   if (source === 'meta') {
     var fast = findMetaGroups_(accounts, words, since, until);
     groups = fast.groups;
-    if (!fast.answered) notes.push('메타 이름 거르기가 안 돼 보고서로 찾았습니다.');
+    done = fast.answered === fast.asked;   // 하나라도 못 받았으면 보고서로 다시 찾는다
+    if (!done) { groups = {}; notes.push('메타 이름 거르기가 일부 안 돼 보고서로 찾았습니다.'); }
+  } else if (source === 'google') {
+    var g = findAdsGroups_(accounts, words, since, until);
+    groups = g.groups;
+    notes = notes.concat(g.notes);
+    done = true;
   }
-  if (source !== 'meta' || !Object.keys(groups).length && notes.length) {
+  if (!done) {
     accounts.forEach(function (acc) {
       var id = String(acc.accountId || acc.id);
       try {
-        var body = fns[1]({ account: id, since: since, until: until, refresh: refresh, all: source === 'naverSa' });
-        var named = {};
-        (body.campaigns || []).forEach(function (one) { named[one.id] = one.name; });
-        // 브랜드검색은 캠페인 자리에 광고그룹이 온다
-        var pool = source === 'naverSa' ? (body.campaigns || []) : (body.adsets || []);
-        pool.forEach(function (row) {
-          var look = { name: row.name, campaignName: row.campaignName || named[row.campaignId] || '' };
-          if (!findHit_(words, look)) return;
+        var body = fns[1]({ account: id, since: since, until: until, refresh: refresh });
+        (body.adsets || []).forEach(function (row) {
+          if (!findHit_(words, row.name)) return;
           if (!groups[id]) groups[id] = [];
           if (groups[id].indexOf(String(row.id)) < 0) groups[id].push(String(row.id));
         });
@@ -3757,12 +3862,18 @@ function findCreatives_(payload) {
     var ids = groups[id].slice(0, Math.max(FIND_LIMIT_GROUPS - count, 0));
     if (!ids.length) return;
     count += ids.length;
-    try {
-      var body = fns[2]({ account: id, adsets: ids, since: since, until: until, refresh: refresh });
-      ((body && body.creatives) || []).forEach(function (one) { one.source = source; rows.push(one); });
-      if (body && body.notice) notes.push(body.notice);
-    } catch (error) {
-      notes.push(id + ' — ' + String((error && error.message) || error));
+    /* 메타는 광고그룹 번호를 주소(filtering)에 싣는다. UrlFetchApp 은 주소를 2KB 까지만 보내므로
+       20개씩 나눠 받는다. 구글은 본문(POST)이라, 카카오는 안에서 40개씩 나눠 묻는다. */
+    var size = source === 'meta' ? 20 : ids.length;
+    for (var at = 0; at < ids.length; at += size) {
+      try {
+        var body = fns[2]({ account: id, adsets: ids.slice(at, at + size), since: since, until: until,
+          refresh: refresh, limit: FIND_CREATIVE_LIMIT });
+        ((body && body.creatives) || []).forEach(function (one) { one.source = source; rows.push(one); });
+        if (body && body.notice) notes.push(body.notice);
+      } catch (error) {
+        notes.push(id + ' — ' + String((error && error.message) || error));
+      }
     }
   });
   var total = Object.keys(groups).reduce(function (n, id) { return n + groups[id].length; }, 0);
@@ -3832,7 +3943,8 @@ function metaCreatives_(payload) {
   var window = META_WINDOWS.indexOf(String(payload.attribution || '')) >= 0
     ? String(payload.attribution) : '';
   var cache = CacheService.getScriptCache();
-  var key = ['metaAds', scope, many.join(','), since, until, window || 'default'].join('|');
+  var cap = Math.min(Number(payload.limit) || CREATIVE_LIMIT, 500);
+  var key = ['metaAds', scope, many.join(','), since, until, window || 'default', cap].join('|');
   if (!payload.refresh) {
     var hit = cacheGet_(cache, key);
     if (hit) {
@@ -3874,7 +3986,7 @@ function metaCreatives_(payload) {
       // 동영상 평균 재생시간(초) · 소재노출위치 · 연령. 뒤의 둘은 아래에서 채운다.
       watch: metaWatch_(row), plays: metaPlays_(row)
     }, window);
-  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
+  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, cap);
 
   // 돈을 쓴 광고의 소재만 가져온다 (한 번에 50개씩 id 로 물어본다)
   //   thumbnail_url 은 64x64 라 화면에서 뭉개진다. 그래서 큰 이미지를 차례로 찾는다.
@@ -4012,7 +4124,8 @@ function adsCreatives_(payload) {
     return String(one).replace(/[^0-9]/g, '');
   }).filter(function (one) { return !!one; });
   var cache = CacheService.getScriptCache();
-  var key = ['adsAds', customer, campaign, adGroup, many.join(','), since, until].join('|');
+  var cap = Math.min(Number(payload.limit) || CREATIVE_LIMIT, 500);
+  var key = ['adsAds', customer, campaign, adGroup, many.join(','), since, until, cap].join('|');
   if (!payload.refresh) {
     var hit = cacheGet_(cache, key);
     if (hit) {
@@ -4150,7 +4263,7 @@ function adsCreatives_(payload) {
       entry.thumbnail = 'https://img.youtube.com/vi/' + entry.video + '/mqdefault.jpg';
     }
     return entry;
-  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
+  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, cap);
 
   var result = {
     ok: true,
@@ -4785,7 +4898,8 @@ function kakaoCreatives_(payload) {
   many.forEach(function (one) { wantMany[String(one)] = true; });
   var window = kakaoWindow_(payload.attribution);
   var cache = CacheService.getScriptCache();
-  var key = ['kakaoAds', account, campaign, adGroup, many.join(','),
+  var cap = Math.min(Number(payload.limit) || CREATIVE_LIMIT, 500);
+  var key = ['kakaoAds', account, campaign, adGroup, many.join(','), cap,
     when.since, when.until, window].join('|');
   if (!payload.refresh) {
     var hit = cacheGet_(cache, key);
@@ -4816,7 +4930,7 @@ function kakaoCreatives_(payload) {
     if (adGroup) return row.id === adGroup;
     if (campaign) return row.campaignId === campaign;
     return true;
-  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, KAKAO_ADGROUP_CHUNK);
+  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, many.length ? 200 : KAKAO_ADGROUP_CHUNK);
 
   var empty = {
     ok: true, source: 'kakao', scope: adGroup || campaign || account,
@@ -4827,10 +4941,13 @@ function kakaoCreatives_(payload) {
   var byAdset = {};
   picked.forEach(function (row) { byAdset[row.id] = row; });
 
-  var rows = kakaoReportRows_('/adGroups/report', {
-    adGroupId: picked.map(function (row) { return row.id; }).join(','),
-    metricsGroup: KAKAO_METRICS, level: 'CREATIVE'
-  }, when, account);
+  var rows = [];
+  kakaoChunks_(picked, KAKAO_ADGROUP_CHUNK).forEach(function (chunk) {
+    rows = rows.concat(kakaoReportRows_('/adGroups/report', {
+      adGroupId: chunk.map(function (row) { return row.id; }).join(','),
+      metricsGroup: KAKAO_METRICS, level: 'CREATIVE'
+    }, when, account));
+  });
 
   // 소재 줄에 광고그룹 id 도 함께 오면 어느 그룹 것인지 이어 둔다.
   var owner = {};
@@ -4859,7 +4976,7 @@ function kakaoCreatives_(payload) {
     }, window);
   }).filter(function (row) {
     return !row.message;   // 메시지 소재는 위와 같은 이유로 뺀다
-  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
+  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, cap);
 
   var filled = kakaoFillCreatives_(creatives, account, picked.map(function (row) { return row.id; }));
   // 광고그룹 이름은 위에서 되짚은 adsetId 로 채운다 (보고서에는 안 실려 온다)
@@ -6257,6 +6374,7 @@ function naverCreatives_(payload) {
 
   // 성과 쪽과 같이 담아 둔다. 여기도 시트를 통째로 훑어 10초쯤 걸린다.
   var cache = CacheService.getScriptCache();
+  var cap = CREATIVE_LIMIT;
   var key = ['naverAds', naverStamp_(false), account, campaign, adset, many.join(','),
     when.since, when.until].join('|');
   if (!payload.refresh) {
@@ -6281,7 +6399,7 @@ function naverCreatives_(payload) {
     if (adset) return row.adsetId === adset;
     if (campaign) return row.campaignId === campaign;
     return true;
-  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, CREATIVE_LIMIT);
+  }).sort(function (a, b) { return b.spend - a.spend; }).slice(0, cap);
 
   var result = {
     ok: true,
