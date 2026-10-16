@@ -16014,6 +16014,15 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     return out;
   };
   const hasHand = (row) => Object.keys(handExtra(row)).length > 0;
+  /* 수기 매체를 몇 줄 보냈고 미닉스가 몇 줄 받았는지 적는다 — 어긋나면 어디서 끊겼는지 바로 보인다.
+     보냈는데 0 이면 Apps Script 나 미닉스 서버가 옛 판이다 (둘 다 수기 매체를 모르면 0 이 온다). */
+  const handSay = (row, got) => {
+    const sent = Object.keys(handExtra(row)).reduce((n, k) => n + handExtra(row)[k].length, 0);
+    if (!sent) return '';
+    const took = got && got.hand;
+    if (!took) return ` (수기 매체 ${sent}줄을 보냈는데 미닉스가 0줄 받았습니다)`;
+    return ` (수기 매체 ${took}줄)`;
+  };
   const minixWaiting = (row) => !linkOf(row)
     && ((byChannel[slotOf(row)] || []).length > 0 || hasHand(row));
 
@@ -16074,7 +16083,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       return Promise.all(jobs.map((job) => askSheet({ action: 'mediaPush',
         promoId: job.promoId, product: job.product, files: files,
         extra: handExtra(job.row), by: '' })
-        .then((got) => ({ ok: true, what: `${job.what}${got && got.hand ? ` (수기 매체 ${got.hand}줄)` : ''}`, job: job }))
+        .then((got) => ({ ok: true, what: job.what + handSay(job.row, got), job: job }))
         .catch((reason) => ({ ok: false, what: job.what, why: reason.message }))))
         .then((done) => {
           const good = done.filter((one) => one.ok);
@@ -16388,7 +16397,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     if (!row || !link) return;
     askSheet({ action: 'mediaPush', promoId: link.id, product: link.sent || link.product || row.sku || '',
       files: [], extra: handExtra(row), by: '' })
-      .then((got) => { pushNote = `손으로 적은 매체를 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)} (${(got && got.hand) || 0}줄)`; render(); })
+      .then((got) => { pushNote = `손으로 적은 매체를 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)}${escape(handSay(row, got) || ' (수기 매체 0줄)')}`; render(); })
       .catch((reason) => { pushNote = `손으로 적은 매체를 미닉스에 못 넣었습니다 — ${escape(reason.message)}`; render(); });
   };
 
