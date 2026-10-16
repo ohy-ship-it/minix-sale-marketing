@@ -19294,5 +19294,18 @@ const gfaWatch = () => {
     .catch(() => { /* 로그인 전이거나 시트가 느린 것이다. 알림 때문에 화면을 막지 않는다 */ });
 };
 
+/* 눈으로 한 번 보려고 둔 길. 주소에 ?gfa-demo=1 을 붙이면 그 자리에서 띄운다.
+   (숫자를 적으면 그만큼 멈춘 것으로 친다 — ?gfa-demo=72 면 사흘)
+   진짜로 멈출 때까지 기다리지 않고 글 · 모양 · 단추를 확인할 수 있어야 한다.
+   시트에 묻지 않으므로 적재가 멀쩡해도 뜬다. */
+const gfaDemo = () => {
+  let found = '';
+  try { found = new URLSearchParams(location.search).get('gfa-demo') || ''; } catch { found = ''; }
+  if (!found) return;
+  const hours = Number(found) > 1 ? Number(found) : 30;
+  gfaShow({ hours: hours, loadedAt: new Date(Date.now() - hours * 3600000).toISOString() });
+};
+
+window.setTimeout(gfaDemo, 600);
 // 로그인이 끝나고 화면이 자리를 잡은 뒤에 묻는다 (첫 화면 그리기와 겹치지 않게)
 window.setTimeout(gfaWatch, 4000);
