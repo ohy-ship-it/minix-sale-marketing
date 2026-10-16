@@ -14584,6 +14584,9 @@ if (eventReport) {
       <td>${escape(row.kind || '') || dash}</td>
       <td>${escape(row.channel || '') || dash}</td>
       <td class="er-event">${escape(row.event || '') || dash}</td>
+      <td class="er-setting-cell" data-er="skip"><input type="text" class="er-setting-in" data-er="setting"
+        data-row="${id}" value="${escape(row.setting || '')}" placeholder="—"
+        title="세팅명을 손으로 적습니다 — 월별 예산의 그 줄에 담겨 다른 사람에게도 보입니다"></td>
       <td class="bg-live">${escape(row.live || '') || dash}</td>
       <td class="bg-span">${at}</td>
       <td class="perf-num">${row.goal ? num(row.goal) : dash}</td>
@@ -14637,7 +14640,7 @@ if (eventReport) {
                        고정비의 '브랜드검색' 항목에 이미 잡혀 있다 — 또 넣으면 두 번 센다)
        브검포함 광고비  붙인 전매체 파일의 집행 광고비. 파일에 브랜드검색 줄이 있으면 들어 있다
      예전 이름(실사용비 · 집행 광고비)으로는 둘이 왜 다른지 표만 봐서는 알 수가 없었다. */
-  const HEAD = ['구분', '파트', '판매채널', '행사명', '라이브일정', '광고기간', '목표수량', '목표 CPS',
+  const HEAD = ['구분', '파트', '판매채널', '행사명', '세팅명', '라이브일정', '광고기간', '목표수량', '목표 CPS',
     '광고비', '달성률', '브검제외 광고비', '브검포함 광고비', '총매출', '판매량', '실 CPA', 'ROAS', '파일'];
   // 이름만으로는 무엇을 무엇으로 나눈 값인지 알 수 없는 칸에 한 줄 적어 둔다
   const HEAD_NOTE = {
@@ -14648,8 +14651,9 @@ if (eventReport) {
     '총매출': '적은 총 매출 · 없으면 파일',
     '판매량': '손으로 적은 값만',
     '실 CPA': '브검제외 광고비 · 없으면 파일 ÷ 판매량',
+    '세팅명': '손으로 적는 칸',
   };
-  const HEAD_NUM_FROM = 6;         // 이 칸부터 숫자다 (오른쪽 맞춤)
+  const HEAD_NUM_FROM = 7;         // 이 칸부터 숫자다 (오른쪽 맞춤)
 
   /* ── ① 종합결과 ────────────────────────────────────────────────
      붙인 파일을 다 더한 값이다. 그 위에 **사람이 적은 값이 이긴다** — 차례는 늘 이것이다.
@@ -15839,7 +15843,11 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
 
      **쓰기 전에 그 달을 다시 읽는다.** 이 화면을 열어 둔 사이에 남이 월별 예산을
      고쳤을 수 있는데, 들고 있던 옛 판을 그대로 덮으면 그 고침이 사라진다. */
-  const putUsed = (rowId, money, say) => {
+  const putUsed = (rowId, money, say) => putRowField(rowId, 'used', money, say, '브검제외 광고비');
+
+  /* 줄 하나의 칸 하나를 월별 예산 그 줄에 담는다 (쓰기 전에 그 달을 다시 읽는다 — 남이 고친 줄을 덮지 않게).
+     값이 비면 칸을 지운다. */
+  const putRowField = (rowId, key, value, say, label) => {
     const mine = month;
     if (say) say.classList.add('is-saving');
     return askSheet({ action: 'budgetGet', month: month })
@@ -15849,7 +15857,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         if (!Array.isArray(now.rows)) now.rows = [];
         const row = now.rows.find((one) => String(one.id) === String(rowId));
         if (!row) throw new Error('월별 예산에서 그 줄을 찾지 못했습니다 (그새 지워진 듯합니다).');
-        row.used = money;
+        if (value === '' || value === null || value === undefined) delete row[key];
+        else row[key] = value;
         return askSheet({ action: 'budgetPut', month: month, plan: now, by: '' }).then(() => now);
       })
       .then((now) => {
@@ -15861,7 +15870,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       })
       .catch((reason) => {
         if (say) say.classList.remove('is-saving');
-        error = `브검제외 광고비를 담지 못했습니다 — ${reason.message}`;
+        error = `${label}: 담지 못했습니다 — ${reason.message}`;
         render();
       });
   };
@@ -16300,6 +16309,13 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       const money = Number(String(hit.value).replace(/[,s₩원]/g, '')) || 0;
       hit.value = money ? num(money) : '';
       putUsed(hit.dataset.row, money, hit);
+      return;
+    }
+    if (what === 'setting') {
+      // 세팅명은 손으로 적는 칸이다 — 월별 예산 그 줄의 setting 에 담는다
+      const text = String(hit.value || '').trim();
+      hit.value = text;
+      putRowField(hit.dataset.row, 'setting', text, hit, '세팅명');
       return;
     }
     if (what === 'usedFile') {

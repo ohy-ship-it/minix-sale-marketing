@@ -2191,3 +2191,11 @@ html.is-gfa-stale,html.is-gfa-stale body{overflow:hidden}
   cursor: pointer;
   font-size: 14px;
 }
+
+/* 행사별 결과 — 세팅명 (손으로 적는 칸). 브검제외 광고비 칸과 같은 모양 */
+.er-setting-cell{min-width:120px}
+.er-setting-in{width:100%;box-sizing:border-box;border:1px solid transparent;border-radius:5px;padding:2px 4px;
+  background:transparent;font:inherit;color:inherit}
+.er-setting-in:hover{border-color:var(--line,#e5e4df);background:#fff}
+.er-setting-in:focus{border-color:#9fb3c8;background:#fff;outline:none}
+.er-setting-in.is-saving{opacity:.6}
