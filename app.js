@@ -11113,6 +11113,11 @@ if (creativePerformance) {
   const shown = () => {
     // 한 줄마다 다시 펴지 않게 찾을 말을 미리 만들어 둔다
     const words = crossProdWords(state.prod);
+    /* 검색어는 **쉼표로 여러 개** — 하나라도 들어 있으면 보여 준다 (매체별 성과 전매체와 같은 규칙).
+       같은 행사를 매체마다 한글 · 영문으로 다르게 적어 둔 것을 한 번에 보려는 것이다. */
+    const split = (text) => String(text || '').split(',').map((one) => one.trim().toLowerCase()).filter(Boolean);
+    const nameWords = split(query);
+    const groupWords = split(groupQuery);
     const rows = creatives.filter((row) => {
       if (onlyMedia && row.media !== onlyMedia) return false;
       if (!crossProdHit(row.media || state.source, row, words)) return false;
@@ -11122,8 +11127,9 @@ if (creativePerformance) {
       // 그래서 대괄호 조건은 광고그룹 이름에만 쓴다.
       // 모든 계정에서 찾은 줄은 이미 그 말로 골라 온 것이다 (캠페인 이름으로 걸린 것도 있어 다시 거르지 않는다)
       const deepNow = deepFor && groupQuery.trim() === deepFor;
-      if (!deepNow && !perfNameHit(row.adsetName, groupQuery.trim().toLowerCase(), groupBracket)) return false;
-      return !query || String(row.name).toLowerCase().indexOf(query.toLowerCase()) >= 0;
+      if (!deepNow && groupWords.length
+        && !groupWords.some((one) => perfNameHit(row.adsetName, one, groupBracket))) return false;
+      return !nameWords.length || nameWords.some((one) => String(row.name).toLowerCase().indexOf(one) >= 0);
     });
 
     const [, , pick, big] = SORTS.find(([key]) => key === sortBy) || SORTS[0];
@@ -11442,12 +11448,12 @@ if (creativePerformance) {
       <div class="perf-filter">
         <div class="perf-search">
           <i data-lucide="search"></i>
-          <input type="search" data-creative="search" value="${perfEscape(query)}" placeholder="소재 이름으로 검색" autocomplete="off">
+          <input type="search" data-creative="search" value="${perfEscape(query)}" placeholder="소재 이름으로 검색 (쉼표로 여러 개)" autocomplete="off">
           ${query ? '<button type="button" class="perf-clear" data-creative="clear" aria-label="지우기">×</button>' : ''}
         </div>
         <div class="perf-search">
           <i data-lucide="layers"></i>
-          <input type="search" data-creative="group" value="${perfEscape(groupQuery)}" placeholder="광고그룹 이름으로 검색" autocomplete="off">
+          <input type="search" data-creative="group" value="${perfEscape(groupQuery)}" placeholder="광고그룹 이름으로 검색 (쉼표로 여러 개)" autocomplete="off">
           ${groupQuery ? '<button type="button" class="perf-clear" data-creative="group-clear" aria-label="지우기">×</button>' : ''}
         </div>
         <label class="perf-check" title="[cj-260901]_none_cj 에서 대괄호 안의 cj-260901 만 봅니다">
