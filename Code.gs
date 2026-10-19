@@ -8646,7 +8646,7 @@ function budgetGet_(payload) {
    월별 예산 화면이 예전에 읽어 둔 판으로 저장하면 그 칸이 없는 줄이 와서 지워졌다.
    그래서 **보낸 줄에 그 칸이 아예 없으면** 시트에 있던 값을 살려 둔다.
    지울 때는 행사별 결과가 빈 값('' · null)을 실어 보내므로 여기서 되살아나지 않는다. */
-var BUDGET_ROW_KEEP = ['setting', 'minix'];
+var BUDGET_ROW_KEEP = ['setting', 'minix', 'usedFrom'];
 function budgetKeepRowFields_(plan, before) {
   if (!plan || !before || !plan.rows || !before.rows) return;
   var old = {};

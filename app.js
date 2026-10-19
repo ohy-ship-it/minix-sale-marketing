@@ -15682,33 +15682,48 @@ if (eventReport) {
      줄에 파일이 붙어 있으면 가를 수 있다 (예전에는 통째로 건너뛰었다).
      다만 그 줄에 붙은 것이 없고 **공용 파일로만** 잡히는데 같은 채널 줄이 여럿이면
      그대로 둔다 — 그 광고비를 어느 줄 몫으로 넣을지 알 수 없어서다. */
-  const fillPlan = (onlyEmpty) => {
+  /* auto(파일을 붙이거나 뺄 때 저절로) 면 **파일로 채운 값은 늘 파일을 따라간다.**
+     예전에는 빈 칸만 채워서, 한 번 채운 줄에 파일을 더 붙여도 실사용비가 그대로였다.
+     그래서 어디서 온 값인지(usedFrom) 함께 적어 둔다 — 'file' 은 붙인 파일, 'hand' 는 손으로 적은 값.
+       · 손으로 적은 값은 덮지 않는다 (사람이 고쳐 둔 것이 이긴다)
+       · 표가 없는 옛 값은 **그 줄에 지금 파일을 붙였을 때만**(only) 파일 값으로 바꾼다
+       · 파일을 다 빼면 파일로 채운 값도 비운다
+     only 를 주면 그 줄(slot)만 본다 — 줄 하나에 붙였는데 다른 줄까지 건드리지 않게. */
+  const fillPlan = (auto, only) => {
     const ready = [];
     const many = [];
     allPlanRows().forEach((row) => {
       const ch = String(row.channel || '').trim();
       if (!ch) return;
-      // 자동으로 채울 때는 **손으로 적어 둔 값을 덮지 않는다** (사람이 고쳐 둔 것이 이긴다)
-      if (onlyEmpty && rowUsed(row) > 0) return;
       const key = slotOf(row);
+      if (only && only.indexOf(key) < 0) return;
+      const was = rowUsed(row);
+      const from = String(row.usedFrom || '');
+      if (auto && was > 0 && from === 'hand') return;
+      if (auto && was > 0 && from !== 'file' && !only) return;
       const got = spendFor(key);
-      if (!got.rows) return;                      // 이 줄에 잡히는 파일이 없다
+      if (!got.rows) {                            // 이 줄에 잡히는 파일이 없다
+        if (auto && was > 0 && from === 'file') {
+          ready.push({ channel: ch, row: row, spend: 0, brand: 0, rows: 0, clear: true });
+        }
+        return;
+      }
       if (!(byChannel[key] || []).length && twinsOf(ch).length > 1) {
         if (many.indexOf(ch) < 0) many.push(ch);
         return;
       }
+      if (auto && from === 'file' && was === got.spend) return;   // 이미 같은 값이다
       ready.push({ channel: ch, row: row, ...got });
     });
     return { ready: ready, many: many };
   };
 
-  /* auto 를 주면 **묻지 않고** 아직 비어 있는 줄만 채운다.
-     파일을 붙이는 길에 저절로 불린다 — 붙여 놓고 단추를 또 눌러야 채워지는 것을
-     아무도 안 눌러, 정작 숫자를 보는 자리는 늘 비어 있었다.
-     손으로 적어 둔 값은 건드리지 않는다. 그 값까지 다시 채우려면 맨 위
+  /* auto 를 주면 **묻지 않고** 채운다 — 파일을 붙이거나 뺄 때 저절로 불린다.
+     붙여 놓고 단추를 또 눌러야 채워지는 것을 아무도 안 눌러, 정작 숫자를 보는 자리는 늘 비어 있었다.
+     손으로 적어 둔 값은 건드리지 않는다 (fillPlan). 그 값까지 다시 채우려면 맨 위
      [실사용비 채우기] 를 누르면 된다 (그건 적어 둔 값도 덮는다). */
-  const fillUsed = (auto) => {
-    const plan0 = fillPlan(auto);
+  const fillUsed = (auto, only) => {
+    const plan0 = fillPlan(auto, only);
     if (!plan0.ready.length) {
       if (auto) { render(); return; }      // 채울 것이 없으면 조용히 지나간다
       fileNote = plan0.many.length
@@ -15726,6 +15741,7 @@ if (eventReport) {
       + '\n\n월별 예산에 그대로 저장됩니다. 채울까요?')) return;
 
     filling = true;
+    const kept = auto ? fileNote : '';      // 붙였다 · 뺐다는 안내는 남겨 둔다
     fileNote = '';
     error = '';
     render();
@@ -15743,9 +15759,13 @@ if (eventReport) {
         fresh.rows.forEach((row) => {
           const one = byId[String(row.id)];
           if (!one) return;
-          row.used = one.spend;
+          // 그새 누가 손으로 적었으면 저절로 채우기는 물러선다
+          if (auto && row.usedFrom === 'hand' && Number(row.used) > 0) return;
+          row.used = one.spend || '';
+          row.usedFrom = one.spend ? 'file' : '';
           done += 1;
         });
+        if (!done && auto) return { done: 0, fresh: fresh, skip: true };
         if (!done) throw new Error(`${monthName(month)} 에서 채울 줄을 찾지 못했습니다 (그새 지워진 듯합니다).`);
         return askSheet({ action: 'budgetPut', month: month, plan: fresh, by: '' })
           .then(() => ({ done: done, fresh: fresh }));
@@ -15755,11 +15775,15 @@ if (eventReport) {
         if (mine !== month) return;
         plan = got.fresh;
         keepBudget(month, { plan: plan, updatedAt: new Date().toISOString(), updatedBy: saved.by });
-        fileNote = (auto
-          ? `붙인 파일로 <b>브검제외 광고비</b> ${num(got.done)}줄을 채웠습니다 (합계 ${won(total)}) — 월별 예산에도 담았습니다.`
+        if (got.skip) { fileNote = kept; render(); return; }
+        const cleared = plan0.ready.filter((one) => one.clear).length;
+        const said = (auto
+          ? `붙인 파일로 <b>브검제외 광고비</b> ${num(got.done - cleared)}줄을 맞췄습니다 (합계 ${won(total)}) — 월별 예산 실사용비에도 담았습니다.`
           : `실사용비를 <b>${num(got.done)}줄</b> 채웠습니다 (합계 ${won(total)}).`)
+          + (cleared ? ` 파일을 다 뺀 ${num(cleared)}줄은 실사용비를 비웠습니다.` : '')
           + (brand ? ` 브랜드검색 ${won(brand)} 은 뺐습니다 — 고정비에 이미 있습니다.` : '')
           + (plan0.many.length ? ` <b>${escape(plan0.many.join(' · '))}</b> 은 같은 판매채널 줄이 여럿이라 건드리지 않았습니다 — 손으로 나눠 적어 주세요.` : '');
+        fileNote = [kept, said].filter(Boolean).join('<br>');
         render();
       })
       .catch((reason) => {
@@ -15983,10 +16007,13 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
 
      **쓰기 전에 그 달을 다시 읽는다.** 이 화면을 열어 둔 사이에 남이 월별 예산을
      고쳤을 수 있는데, 들고 있던 옛 판을 그대로 덮으면 그 고침이 사라진다. */
-  const putUsed = (rowId, money, say) => putRowField(rowId, 'used', money, say, '브검제외 광고비');
+  /* 어디서 온 값인지 함께 적는다 — 손으로 적은 값은 파일을 붙여도 덮지 않는다 (fillPlan).
+     지우면(0) 표도 지워 다음에 파일을 붙이면 다시 저절로 채워지게 한다. */
+  const putUsed = (rowId, money, say, from) => putRowField(rowId,
+    { used: money, usedFrom: money ? (from || 'hand') : '' }, null, say, '브검제외 광고비');
 
   /* 줄 하나의 칸 하나를 월별 예산 그 줄에 담는다 (쓰기 전에 그 달을 다시 읽는다 — 남이 고친 줄을 덮지 않게).
-     값이 비면 칸을 지운다. */
+     값이 비면 칸을 지운다. key 에 { 칸: 값 } 을 주면 여러 칸을 한 번에 담는다 (value 는 안 쓴다). */
   const putRowField = (rowId, key, value, say, label) => {
     const mine = month;
     if (say) say.classList.add('is-saving');
@@ -15997,7 +16024,11 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         if (!Array.isArray(now.rows)) now.rows = [];
         const row = now.rows.find((one) => String(one.id) === String(rowId));
         if (!row) throw new Error('월별 예산에서 그 줄을 찾지 못했습니다 (그새 지워진 듯합니다).');
-        row[key] = value === null || value === undefined ? '' : value;
+        const fields = (key && typeof key === 'object') ? key : { [key]: value };
+        Object.keys(fields).forEach((name) => {
+          const one = fields[name];
+          row[name] = one === null || one === undefined ? '' : one;
+        });
         return askSheet({ action: 'budgetPut', month: month, plan: now, by: '' }).then(() => now);
       })
       .then((now) => {
@@ -16037,7 +16068,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
 
 지금 적혀 있는 값(${rowUsed(row) ? won(rowUsed(row)) : '없음'})은 덮어씁니다.`
           + ' 월별 예산의 실사용비에 그대로 담깁니다. 채울까요?')) return null;
-        return putUsed(rowId, Math.round(got.spend), say);
+        return putUsed(rowId, Math.round(got.spend), say, 'file');
       })
       .catch((reason) => {
         error = `브검제외 광고비를 채우지 못했습니다 — ${reason.message}`;
@@ -16550,7 +16581,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
           if (good.length) saveFiles(true);
           if (good.length && channel) pushToMinix([channel], good);
           else if (good.length) pushNote = '맨 위에 붙인 파일은 어느 행사 것인지 알 수 없어 미닉스로 보내지 않았습니다 — 줄의 📎 로 붙이면 그 행사로 같이 들어갑니다.';
-          if (good.length) { fillUsed(true); return; }
+          // 줄에 붙였으면 그 줄만, 맨 위(공용)에 붙였으면 빈 줄 · 파일로 채운 줄만 맞춘다
+          if (good.length) { fillUsed(true, channel ? [channel] : null); return; }
           render();
         });
     }
@@ -16679,7 +16711,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       const gone = files.splice(Number(hit.dataset.at), 1)[0];
       saveFiles();
       fileNote = `<b>${escape((gone && gone.name) || '파일')}</b> 을 지웠습니다.`;
-      render();
+      fillUsed(true);           // 파일로 채운 실사용비도 남은 파일에 맞춘다
       return;
     }
     if (what === 'offfile') {
@@ -16690,7 +16722,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       delete adsGot[channel];
       saveFiles();
       fileNote = `<b>${escape(channel)}</b> 에서 <b>${escape((gone && gone.name) || '파일')}</b> 을 뺐습니다.`;
-      render();
+      fillUsed(true, [channel]);
       return;
     }
     if (what === 'offone') {
@@ -16700,7 +16732,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       delete adsGot[channel];
       saveFiles();
       fileNote = `<b>${escape(channel)}</b> 에 붙인 파일 ${num(many)}개를 지웠습니다.`;
-      render();
+      fillUsed(true, [channel]);
       return;
     }
     if (what === 'budget') {
@@ -18238,6 +18270,8 @@ if (budgetPlanView) {
       const row = plan.rows.find((one) => one.id === hit.dataset.row);
       if (!row) return;
       row[what] = value;
+      // 실사용비를 손으로 고쳤다 — 행사별 결과에 파일을 붙여도 덮지 않게 표를 단다
+      if (what === 'used') row.usedFrom = value ? 'hand' : '';
     }
     repaint();
     save();
