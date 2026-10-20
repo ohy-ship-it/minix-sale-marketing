@@ -3,32 +3,36 @@
 // 그림은 전부 브라우저(canvas)에서 그린다 — 서버도 외부 API 도 부르지 않는다.
 const bannerMaker = (() => {
   const FONT_FILES = [
-    ['BM Spoqa', 'fonts/SpoqaHanSans-Bold.woff2', '700'],
-    ['BM Spoqa', 'fonts/SpoqaHanSans-Regular.woff2', '400'],
+    ['BM Pretendard', 'fonts/Pretendard-Bold.woff2', '700'],
+    ['BM Pretendard', 'fonts/Pretendard-Regular.woff2', '400'],
     ['BM Nanum Barun', 'fonts/NanumBarunGothic-Bold.woff2', '700'],
     ['BM Nanum Barun', 'fonts/NanumBarunGothic-Regular.woff2', '400'],
   ];
 
   /* 숫자는 각 매체 제작가이드에서 옮겼다.
-     카카오 centers 는 한글 글자 몸통의 세로 중심(y) — 가이드 그림에서 잰 값이고,
-     카카오 '배너 이미지 만들기' 결과와 1px 안에서 같다는 것을 확인했다.
+     카카오는 2026-10-20 개정 가이드(960×300)다. 사이즈 · 글꼴 · 글자 크기 · 색 · 길이(240~526) ·
+     이미지 영역(오브젝트 314×300 · 썸네일 320×222 라운드 18)은 가이드 숫자 그대로고,
+     글자 시작 x(textX)와 줄 위치(centers, 한글 글자 몸통의 세로 중심 y)는 가이드에 숫자가 없어
+     좌우 여백 40 · 세로 가운데 맞춤으로 어림한 값이다 — 카카오 배너 제작툴 결과와 대 보고 맞출 것.
+     (개정 전 1029×258 값은 제작툴과 1px 안에서 맞췄었다.)
      GFA 는 글자 몸통 사이를 gaps 만큼 띄워 쌓고 위아래 가운데에 놓는다 (가이드의 '줄간격').
      280 은 가이드를 못 읽어 네이버 GFA 소재 만들기 화면에서 잰 값이다 —
      메인 32 · 메인 두 줄 · 썸네일 200×200 · 누끼 최대 260×280. 줄간격과 면적 70% 는 어림값.
      썸네일 모서리(radius)는 가이드에 숫자가 없어 그림에서 어림한 값이다. */
   const GFA = {
-    family: 'BM Nanum Barun', probe: 'BM Spoqa', maxKB: 150, w: 750,
+    family: 'BM Nanum Barun', probe: 'BM Pretendard', maxKB: 150, w: 750,
     sub: { size: 26, color: '#2E2E2E' }, margin: 40, gap: 30, chevronGap: 40, preview: '#f2f3f5',
   };
   const SPECS = {
     kakao: {
-      label: '1029×258', w: 1029, h: 258, maxKB: 300,
-      family: 'BM Spoqa', probe: 'BM Nanum Barun',
-      main: { size: 48, color: '#4C4C4C' }, sub: { size: 39, color: '#777777' },
-      textX: 48, textMax: 585, textMin: 290,
-      centers: { two: [100, 162], one: [129] },
-      object: { x: 666, y: 0, w: 315, h: 258, minInk: 219 },
-      thumb: { x: 666, y: 36, w: 315, h: 186, radius: 8, logo: { x: 854, y: 44, w: 120, h: 46 } },
+      label: '960×300', w: 960, h: 300, maxKB: 300,
+      family: 'BM Pretendard', probe: 'BM Nanum Barun',
+      main: { size: 46, color: '#191919' }, mainTwo: { size: 43, color: '#191919' }, sub: { size: 38, color: '#696969' },
+      textX: 40, textMax: 526, textMin: 240,
+      centers: { one: [150], two: [120, 180], three: [94, 148, 206] },
+      object: { x: 606, y: 0, w: 314, h: 300, minInk: 219 },
+      // 로고는 오른쪽 위 AD 표시 자리(66×174, x 894~)를 피해 놓는다
+      thumb: { x: 600, y: 39, w: 320, h: 222, radius: 18, logo: { x: 766, y: 47, w: 120, h: 46 } },
       preview: '#f3f3f3',
     },
     gfa280: {
@@ -57,7 +61,7 @@ const bannerMaker = (() => {
   const MEDIA = {
     kakao: {
       label: '카카오 비즈보드', short: '비즈보드', specs: ['kakao'], slot: ['비즈보드'],
-      note: '1029×258 · 투명 PNG · 300KB 이하 · 스포카 한 산스 (메인 48 Bold #4C4C4C / 서브 39 Regular #777777)',
+      note: '960×300 · 투명 PNG-24 · 300KB 이하 · Pretendard (메인 46 Bold #191919 · 메인 2행이면 43 / 서브 38 Regular #696969) · 2026-10-20 개정 규격',
     },
     gfa: {
       label: 'GFA 스마트채널', short: '스채', specs: ['gfa280', 'gfa200', 'gfa160'], slot: ['스마트채널', '스채'],
@@ -251,7 +255,7 @@ const bannerMaker = (() => {
         const s = Math.min(L.w / logo.width, L.h / logo.height);
         g.drawImage(logo, L.x + L.w - logo.width * s, L.y, logo.width * s, logo.height * s);
       } else {
-        warn('광고주체 표기(로고)가 없습니다 — 로고 PNG 를 넣으면 오른쪽 위 120×46 자리에 들어갑니다.');
+        warn('광고주체 표기가 필요합니다 — 카피에 브랜드명이 없으면 로고 PNG 를 넣어 주세요 (썸네일 오른쪽 위 120×46 자리).');
       }
     }
 
@@ -276,13 +280,13 @@ const bannerMaker = (() => {
       }
     }
     if (chevron && !isKakao && side === 'right') warn('꺾쇠는 오브젝트가 왼쪽일 때만 쓸 수 있어 넣지 않았습니다.');
-    if (isKakao && main2) warn('카카오는 메인 2행을 쓰지 않습니다 — 메인 1행 · 서브만 넣었습니다.');
 
     const LABEL = { main: '메인카피', main2: '메인카피 2행', sub: '서브카피' };
-    const lines = [['main', main, 700], ['main2', spec.main2 ? main2 : '', 700], ['sub', sub, 400]]
+    const twoMain = isKakao && !!main2;   // 카카오 '메인 카피 두 줄형' — 두 줄 모두 43pt
+    const lines = [['main', main, 700], ['main2', spec.main2 || isKakao ? main2 : '', 700], ['sub', sub, 400]]
       .filter(([, text]) => text)
       .map(([which, text, weight]) => {
-        const style = which === 'sub' ? spec.sub : spec.main;
+        const style = which === 'sub' ? spec.sub : (twoMain ? spec.mainTwo : spec.main);
         g.font = `${weight} ${style.size}px "${spec.family}"`;
         const ref = g.measureText('한글가나다');
         return { which, text, weight, style, font: g.font, width: Math.ceil(g.measureText(text).width),
@@ -290,7 +294,7 @@ const bannerMaker = (() => {
       });
     if (!main) bad('메인카피가 비어 있습니다.');
     if (isKakao) {
-      const centers = lines.length > 1 ? spec.centers.two : spec.centers.one;
+      const centers = [spec.centers.one, spec.centers.two, spec.centers.three][Math.min(lines.length, 3) - 1] || spec.centers.one;
       lines.forEach((line, at) => { line.baseline = centers[at] + (line.asc - line.desc) / 2; });
     } else {
       const total = lines.reduce((sum, line, at) => sum + line.asc + line.desc + (at ? spec.gaps[line.which] : 0), 0);
@@ -325,8 +329,15 @@ const bannerMaker = (() => {
       }
     });
     if (isKakao && lines.length) {
-      const longest = Math.max(...Object.values(widths));
-      if (longest < spec.textMin) bad(`카피 길이 ${longest}px — 메인 · 서브 중 하나는 ${spec.textMin}px 이상이어야 합니다.`);
+      if (twoMain) {
+        // 두 줄형은 메인 두 줄이 모두 최소 길이를 채워야 한다 (서브는 제한 없음)
+        ['main', 'main2'].forEach((which) => {
+          if (widths[which] < spec.textMin) bad(`${LABEL[which]} 길이 ${widths[which]}px — 두 줄형은 두 줄 모두 ${spec.textMin}px 이상이어야 합니다.`);
+        });
+      } else {
+        const longest = Math.max(...Object.values(widths));
+        if (longest < spec.textMin) bad(`카피 길이 ${longest}px — 메인 · 서브 중 하나는 ${spec.textMin}px 이상이어야 합니다.`);
+      }
       if (sub && main && main.replace(/\s/g, '') === sub.replace(/\s/g, '')) bad('메인카피와 서브카피가 같습니다.');
     }
     if (chevronAt !== null) {
