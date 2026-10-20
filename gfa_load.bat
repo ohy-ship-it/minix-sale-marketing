@@ -11,23 +11,38 @@ rem   · 전환은 클릭 뒤 며칠까지 붙는다. 다시 받아 최신 값�
 rem 같은 날짜 같은 줄은 덮어쓰기라 여러 번 돌려도 이중 집계되지 않는다.
 
 set LEVELS=CAMPAIGN AD_SET ASSET_GROUP CREATIVE
+rem 파이썬 출력을 UTF-8 로 — 안 그러면 gfa-load-detail.log 의 한글이 깨져 못 읽는다
+set PYTHONIOENCODING=utf-8
 
 echo ────────────────────────────────────────── >> gfa-load-detail.log
 echo [%date% %time%] 적재 시작 >> gfa-load-detail.log
+
+rem 진행 내용은 로그로만 가서, 이 줄이 없으면 창이 1분 가까이 빈 채로 있다
+echo GFA 성과를 받아 시트에 적재하는 중입니다 (30초~1분)…
 
 py get_gfa_report.py --push --level %LEVELS% --login-wait 90 --log gfa-load.log >> gfa-load-detail.log 2>&1
 
 if errorlevel 1 (
   echo [%date% %time%] 실패 — gfa-load.log 를 보세요 >> gfa-load-detail.log
   echo.
-  echo 적재하지 못했습니다. gfa-load.log 에 이유가 적혀 있습니다.
-  rem 사람이 눌러 실행한 경우에만 창을 잡아 둔다 (스케줄러 실행은 그냥 끝난다)
-  if "%1"=="manual" pause
-  exit /b 1
+  echo 적재하지 못했습니다. 이유:
+  powershell -NoProfile -Command "Get-Content -Encoding UTF8 'gfa-load.log' -Tail 1"
+  echo.
+  echo 크롬이 닫혔거나 네이버 로그인이 풀렸으면 gfa_login.bat 으로 다시 로그인한 뒤 눌러 주세요.
+  set CODE=1
+  goto :hold
 )
 
 echo [%date% %time%] 완료 >> gfa-load-detail.log
+set CODE=0
 echo.
 echo 적재를 마쳤습니다. 워크스페이스 매체별 성과 → 네이버 GFA 탭에서 보입니다.
-if "%1"=="manual" pause
-exit /b 0
+powershell -NoProfile -Command "Get-Content -Encoding UTF8 'gfa-load.log' -Tail 1"
+
+:hold
+rem 예전에는 "manual" 을 붙여 실행할 때만 멈췄다 — 두 번 눌러 열면 끝나자마자 창이 닫혀
+rem '적재를 마쳤습니다' 를 볼 수가 없었다. pause 는 스케줄러 실행을 영원히 붙잡으므로
+rem 몇 초 보여 주고 닫는다 (스케줄러처럼 입력이 없는 곳에서는 timeout 이 바로 끝난다).
+echo.
+timeout /t 30
+exit /b %CODE%
