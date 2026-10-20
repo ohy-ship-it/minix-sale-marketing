@@ -3045,8 +3045,9 @@ function sortBySpend_(map) {
 // '12/30 까지' 로 보여 엉뚱하다. 아주 먼 날짜는 종료일이 없는 것으로 둔다.
 var ADS_NO_END_FROM = '2037-01-01';
 
+// v23 부터 캠페인 기간이 '2026-10-20 00:00:00' 처럼 시각까지 온다. 날짜만 쓴다.
 function adsDay_(text) {
-  var raw = String(text || '').trim();
+  var raw = String(text || '').trim().slice(0, 10);
   if (!raw) return '';
   return raw >= ADS_NO_END_FROM ? '' : raw;
 }
@@ -3201,7 +3202,7 @@ function checkMetaToken() {
 //   GOOGLE_ADS_DEVELOPER_TOKEN · GOOGLE_ADS_CLIENT_ID · GOOGLE_ADS_CLIENT_SECRET
 //   GOOGLE_ADS_REFRESH_TOKEN · GOOGLE_ADS_LOGIN_CUSTOMER_ID (MCC 번호)
 // 리프레시 토큰으로 액세스 토큰을 받아 REST(GAQL)로 부른다.
-var ADS_URL = 'https://googleads.googleapis.com/v22';
+var ADS_URL = 'https://googleads.googleapis.com/v26';
 
 // 전환 카테고리 → 메타와 같은 묶음 (구매 · 장바구니 · 리드)
 var ADS_RESULT_CATEGORIES = {
@@ -3374,7 +3375,7 @@ function adsReport_(payload) {
 
   var campaignRows = adsQuery_(customer,
     'SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, '
-    + 'campaign.start_date, campaign.end_date, '
+    + 'campaign.start_date_time, campaign.end_date_time, '
     + 'metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign' + period, 8);
 
   // 결과는 전환 카테고리로 나눠 받는다 (구매 · 장바구니 · 리드)
@@ -3395,7 +3396,7 @@ function adsReport_(payload) {
   // 기간에 안 돌았어도 지금 켜져 있으면 목록에 넣는다
   var liveCampaigns = adsQuery_(customer,
     'SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, '
-    + 'campaign.start_date, campaign.end_date, '
+    + 'campaign.start_date_time, campaign.end_date_time, '
     + 'campaign_budget.amount_micros FROM campaign WHERE campaign.status = "ENABLED"', 5);
   var liveAdGroups = adsQuery_(customer,
     'SELECT ad_group.id, ad_group.name, ad_group.status, ad_group.cpc_bid_micros, campaign.id '
@@ -3419,7 +3420,7 @@ function adsReport_(payload) {
       active: campaign.status === 'ENABLED',
       status: campaign.status || '',
       budget: 0, budgetKind: '',
-      begin: adsDay_(campaign.startDate), end: adsDay_(campaign.endDate)
+      begin: adsDay_(campaign.startDateTime), end: adsDay_(campaign.endDateTime)
     });
   });
   liveCampaigns.forEach(function (row) {
@@ -3430,14 +3431,14 @@ function adsReport_(payload) {
       entry = adsMetrics_(null, null, {
         id: id, name: campaign.name || id, objective: campaign.advertisingChannelType || '',
         active: false, status: '', budget: 0, budgetKind: '',
-        begin: adsDay_(campaign.startDate), end: adsDay_(campaign.endDate)
+        begin: adsDay_(campaign.startDateTime), end: adsDay_(campaign.endDateTime)
       });
       campaigns[id] = entry;
     }
     entry.active = true;
     entry.status = 'ENABLED';
-    entry.begin = entry.begin || adsDay_(campaign.startDate);
-    entry.end = entry.end || adsDay_(campaign.endDate);
+    entry.begin = entry.begin || adsDay_(campaign.startDateTime);
+    entry.end = entry.end || adsDay_(campaign.endDateTime);
     var budget = Number(((row.campaignBudget || {}).amountMicros) || 0) / 1000000;
     if (budget) { entry.budget = budget; entry.budgetKind = 'daily'; }
   });

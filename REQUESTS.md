@@ -1732,9 +1732,21 @@ Apps Script 의 **시간 트리거**로 합니다. 사람이 [구글시트 받�
 - 빌더(`configList`)에는 매체를 예전 차례(매체 · source · medium)로 주고 campaign 을 맨 뒤에 붙였다 — 화면은 안 고쳐도 된다.
 - **할 일: Code.gs 붙여넣고 새 버전 배포 → 시트 메뉴 UTM → '전체 행 다시 계산'** (이미 적재된 줄 수식을 새로 쓴다).
 
+## 36-3. 구글 광고 API v22 막힘 → v26 (10/20)
+
+> "구글 광고 API: Request contains an invalid argument. (campaign 조회 · 계정 4112908407) · Version v22 is deprecated. [UNSUPPORTED_VERSION]"
+
+- 권한 · 프로젝트 문제가 아니다. Code.gs 가 부르던 API 버전(`v22`)을 구글이 막았다. `ADS_URL` 을 **v26** 으로 올렸다.
+- v23 에서 `campaign.start_date` · `end_date` 가 없어지고 `start_date_time` · `end_date_time`(`2026-10-20 00:00:00`)으로 바뀌었다.
+  질의 두 곳 · 응답 키(`startDateTime` · `endDateTime`)를 고치고 `adsDay_` 는 앞 10자리(날짜)만 쓴다.
+- v23~v26 변경 내역에서 나머지 쓰는 필드(광고그룹 · 소재 · 애셋 · 전환 카테고리)는 그대로인 것을 확인했다.
+- 참고: 2026-09-10 부터 API 권한은 개발자 토큰이 아니라 **GCP 프로젝트(serious-curve-501305-h8, 번호 687871093779 · EXPLORER)** 에 붙는다.
+  토큰 헤더는 지금은 무시되고, 2027 상반기 새 버전부터는 보내면 거절된다 — 그때 `developer-token` 헤더를 뺀다.
+- **할 일: Code.gs 붙여넣고 새 버전 배포.**
+
 ## 남은 일 (10/16 기준)
 
-- **Code.gs 새 버전 배포** — 소재별 결과 찾기 규칙 · 빠른 길 (35-2), 실사용비 출처 표 지키기 (36-1), GA utm_campaign (36-2).
+- **Code.gs 새 버전 배포** — 소재별 결과 찾기 규칙 · 빠른 길 (35-2), 실사용비 출처 표 지키기 (36-1), GA utm_campaign (36-2), 구글 광고 API v26 (36-3).
 - **미닉스 PR `feat/mix-setting-hand` 머지** — 매체믹스 세팅명 손으로 적기 (35-1).
 - **Code.gs 재배포** — 10/14 카카오 변경(22번)은 Apps Script 에 붙여넣고 웹앱을 새 버전으로 배포해야 동작한다.
   실제 계정으로는 아직 확인하지 않았다.
