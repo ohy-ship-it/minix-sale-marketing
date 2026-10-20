@@ -44,19 +44,32 @@ var VERTICAL_MARK = '(세로)';
 // 수식이 참조하는 열. 하나라도 없으면 UTM 을 만들지 않는다.
 var SOURCE_HEADERS = ['파일명', '매체'];
 
-// 매체 대응표 — 시트에서 직접 고친 값을 그대로 옮겨 둔 것이다.
+// 설정 탭의 열 자리. B열에 utm_campaign 이 끼어 들어가 뒤 표가 한 칸씩 밀렸다.
+//   A:D 매체 · utm_campaign · utm_source · utm_medium
+//   F:G 목적 · 목적(영문)
+//   I:K 상품명 · 제품코드 · 제품 정식명
+//   L:M 행사채널 · 매출채널
+var CFG_MEDIA_COL = 1;
+var CFG_PURPOSE_COL = 6;
+var CFG_PRODUCT_COL = 9;
+var CFG_SALES_COL = 12;
+var CFG_HEADERS = ['매체', 'utm_campaign', 'utm_source', 'utm_medium', '', '목적', '목적(영문)', '',
+  '상품명', '제품코드', '제품 정식명', '행사채널', '매출채널'];
+
+// 매체 대응표 — 매체 · utm_campaign · utm_source · utm_medium. 시트에서 직접 고친 값을 옮겨 둔 것이다.
+// utm_campaign 은 GA 링크(LINK(GA))의 utm_campaign 에 그대로 들어간다.
 // utm_medium 에 지면을 적어 두면 쇼핑라이브의 sn 도 같은 값을 쓴다.
 var DEFAULT_MEDIA = [
-  ['메타', 'facebook', 'display'],
-  ['GFA-피드', 'gfa', 'feed'],
-  ['GFA-쇼핑소식', 'gfa', 'shopping'],
-  ['GFA-스마트채널', 'gfa', 'smart'],
-  ['카카오-비즈보드', 'kakao', 'bizboard'],
-  ['카카오-디스플레이', 'kakao', 'display'],
-  ['구글-디멘드젠', 'google', 'demandgen'],
-  ['인플루언서-인스타', 'influencer-ig', 'affiliate'],
-  ['인플루언서-유튜브', 'influencer-youtube', 'affiliate'],
-  ['인플루언서', 'influencer', 'affiliate']
+  ['메타', 'facebook', 'facebook', 'display'],
+  ['GFA-피드', 'naver', 'gfa', 'feed'],
+  ['GFA-쇼핑소식', 'naver', 'gfa', 'shopping'],
+  ['GFA-스마트채널', 'naver', 'gfa', 'smart'],
+  ['카카오-비즈보드', 'kakao', 'kakao', 'bizboard'],
+  ['카카오-디스플레이', 'kakao', 'kakao', 'display'],
+  ['구글-디멘드젠', 'google', 'google', 'demandgen'],
+  ['인플루언서-인스타', 'influencer', 'instagram', 'affiliate'],
+  ['인플루언서-유튜브', 'influencer', 'youtube', 'affiliate'],
+  ['인플루언서', 'influencer', 'influencer', 'affiliate']
 ];
 
 var DEFAULT_PURPOSE = [
@@ -382,7 +395,7 @@ function applyPurposeRule_(sheet, map) {
   var config = sheet.getParent().getSheetByName(CONFIG_SHEET_NAME);
   if (!config || !map['목적']) return;
   var rule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(config.getRange('F2:F200'), true)
+    .requireValueInRange(config.getRange(2, CFG_PURPOSE_COL, 199, 1), true)
     .setAllowInvalid(true)
     .build();
   sheet.getRange(2, map['목적'], Math.max(sheet.getMaxRows() - 1, 1)).setDataValidation(rule);
@@ -444,6 +457,7 @@ function colLetter_(index) {
 
 // utm-builder 탭의 규칙을 그 행 안에서 그대로 계산한다.
 //   LINK(GA)     = 랜딩링크 ? utm 파라미터              ← 랜딩링크를 채우면 그때 만들어진다
+//                  utm_campaign = 설정 탭 B열 (매체로 찾는다) — 비어 있으면 목적(영문)
 //                  utm_term = 소재유형 (검색광고는 {keyword}) — 소재유형이 비면 빠진다
 //   NT(일반)      = 랜딩링크 ?nt_source(소스_미디엄) · nt_medium(광고명)
 //   NT(쇼핑스토리) = 랜딩링크 &nt_source · nt_medium · nt_detail  ← 파라미터가 이미 붙은 주소 뒤에 잇는다
@@ -465,9 +479,17 @@ function utmFormulas_(map, row) {
   var owner = map['담당자'] ? cell('담당자') : '""';
   var cfg = "'" + CONFIG_SHEET_NAME + "'!";
   // utm 낱개 열은 두지 않는다. 링크 안에 들어가는 값이라 그 자리에서 계산한다.
-  var source = 'IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,2,FALSE),""))';
-  var medium = 'IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + cfg + '$A:$C,3,FALSE),""))';
-  var campaign = 'IF(' + purpose + '="","",IFERROR(VLOOKUP(' + purpose + ',' + cfg + '$E:$F,2,FALSE),' + purpose + '))';
+  // 설정 탭의 표 범위 ('설정'!$A:$D 꼴). 열 자리는 CFG_*_COL 한 군데서만 고친다.
+  var range = function (first, width) {
+    return cfg + '$' + colLetter_(first) + ':$' + colLetter_(first + width - 1);
+  };
+  var mediaRange = range(CFG_MEDIA_COL, 4);
+  var source = 'IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + mediaRange + ',3,FALSE),""))';
+  var medium = 'IF(' + media + '="","",IFERROR(VLOOKUP(' + media + ',' + mediaRange + ',4,FALSE),""))';
+  var campaign = 'IF(' + purpose + '="","",IFERROR(VLOOKUP(' + purpose + ',' + range(CFG_PURPOSE_COL, 2) + ',2,FALSE),' + purpose + '))';
+  // GA 링크의 utm_campaign — 설정 탭 B열에서 매체로 찾는다. 비어 있으면 예전처럼 목적(영문)을 쓴다.
+  var gaFound = 'IFERROR(VLOOKUP(' + media + ',' + mediaRange + ',2,FALSE)&"","")';
+  var gaCampaign = 'IF(' + gaFound + '="",' + campaign + ',' + gaFound + ')';
   // 검색광고는 {keyword}, 그 밖에는 소재유형 (세일즈마케팅 탭에만 있는 칸이다)
   var term = 'IF(REGEXMATCH(' + medium + '&"","sa"),"{keyword}",' + creative + ')';
   var content = cell('광고명');
@@ -477,17 +499,17 @@ function utmFormulas_(map, row) {
     ? 'IF(' + dateCell + '="","",IF(ISNUMBER(' + dateCell + '),TEXT(' + dateCell + ',"yyyymmdd"),SUBSTITUTE(' + dateCell + '&"","-","")))'
     : '""';
   var productKo = map['상품명'] ? cell('상품명') : '""';
-  var product = 'IFERROR(VLOOKUP(' + productKo + ',' + cfg + '$H:$J,2,FALSE),' + productKo + ')';
+  var product = 'IFERROR(VLOOKUP(' + productKo + ',' + range(CFG_PRODUCT_COL, 3) + ',2,FALSE),' + productKo + ')';
   // 캠페인명에는 index 탭의 제품 정식명을 쓴다 (미닉스 더 플렌더(mini) …)
   // 상품명 칸에는 앱이 **영어 제품코드**(flender-max)를 넣는다. 그래서 한글로 못 찾으면
   // 제품코드(I열)로 한 번 더 찾는다. 사람이 한글로 적어 둔 옛 줄도 그대로 계산된다.
-  var productFull = 'IFERROR(VLOOKUP(' + productKo + ',' + cfg + '$H:$J,3,FALSE),'
-    + 'IFERROR(VLOOKUP(' + productKo + ',' + cfg + '$I:$J,2,FALSE),' + productKo + '))';
+  var productFull = 'IFERROR(VLOOKUP(' + productKo + ',' + range(CFG_PRODUCT_COL, 3) + ',3,FALSE),'
+    + 'IFERROR(VLOOKUP(' + productKo + ',' + range(CFG_PRODUCT_COL + 1, 2) + ',2,FALSE),' + productKo + '))';
   // 메시지코드는 번호까지가 한 덩어리다. (파일명 = 메시지코드-순번)
   var code = 'IFERROR(REGEXEXTRACT(' + file + ',"^[A-Za-z0-9]+-\\d+"),' + file + ')';
   var param = function (name, value) { return 'IF(' + value + '="","","' + name + '="&' + value + ')'; };
   var channelKo = map['행사채널'] ? cell('행사채널') : '""';
-  var sales = 'IFERROR(VLOOKUP(' + channelKo + ',' + cfg + '$K:$L,2,FALSE),' + channelKo + ')';
+  var sales = 'IFERROR(VLOOKUP(' + channelKo + ',' + range(CFG_SALES_COL, 2) + ',2,FALSE),' + channelKo + ')';
   var promo = map['행사명'] ? cell('행사명') : '""';
   // NT 는 소스 자리에 소스+미디엄을, 미디엄 자리에 콘텐츠를 넣는다.
   var sourceMedium = 'TEXTJOIN("_",TRUE,' + source + ',' + medium + ')';
@@ -496,7 +518,7 @@ function utmFormulas_(map, row) {
 
   return [
     '=IF(OR(' + url + '="",' + source + '=""),"",' + head + '&TEXTJOIN("&",TRUE,'
-      + param('utm_source', source) + ',' + param('utm_medium', medium) + ',' + param('utm_campaign', campaign) + ','
+      + param('utm_source', source) + ',' + param('utm_medium', medium) + ',' + param('utm_campaign', gaCampaign) + ','
       + param('utm_content', content) + ',' + param('utm_term', term) + '))',
     '=IF(' + source + '="","",' + head + '&TEXTJOIN("&",TRUE,'
       + param('nt_source', sourceMedium) + ',' + param('nt_medium', content) + '))',
@@ -517,24 +539,21 @@ function ensureConfigSheet_(book) {
   var config = book.getSheetByName(CONFIG_SHEET_NAME);
   if (!config) {
     config = book.insertSheet(CONFIG_SHEET_NAME, book.getNumSheets());
-    config.getRange('A1:L1').setValues([[
-      '매체', 'utm_source', 'utm_medium', '', '목적', '목적(영문)', '', '상품명', '제품코드', '제품 정식명', '행사채널', '매출채널'
-    ]]).setFontWeight('bold');
+    config.getRange(1, 1, 1, CFG_HEADERS.length).setValues([CFG_HEADERS]).setFontWeight('bold');
     config.setFrozenRows(1);
   }
 
   // 새 매체 · 목적 · 상품이 늘면 빠진 줄만 덧붙인다. 사람이 고쳐 둔 값은 손대지 않는다.
-  addMissingRows_(config, 1, DEFAULT_MEDIA);
-  addMissingRows_(config, 5, DEFAULT_PURPOSE);
-  addMissingRows_(config, 8, DEFAULT_PRODUCT);
-  addMissingRows_(config, 11, DEFAULT_SALES);
-  if (!String(config.getRange('K1').getValue()).trim()) {
-    config.getRange('K1:L1').setValues([['행사채널', '매출채널']]).setFontWeight('bold');
-  }
-  if (!String(config.getRange('J1').getValue()).trim()) {
-    config.getRange('J1').setValue('제품 정식명').setFontWeight('bold');
-  }
-  config.autoResizeColumns(1, 12);
+  addMissingRows_(config, CFG_MEDIA_COL, DEFAULT_MEDIA);
+  addMissingRows_(config, CFG_PURPOSE_COL, DEFAULT_PURPOSE);
+  addMissingRows_(config, CFG_PRODUCT_COL, DEFAULT_PRODUCT);
+  addMissingRows_(config, CFG_SALES_COL, DEFAULT_SALES);
+  // 머리글이 빈 칸만 채운다 (사람이 적어 둔 머리글은 그대로 둔다)
+  var heads = config.getRange(1, 1, 1, CFG_HEADERS.length).getValues()[0];
+  CFG_HEADERS.forEach(function (label, i) {
+    if (label && !String(heads[i]).trim()) config.getRange(1, i + 1).setValue(label).setFontWeight('bold');
+  });
+  config.autoResizeColumns(1, CFG_HEADERS.length);
   return config;
 }
 
@@ -1442,10 +1461,11 @@ function configList_() {
   var config = book.getSheetByName(CONFIG_SHEET_NAME) || ensureConfigSheet_(book);
   return {
     ok: true,
-    media: configRead_(config, 1, 3),    // 매체 · utm_source · utm_medium
-    purpose: configRead_(config, 5, 2),  // 목적 · 목적(영문)
-    product: configRead_(config, 8, 2),  // 상품명 · 제품코드
-    sales: configRead_(config, 11, 2)    // 행사채널 · 매출채널(영문)
+    // 매체 · utm_source · utm_medium · utm_campaign — 화면은 앞 세 칸을 예전 차례로 읽는다
+    media: configRead_(config, CFG_MEDIA_COL, 4).map(function (line) { return [line[0], line[2], line[3], line[1]]; }),
+    purpose: configRead_(config, CFG_PURPOSE_COL, 2),  // 목적 · 목적(영문)
+    product: configRead_(config, CFG_PRODUCT_COL, 2),  // 상품명 · 제품코드
+    sales: configRead_(config, CFG_SALES_COL, 2)       // 행사채널 · 매출채널(영문)
   };
 }
 
@@ -1459,12 +1479,12 @@ function configAdd_(payload) {
   if (kind === 'media') {
     var source = String(payload.source || '').trim();
     if (!source) return { ok: false, error: 'utm_source 가 비어 있습니다.' };
-    column = 1;
-    row = [name, source, String(payload.medium || '').trim()];
+    column = CFG_MEDIA_COL;
+    row = [name, String(payload.campaign || '').trim(), source, String(payload.medium || '').trim()];
   } else if (kind === 'product') {
     var code = String(payload.code || '').trim();
     if (!code) return { ok: false, error: '제품코드가 비어 있습니다.' };
-    column = 8;
+    column = CFG_PRODUCT_COL;
     row = [name, code];
   } else {
     return { ok: false, error: '모르는 종류입니다: ' + kind };
@@ -8586,7 +8606,7 @@ function budgetTrend_(payload) {
   var sales = [];
   try {
     var config = book.getSheetByName(CONFIG_SHEET_NAME);
-    if (config) sales = configRead_(config, 11, 2);
+    if (config) sales = configRead_(config, CFG_SALES_COL, 2);
   } catch (error) { sales = []; }
 
   var result = {
