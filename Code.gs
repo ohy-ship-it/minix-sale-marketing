@@ -282,6 +282,10 @@ function onOpen() {
       .addItem('아침 자동 적재 켜기', 'cafe24DailyInstall')
       .addItem('아침 자동 적재 끄기', 'cafe24DailyRemove')
       .addItem('응답 모양 보기', 'cafe24Probe'))
+    .addSubMenu(SpreadsheetApp.getUi().createMenu('브랜드검색 검수 알림')
+      .addItem('지금 한 번 확인', 'bsInspectCheck')
+      .addItem('1시간마다 켜기', 'bsInspectInstall')
+      .addItem('끄기', 'bsInspectRemove'))
     .addToUi();
 }
 
@@ -7058,6 +7062,151 @@ function saRow_(base, stat) {
 function naverSaAccounts_() {
   var id = saProp_('NAVER_SA_CUSTOMER_ID');
   return [{ id: id, accountId: id, name: '네이버 검색광고 (' + id + ')', currency: 'KRW', disabled: false }];
+}
+
+// ── 브랜드검색 검수상태 알림 (슬랙) ─────────────────────────────────
+// 한 시간마다 브랜드검색 소재의 검수상태(inspectStatus)를 읽어, 지난번과 달라진 것만
+// #미닉스_마케팅팀_소재알림 으로 보낸다. 지난번 상태는 「브랜드검색검수」 탭에 둔다.
+// 웹훅 주소는 스크립트 속성 SLACK_WEBHOOK_BS_INSPECT 에 둔다 — 이 파일은 공개 저장소에 올라간다.
+var BS_INSPECT_FN = 'bsInspectRun';
+var BS_INSPECT_SHEET = '브랜드검색검수';
+var BS_INSPECT_HEADERS = ['소재ID', '캠페인', '광고그룹', '소재', '검수상태', '마지막 확인'];
+var BS_INSPECT_KEEP_DAYS = 30;     // 이만큼 안 보인 소재는 탭에서 지운다
+var BS_INSPECT_LABEL = {
+  UNDER_REVIEW: ':hourglass_flowing_sand: 검수중',
+  PENDING: ':hourglass_flowing_sand: 대기',
+  APPROVED: ':white_check_mark: 승인',
+  LIMITED_APPROVED: ':white_check_mark: 제한 승인',
+  REJECTED: ':no_entry: 소재 보류(반려)'
+};
+
+function bsInspectLabel_(code) {
+  return BS_INSPECT_LABEL[code] || code || '(없음)';
+}
+
+function bsInspectSheet_() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(BS_INSPECT_SHEET);
+  if (!sheet) {
+    sheet = book.insertSheet(BS_INSPECT_SHEET, book.getNumSheets());
+    sheet.getRange(1, 1, 1, BS_INSPECT_HEADERS.length).setValues([BS_INSPECT_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+/* 트리거가 부른다. 처음 돌 때(탭이 비었을 때)는 지금 상태만 적고 보내지 않는다 —
+   안 그러면 계정의 소재가 전부 '바뀐 것' 으로 한꺼번에 나간다.
+   처음 보는 소재가 검수중이면 적기만 하고, 이미 승인 · 반려로 처음 보이면 그대로 알린다.
+   목록에서 잠깐 빠진 소재(조회 한 번 실패)는 지우지 않는다 — 다시 나타날 때 새 소재로 오인하지 않게. */
+function bsInspectRun(event) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(0)) return '앞선 확인이 아직 도는 중입니다.';
+  try {
+    var hook = saProp_('SLACK_WEBHOOK_BS_INSPECT');
+    var tree = saTree_(true);
+    var groupOf = {};
+    tree.groups.forEach(function (one) { groupOf[one.id] = one; });
+
+    var sheet = bsInspectSheet_();
+    var rows = sheet.getLastRow() > 1
+      ? sheet.getRange(2, 1, sheet.getLastRow() - 1, BS_INSPECT_HEADERS.length).getValues() : [];
+    var first = !rows.length;
+    var before = {};
+    rows.forEach(function (row) { before[String(row[0])] = row; });
+
+    var now = new Date();
+    var changes = [];
+    tree.ads.forEach(function (ad) {
+      var group = groupOf[ad.groupId] || {};
+      var campaign = tree.campaignOf[group.campaignId] || {};
+      var old = before[ad.id];
+      var was = old ? String(old[4]) : '';
+      if (!first && was !== ad.inspect && (old || ad.inspect !== 'UNDER_REVIEW')) {
+        changes.push({ campaign: campaign.name || '', group: group.name || '', ad: ad.name,
+          from: was, to: ad.inspect });
+      }
+      before[ad.id] = [ad.id, campaign.name || '', group.name || '', ad.name, ad.inspect, now];
+    });
+
+    var cutoff = now.getTime() - BS_INSPECT_KEEP_DAYS * 86400000;
+    var keep = Object.keys(before).map(function (id) { return before[id]; })
+      .filter(function (row) { return new Date(row[5]).getTime() >= cutoff; });
+    if (rows.length) sheet.getRange(2, 1, rows.length, BS_INSPECT_HEADERS.length).clearContent();
+    if (keep.length) sheet.getRange(2, 1, keep.length, BS_INSPECT_HEADERS.length).setValues(keep);
+
+    if (changes.length) {
+      var text = ':bell: *브랜드검색 검수상태 변경*\n' + changes.map(function (one) {
+        var result = one.from ? bsInspectLabel_(one.from) + ' → ' + bsInspectLabel_(one.to)
+          : bsInspectLabel_(one.to);
+        return '캠페인명 : ' + one.campaign + '\n- 광고그룹명 : ' + one.group
+          + '\n- 소재명 : ' + one.ad + '  |  검수결과 : ' + result;
+      }).join('\n\n');
+      var response = UrlFetchApp.fetch(hook, { method: 'post', contentType: 'application/json',
+        payload: JSON.stringify({ text: text }), muteHttpExceptions: true });
+      if (response.getResponseCode() >= 400) {
+        throw new Error('슬랙 웹훅 (HTTP ' + response.getResponseCode() + '): ' + response.getContentText());
+      }
+    }
+    var message = first ? '처음이라 지금 상태 ' + tree.ads.length + '건만 적었습니다 (알림 없음).'
+      : '소재 ' + tree.ads.length + '건 확인 · 바뀐 것 ' + changes.length + '건' + (changes.length ? ' 보냄' : '');
+    Logger.log(message + (event ? ' (트리거)' : ''));
+    return message;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function bsInspectClear_() {
+  var gone = 0;
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === BS_INSPECT_FN) {
+      ScriptApp.deleteTrigger(trigger);
+      gone += 1;
+    }
+  });
+  return gone;
+}
+
+function bsInspectAlert_(message) {
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
+}
+
+function bsInspectInstall() {
+  try {
+    bsInspectClear_();
+    ScriptApp.newTrigger(BS_INSPECT_FN).timeBased().everyHours(1).create();
+  } catch (error) {
+    return bsInspectAlert_('트리거를 걸지 못했습니다.' + BR2 + String((error && error.message) || error) + BR2
+      + 'Apps Script 왼쪽 ⏰ 트리거 → 트리거 추가 에서 손으로 걸어 주세요.' + BR1
+      + '  실행할 함수 : ' + BS_INSPECT_FN + BR1
+      + '  이벤트 소스 : 시간 기반' + BR1
+      + '  트리거 유형 : 시간 단위 타이머 · 1시간마다');
+  }
+  return bsInspectAlert_('브랜드검색 검수 알림을 켰습니다.' + BR2
+    + '한 시간마다 검수상태를 확인해, 바뀐 소재만 슬랙으로 보냅니다.' + BR2 + bsInspectRun());
+}
+
+// 시트 메뉴의 '지금 한 번 확인' — 결과를 창으로 보여 준다
+function bsInspectCheck() {
+  try {
+    return bsInspectAlert_(bsInspectRun());
+  } catch (error) {
+    return bsInspectAlert_(String((error && error.message) || error));
+  }
+}
+
+function bsInspectRemove() {
+  var gone;
+  try {
+    gone = bsInspectClear_();
+  } catch (error) {
+    return bsInspectAlert_('트리거를 지우지 못했습니다. Apps Script 의 ⏰ 트리거 화면에서 '
+      + BS_INSPECT_FN + ' 을 직접 지워 주세요.' + BR2 + budgetDailyHelp_(error));
+  }
+  return bsInspectAlert_(gone ? '브랜드검색 검수 알림을 껐습니다.' : '켜져 있는 검수 알림이 없습니다.');
 }
 
 // ── 브랜드검색 광고비 (사람이 적는다) ──────────────────────────────
