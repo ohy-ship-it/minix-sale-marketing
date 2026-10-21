@@ -7103,7 +7103,12 @@ function bsInspectRun(event) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(0)) return '앞선 확인이 아직 도는 중입니다.';
   try {
-    var hook = saProp_('SLACK_WEBHOOK_BS_INSPECT');
+    var hook = cleanToken_(PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_BS_INSPECT'));
+    if (!/^https:\/\/hooks\.slack\.com\//.test(hook)) {
+      throw new Error('SLACK_WEBHOOK_BS_INSPECT 스크립트 속성이 없거나 슬랙 웹훅 주소가 아닙니다. '
+        + 'Apps Script 프로젝트 설정(톱니) → 스크립트 속성 → 속성 추가 에서 '
+        + '이름 SLACK_WEBHOOK_BS_INSPECT · 값 https://hooks.slack.com/services/… 로 넣어 주세요.');
+    }
     var tree = saTree_(true);
     var groupOf = {};
     tree.groups.forEach(function (one) { groupOf[one.id] = one; });
