@@ -8251,12 +8251,47 @@ if (brandSchedule) {
     /* 소재를 언제 받기로 했는지. **날짜와 따로 둔다** — 날짜는 달력에 카드를 놓는 자리라
        옮길 수 없고, 사람이 보고 싶어 하는 건 수급일자다. 그래서 카드에는 수급일자를 적는다. */
     { key: 'supply', name: '수급일자', type: 'date', icon: 'calendar-check' },
-    { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS },
+    /* 매체는 손으로 적어 넣을 수 있다 (custom) — 광고소재 기획 보드와 같은 방식이다. */
+    { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS, custom: true },
     { key: 'channel', name: '판매채널', type: 'multi_select', icon: 'store', options: CHANNEL_OPTIONS },
     { key: 'done', name: '세팅완료', type: 'checkbox', icon: 'square-check-big' },
   ];
   const propByKey = Object.fromEntries(SCHEMA.map((prop) => [prop.key, prop]));
   const colorOf = (prop, value) => (prop.options || []).find(([option]) => option === value)?.[1] || 'default';
+
+  /* 손으로 적어 넣은 매체 이름을 목록에 남겨 둔다.
+     일정에 붙인 이름은 시트로 올라가 팀 모두의 목록에 뜬다 (아래 optionsOf 가 rows 를 훑는다).
+     아직 어느 일정에도 안 붙인 이름은 이 브라우저가 들고 있다. */
+  const CUSTOM_KEY = 'minix-brand-schedule-media-custom';
+  const customRead = () => {
+    try {
+      const kept = JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]');
+      return Array.isArray(kept) ? kept.filter((one) => typeof one === 'string' && one.trim()) : [];
+    } catch { return []; }
+  };
+  let customNames = customRead();
+  const customWrite = () => {
+    try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(customNames)); } catch { /* 거들기다 */ }
+  };
+
+  // 고를 수 있는 값 — 정해 둔 목록 + 어느 일정에든 붙어 있는 이름 + 적어 둔 이름 (빛깔은 default)
+  const optionsOf = (prop) => {
+    const known = prop.options || [];
+    if (!prop.custom) return known;
+    const more = [];
+    const seen = (list, name) => list.some(([option]) => option === name);
+    const add = (name) => {
+      if (!name || seen(known, name) || seen(more, name)) return;
+      more.push([name, 'default']);
+    };
+    rows.forEach((row) => (row[prop.key] || []).forEach(add));
+    if (prop.key === 'media') customNames.forEach(add);
+    return known.concat(more);
+  };
+  // 일정에 붙어 있는 이름인가 (아니면 이 브라우저에만 적어 둔 것이라 지울 수 있다)
+  const inUse = (key, name) => rows.some((row) => (row[key] || []).includes(name));
+  // 정해 둔 목록에 없는 이름인가 (손으로 적은 것)
+  const isCustom = (prop, name) => !(prop.options || []).some(([option]) => option === name);
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const newId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `c-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -8398,7 +8433,7 @@ if (brandSchedule) {
   const renderFilters = () => `<div class="board-filters">
     ${FACETS.map((facet) => `<div class="filter-row${active[facet.key].length ? ' is-active' : ''}">
       <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
-      <span class="filter-options">${facet.options.map(([name, color]) => `<button type="button" class="filter-chip chip chip-${color}${active[facet.key].includes(name) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(name)}" aria-pressed="${active[facet.key].includes(name)}">${escapeHtml(name)}</button>`).join('')}</span>
+      <span class="filter-options">${optionsOf(propByKey[facet.key]).map(([name, color]) => `<button type="button" class="filter-chip chip chip-${color}${active[facet.key].includes(name) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(name)}" aria-pressed="${active[facet.key].includes(name)}">${escapeHtml(name)}</button>`).join('')}</span>
     </div>`).join('')}
     ${anyFilter() ? `<div class="filter-summary"><button type="button" class="filter-clear">전체 보기</button><span class="filter-count">${visibleRows().length}개 표시</span></div>` : ''}
   </div>`;
@@ -8550,8 +8585,44 @@ if (brandSchedule) {
         ${selected.length ? selected.map((item) => chip(prop, item)).join('') : '<span class="peek-empty">비어 있음</span>'}
       </button>
       <div class="peek-options" data-options="${prop.key}" hidden>
-        ${prop.options.map(([option]) => `<button type="button" class="peek-option${selected.includes(option) ? ' is-selected' : ''}" data-option="${escapeHtml(option)}">${chip(prop, option)}</button>`).join('')}
+        ${optionsOf(prop).map(([option]) => {
+    const one = `<button type="button" class="peek-option${selected.includes(option) ? ' is-selected' : ''}" data-option="${escapeHtml(option)}">${chip(prop, option)}</button>`;
+    // 어느 일정에도 안 붙은 채 적어만 둔 이름은 목록에서 뺄 수 있다
+    if (!prop.custom || !isCustom(prop, option) || inUse(prop.key, option)) return one;
+    return `<span class="peek-option-row">${one}<button type="button" class="peek-option-drop"
+      data-drop-option="${escapeHtml(option)}" data-drop-key="${prop.key}"
+      title="목록에서 빼기" aria-label="목록에서 빼기">✕</button></span>`;
+  }).join('')}
+        ${prop.custom ? `<label class="peek-option-add">
+          <input type="text" data-add-option="${prop.key}" placeholder="목록에 없는 ${escapeHtml(prop.name)} 직접 적기"
+            spellcheck="false" autocomplete="off">
+          <button type="button" data-add-go="${prop.key}">추가</button>
+        </label>` : ''}
       </div>`;
+  };
+
+  /* 손으로 적어 넣기. 이미 있는 이름이면 그것을 고른다 (같은 매체가 두 이름으로 갈리지 않게).
+     고르개는 열어 둔다 — 대개 한 번에 두어 개를 적어 넣는다. */
+  const addOption = (key) => {
+    const box = peek.querySelector(`[data-add-option="${key}"]`);
+    const row = rows.find((entry) => entry.id === openId);
+    if (!box || !row) return;
+    // 시트에는 쉼표로 이어 적으므로 이름 안의 쉼표는 빈칸으로 바꾼다 (안 그러면 둘로 갈린다)
+    const name = String(box.value || '').replace(/,/g, ' ').trim().replace(/\s+/g, ' ');
+    if (!name) return;
+    const already = optionsOf(propByKey[key]).find(([option]) => option === name);
+    const picked = already ? already[0] : name;
+    if (!row[key].includes(picked)) row[key] = [...row[key], picked];
+    // 목록에도 남긴다 — 이 일정에서 빼도 다른 일정에서 또 고를 수 있게
+    if (key === 'media' && isCustom(propByKey[key], picked) && !customNames.includes(picked)) {
+      customNames = [...customNames, picked];
+      customWrite();
+    }
+    box.value = '';
+    commit();
+    const list = peek.querySelector(`[data-options="${key}"]`);
+    if (list) list.hidden = false;
+    peek.querySelector(`[data-add-option="${key}"]`)?.focus();
   };
 
   const closePeek = () => { openId = null; peek.innerHTML = ''; peek.classList.remove('is-open'); };
@@ -8832,6 +8903,19 @@ if (brandSchedule) {
       peek.querySelector(`[data-options="${key}"]`).hidden = false;
       return;
     }
+    const dropOption = event.target.closest('[data-drop-option]');
+    if (dropOption) {
+      const gone = dropOption.dataset.dropOption;
+      customNames = customNames.filter((one) => one !== gone);
+      customWrite();
+      renderPeek();
+      const list = peek.querySelector(`[data-options="${dropOption.dataset.dropKey}"]`);
+      if (list) list.hidden = false;
+      renderView();
+      return;
+    }
+    const addGo = event.target.closest('[data-add-go]');
+    if (addGo) { addOption(addGo.dataset.addGo); return; }
     const range = event.target.closest('.peek-range');
     if (range) {
       // 날짜 · 수급일자 둘 다 이 단추를 쓴다. 누른 칸이 어느 것인지 보고 그 칸만 고친다.
@@ -8865,6 +8949,12 @@ if (brandSchedule) {
   });
 
   peek.addEventListener('keydown', (event) => {
+    const box = event.target.closest('[data-add-option]');
+    if (box && event.key === 'Enter') {
+      event.preventDefault();
+      addOption(box.dataset.addOption);
+      return;
+    }
     if (event.key === 'Escape') closePeek();
   });
 
