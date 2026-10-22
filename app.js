@@ -8892,8 +8892,19 @@ if (mediaPerformance) {
   // 어트리뷰션은 '칸을 더 보여 주기' 가 아니라 **기준 고르기** 다.
   // 구매 · 장바구니 · CPS · CPB · 구매매출 · ROAS 가 모두 고른 기준 하나에서 나온다.
   // 개수만 1일 클릭이고 매출은 계정 기본이면 ROAS 가 실제보다 후하게 잡힌다.
+  /* 전매체 검색의 어트리뷰션. 어트리뷰션을 주는 매체는 메타 · 카카오뿐이다 (구글 · GFA · 브랜드검색은 없다).
+     두 매체가 부르는 이름이 달라 (메타 1d_click · 카카오 1d) 보낼 때 바꿔 준다.
+     '기본' 은 메타는 계정 설정, 카카오는 7일 클릭이다 (카카오는 계정 기본을 주지 않는다). */
+  const CROSS_WINDOWS = [['', '기본'], ['1d', '1일 클릭'], ['7d', '7일 클릭']];
+  const crossWindowOf = (key) => {
+    if (!state.crossWindow) return undefined;
+    if (key === 'meta') return `${state.crossWindow}_click`;
+    if (key === 'kakao') return state.crossWindow;
+    return undefined;
+  };
   const defaults = {
     source: 'meta', accounts: {}, ranges: {}, preset: '7d', since: '', until: '', attribution: '',
+    crossWindow: '',
   };
   let state = { ...defaults };
   try {
@@ -8905,6 +8916,7 @@ if (mediaPerformance) {
         ranges: { ...(saved.ranges || {}) },
         // 옛 저장값(windows 배열)은 버린다. 여러 칸을 켜던 때의 값이라 기준 하나로 못 옮긴다.
         attribution: typeof saved.attribution === 'string' ? saved.attribution : '',
+        crossWindow: CROSS_WINDOWS.some(([key]) => key === saved.crossWindow) ? saved.crossWindow : '',
       };
       delete state.windows;
       // 매체 탭이 없던 때의 저장값
@@ -9674,6 +9686,7 @@ if (mediaPerformance) {
       return Promise.all(use.map((one) => ask({
         action: `${key}Report`, account: one.accountId, since: since, until: until,
         refresh: fresh || undefined,
+        attribution: crossWindowOf(key),
         /* 브랜드검색만 **꺼진 광고그룹 · 소재까지** 달라고 한다. 행사가 끝나면 곧 꺼지는데,
            전매체는 지나간 행사를 찾는 자리라 꺼졌다고 빼면 찾을 수가 없다.
            어차피 아래 crossHit 이 검색어로 거르므로 빈 줄이 쏟아지지 않는다. */
@@ -9997,6 +10010,8 @@ if (mediaPerformance) {
       word: crossFor,
       product: file.product,
       bracketOnly: crossBracket,
+      // 메타 · 카카오의 구매를 어느 어트리뷰션으로 셌나 ('' = 기본)
+      attribution: state.crossWindow || '',
       // 제품을 골라 놓고 받았으면 그 제품 캠페인만 들어 있다고 적어 둔다
       products: crossProdText(),
       range: { since: period.since, until: period.until },
@@ -10069,6 +10084,8 @@ if (mediaPerformance) {
       version: 1,
       word: crossFor,
       bracketOnly: crossBracket,
+      // 메타 · 카카오의 구매를 어느 어트리뷰션으로 셌나 ('' = 기본)
+      attribution: state.crossWindow || '',
       // 제품을 골라 놓고 받았으면 그 제품 캠페인만 들어 있다고 적어 둔다
       products: crossProdText(),
       range: { since: period.since, until: period.until },
@@ -10396,6 +10413,12 @@ if (mediaPerformance) {
 
         <button type="button" class="tool-add" data-perf="cross-go"${busy ? ' disabled' : ''}>
           <i data-lucide="search"></i>${busy ? '찾는 중…' : '찾기'}</button>
+        <span class="perf-windows" title="메타 · 카카오의 구매 · 구매매출 · CPS · ROAS 를 이 기준으로 셉니다.
+기본 = 메타는 계정 설정, 카카오는 7일 클릭. 구글 · GFA · 브랜드검색은 어트리뷰션을 주지 않아 그대로입니다.">어트리뷰션
+          ${CROSS_WINDOWS.map(([key, name]) => `<button type="button"
+            class="perf-window-pick${state.crossWindow === key ? ' is-on' : ''}"
+            data-perf="cross-window" data-window="${key}"${busy ? ' disabled' : ''}>${name}</button>`).join('')}
+        </span>
       </div>
       ${found ? `<div class="perf-filter perf-phase-pick">
         <span class="perf-phase-label">단계 날짜 →</span>
@@ -10845,6 +10868,20 @@ if (mediaPerformance) {
       return;
     }
     if (event.target.closest('[data-perf="cross-go"]')) { crossSearch(); return; }
+    const crossBasis = event.target.closest('[data-perf="cross-window"]');
+    if (crossBasis) {
+      const key = crossBasis.dataset.window || '';
+      if (key === state.crossWindow) return;
+      state.crossWindow = key;
+      save();
+      // 이미 찾아 둔 것이 있으면 새 기준으로 다시 받는다 (단계별 값도 기준이 바뀌었으니 버린다)
+      if (!crossFor) { render(); return; }
+      if (!crossText.trim()) crossText = crossFor;
+      phaseData = {};
+      phaseFor = '';
+      crossSearch(false);
+      return;
+    }
     if (event.target.closest('[data-perf="cross-reload"]')) { crossSearch(true); return; }
     if (event.target.closest('[data-cross="wait-close"]')) { crossWaitOff = true; render(); return; }
     if (event.target.closest('[data-perf="wait-close"]')) { loadWaitOff = true; render(); return; }
