@@ -16,8 +16,12 @@ var FALLBACK_COLUMNS = [
 //   url → LINK(GA) · NT · FM → 캠페인명 · 광고그룹명 · 광고명 → utm_*
 // 랜딩링크 · 목적 · 타겟팅 · 담당자는 사람이 채우는 칸이다. (담당자는 앱에서도 보낸다)
 var INPUT_HEADERS = ['랜딩링크', '목적', '타겟팅', '담당자'];
-var FORMULA_HEADERS = ['LINK(GA)', 'NT(일반)', 'NT(쇼핑스토리)', 'FM(쇼핑라이브)',
+var FORMULA_HEADERS = ['LINK(GA)', 'NT(일반)', 'NT(쇼핑스토리)', 'FM(쇼핑라이브)', 'FM(라이브예고)',
   '캠페인명', '광고그룹명', '광고명'];
+
+// 라이브예고는 쇼핑라이브 예고 페이지 주소로 늘 시작한다 — 랜딩링크에는 그 뒤 토막(라이브 번호)만 적는다.
+// 주소를 통째로 적어 두어도 앞부분이 두 번 붙지 않게 떼고 붙인다 (UTM 빌더 화면과 같은 규칙).
+var LIVE_PREVIEW_BASE = 'https://view.shoppinglive.naver.com/lives/';
 var UTM_HEADERS = INPUT_HEADERS.concat(FORMULA_HEADERS);
 
 // 파트별 탭. 앱이 sheet 이름을 함께 보내면 그 탭에 적재한다.
@@ -261,6 +265,7 @@ function onEdit(e) {
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('UTM')
     .addItem('전체 행 다시 계산', 'fillAllUtm')
+    .addItem('FM(라이브예고) 칸만 채우기', 'fillLivePreview')
     .addItem('설정 시트 만들기 · 확인', 'openConfigSheet')
     .addItem('메타 연결 확인', 'checkMetaToken')
     .addItem('구글 연결 확인', 'checkGoogleAds')
@@ -309,6 +314,34 @@ function fillAllUtm() {
     writeUtm_(sheet, map, 2, sheet.getLastRow() - 1);
   });
   return fixed;
+}
+
+/* FM(라이브예고) 칸만 채운다. '전체 행 다시 계산' 은 광고명 · 링크까지 모두 다시 써서,
+   규칙이 바뀐 뒤(광고명에 타겟팅)에는 이미 집행 중인 옛 줄의 광고명이 바뀐다.
+   새로 생긴 이 칸만 채울 때는 이걸 쓴다. */
+function fillLivePreview() {
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  ensureConfigSheet_(book);
+  var at = FORMULA_HEADERS.indexOf('FM(라이브예고)');
+  var filled = 0;
+  book.getSheets().forEach(function (sheet) {
+    if (String(sheet.getName()).indexOf(TND_FLAT_PREFIX) === 0 || !isPartSheet_(sheet)) return;
+    var map = ensureColumns_(sheet, FALLBACK_COLUMNS);
+    var last = sheet.getLastRow();
+    if (last < 2 || !hasSources_(map)) return;
+    var names = sheet.getRange(2, map['파일명'], last - 1, 1).getValues();
+    var grid = names.map(function (line, i) {
+      var name = String(line[0]).trim();
+      if (name === '' || name.indexOf(VERTICAL_MARK) >= 0) return [''];
+      filled += 1;
+      return [utmFormulas_(map, i + 2)[at]];
+    });
+    sheet.getRange(2, map['FM(라이브예고)'], grid.length, 1).setFormulas(grid);
+  });
+  var message = 'FM(라이브예고) 칸을 ' + filled + '줄 채웠습니다 (다른 칸은 그대로 둡니다).';
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
 }
 
 function openConfigSheet() {
@@ -466,6 +499,7 @@ function colLetter_(index) {
 //   NT(일반)      = 랜딩링크 ?nt_source(소스_미디엄) · nt_medium(광고명)
 //   NT(쇼핑스토리) = 랜딩링크 &nt_source · nt_medium · nt_detail  ← 파라미터가 이미 붙은 주소 뒤에 잇는다
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
+//   FM(라이브예고) = 예고 주소(LIVE_PREVIEW_BASE) + 랜딩링크 ?fm · sn · ea
 //   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
 //   광고그룹명    = [행사명]_타겟팅_매출채널              ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
 //   광고명        = 행사일자 _ 제품코드 _ 파일명 _ 타겟팅 _ 담당자 (= utm_content)
@@ -520,6 +554,9 @@ function utmFormulas_(map, row) {
   var sourceMedium = 'TEXTJOIN("_",TRUE,' + source + ',' + medium + ')';
   // 랜딩링크가 있으면 그 뒤에 이어 붙이고, 없으면 ? 로 시작하는 파라미터만 남긴다.
   var head = 'IF(' + url + '="","?",' + url + '&IF(ISNUMBER(FIND("?",' + url + ')),"&","?"))';
+  // 라이브예고 — 예고 주소 뒤에 랜딩링크(앞에 붙은 예고 주소 · 슬래시는 뗀다)를 잇는다
+  var liveTail = 'REGEXREPLACE(' + url + '&"","^(https?://view[.]shoppinglive[.]naver[.]com/lives/|/+)","")';
+  var liveHead = '"' + LIVE_PREVIEW_BASE + '"&' + liveTail + '&IF(ISNUMBER(FIND("?",' + url + ')),"&","?")';
 
   return [
     '=IF(OR(' + url + '="",' + source + '=""),"",' + head + '&TEXTJOIN("&",TRUE,'
@@ -530,6 +567,8 @@ function utmFormulas_(map, row) {
     '=IF(' + source + '="","",' + url + '&"&"&TEXTJOIN("&",TRUE,'
       + param('nt_source', source) + ',' + param('nt_medium', medium) + ',' + param('nt_detail', content) + '))',
     '=IF(' + source + '="","",' + head + '&TEXTJOIN("&",TRUE,'
+      + param('fm', source) + ',' + param('sn', medium) + ',' + param('ea', content) + '))',
+    '=IF(' + source + '="","",' + liveHead + '&TEXTJOIN("&",TRUE,'
       + param('fm', source) + ',' + param('sn', medium) + ',' + param('ea', content) + '))',
     '=IF(' + source + '="","",TEXTJOIN("_",TRUE,' + source + ',' + productFull + ',' + campaign + '))',
     '=IF(TEXTJOIN("",TRUE,' + promo + ',' + age + ',' + targeting + ',' + sales + ')="","",'
