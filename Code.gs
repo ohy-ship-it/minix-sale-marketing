@@ -468,7 +468,8 @@ function colLetter_(index) {
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
 //   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
 //   광고그룹명    = [행사명]_타겟팅_매출채널              ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
-//   광고명        = 행사일자 _ 제품코드 _ 파일명 _ 담당자 (= utm_content)
+//   광고명        = 행사일자 _ 제품코드 _ 파일명 _ 타겟팅 _ 담당자 (= utm_content)
+//                  타겟팅(non · retarget …)이 비면 그 자리는 빠진다
 // utm_source · utm_medium · utm_campaign · utm_term 은 열로 두지 않는다.
 // 링크 안에 이미 들어 있어 그 자리에서 계산한다.
 function utmFormulas_(map, row) {
@@ -533,7 +534,7 @@ function utmFormulas_(map, row) {
     '=IF(' + source + '="","",TEXTJOIN("_",TRUE,' + source + ',' + productFull + ',' + campaign + '))',
     '=IF(TEXTJOIN("",TRUE,' + promo + ',' + age + ',' + targeting + ',' + sales + ')="","",'
       + '"["&' + promo + '&"]"&' + age + '&"_"&' + targeting + '&"_"&' + sales + ')',
-    '=IF(' + file + '="","",TEXTJOIN("_",TRUE,' + stamp + ',' + product + ',' + code + ',' + owner + '))'
+    '=IF(' + file + '="","",TEXTJOIN("_",TRUE,' + stamp + ',' + product + ',' + code + ',' + targeting + ',' + owner + '))'
   ];
 }
 
