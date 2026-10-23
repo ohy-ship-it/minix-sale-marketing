@@ -7453,7 +7453,15 @@ if (utmBuilder) {
   ];
 
   // 메타 광고 세팅과 같은 4가지. 고른 것이 목록 · 복사에 쓰인다.
-  const URL_TYPES = [['url', 'URL'], ['linkGA', 'LINK(GA)'], ['nt', 'NT(네이버)'], ['fm', 'FM(라이브)']];
+  const URL_TYPES = [['url', 'URL'], ['linkGA', 'LINK(GA)'], ['nt', 'NT(네이버)'], ['fm', 'FM(라이브)'],
+    ['fmPreview', 'FM(라이브예고)']];
+
+  /* 라이브예고는 쇼핑라이브 예고 페이지 주소로 **늘 시작**한다 — 랜딩링크 칸에는 그 뒤 토막
+     (라이브 번호)만 적는다. 주소를 통째로 붙여 넣어도 앞부분이 두 번 붙지 않게 떼고 붙인다.
+     파라미터는 FM(라이브)와 같다 (fm · sn · ea). */
+  const LIVE_PREVIEW_BASE = 'https://view.shoppinglive.naver.com/lives/';
+  const livePreviewUrl = (url) => LIVE_PREVIEW_BASE
+    + tr(url).replace(/^https?:\/\/view\.shoppinglive\.naver\.com\/lives\//i, '').replace(/^\/+/, '');
 
   // 시트가 이 라벨을 보고 자기 열에 넣는다. 열 차례는 시트가 알아서 맞춘다.
   const SHEET_COLUMNS = [
@@ -7680,6 +7688,9 @@ if (utmBuilder) {
       fm: source
         ? head(url) + query([['fm', source], ['sn', medium], ['ea', content]])
         : '',
+      fmPreview: source
+        ? head(livePreviewUrl(url)) + query([['fm', source], ['sn', medium], ['ea', content]])
+        : '',
     };
   };
 
@@ -7703,6 +7714,7 @@ if (utmBuilder) {
     ['LINK(GA)', 'linkGA', '랜딩링크를 채우면 만들어집니다'],
     ['NT(네이버)', 'nt', '네이버스토어 링크 뒤에 붙입니다'],
     ['FM(라이브)', 'fm', '쇼핑라이브 링크 뒤에 붙입니다'],
+    ['FM(라이브예고)', 'fmPreview', LIVE_PREVIEW_BASE + ' + 랜딩링크'],
   ];
 
   const options = (list, picked, showCode) => list
