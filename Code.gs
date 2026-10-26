@@ -9187,7 +9187,37 @@ function budgetDailyRun(event) {
   var slim = budgetDailyMark_(found);
   budgetDailyLog_(slim, slim.how);
   Logger.log(JSON.stringify(found));
+
+  /* 매달 1~3일에는 **지난달도 한 번 더** 받아 마감한다.
+     아침 한 번만 돌아서 말일 오후에 쓴 광고비 · 늦게 잡히는 GFA 값이 지난달에 안 들어간다.
+     여기서 넘어져도 이번 달 올리기는 이미 끝났다 — 따로 붙잡아 기록만 남긴다.
+     화면이 보는 '마지막 실행' 표시는 이번 달 것으로 둔다 (지난달 마감은 기록 탭에만 남긴다). */
+  var day = Number(Utilities.formatDate(new Date(), 'Asia/Seoul', 'd'));
+  if (day <= BUDGET_CLOSE_DAYS) {
+    var close;
+    try {
+      close = budgetDaily_(budgetPrevMonth_());
+    } catch (error) {
+      close = { ok: false, month: budgetPrevMonth_(), error: String((error && error.message) || error) };
+    }
+    var how = (event ? '자동(트리거)' : '손으로') + ' · 지난달 마감';
+    budgetDailyLog_({ ok: close.ok !== false, month: close.month || '', tabs: close.tabs || 0,
+      rows: close.rows || 0, note: String(close.note || close.error || '') }, how);
+    Logger.log(JSON.stringify(close));
+  }
   return slim;
+}
+
+// 지난달 마감을 다시 받는 날 (매달 1일부터 이 날까지)
+var BUDGET_CLOSE_DAYS = 3;
+
+// 한국 시간 기준 지난달 'YYYY-MM'
+function budgetPrevMonth_() {
+  var now = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM').split('-');
+  var year = Number(now[0]);
+  var month = Number(now[1]) - 1;
+  if (month < 1) { month = 12; year -= 1; }
+  return year + '-' + ('0' + month).slice(-2);
 }
 
 // 이 스크립트가 걸어 둔 자동 올리기 트리거들
