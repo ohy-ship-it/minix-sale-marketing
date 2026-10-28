@@ -14821,7 +14821,14 @@ if (eventReport) {
     const pre = phasePacks(promo).filter((one) => asksOf(one.name));
     if (!pre.length) return null;
     const rows = pre.reduce((all, one) => all.concat(one.rows), []);
-    return { spend: paidSpend(rows), base: sumOf(rows).conv };
+    return { spend: paidSpend(rows), base: askBase(promo, sumOf(rows).conv) };
+  };
+  /* CPA 의 밑(신청 수) — 사전알림 칸에 **적어 둔 신청완료**가 이긴다.
+     매체가 센 결과는 어트리뷰션 붙은 값이라 실제 신청 수와 다르다 (901건을 적었는데
+     파일의 결과 610건으로 나눠 13,494원이 나왔다). 안 적었으면 파일의 결과로 나눈다. */
+  const askBase = (promo, conv) => {
+    const typed = preNum(typedOf(promo).ask);
+    return typed === null ? (Number(conv) || 0) : typed;
   };
   // 합계 자리에 사전 CPA 재료를 얹는다 (CPA 칸이 이걸 보고 사전으로 나눈다)
   const withPreCpa = (sum, promo, alarm) => {
@@ -14836,7 +14843,7 @@ if (eventReport) {
     /* 사전알림 줄 — CPA 는 사전 광고비 ÷ 사전 신청, 아래 CPS 는 **전체 광고비** ÷ 판매량 */
     const pre = preCpaOf(key);
     const cpaSpend = pre ? pre.spend : spend;
-    const cpaBase = pre ? pre.base : Number((got || {}).conv) || 0;
+    const cpaBase = pre ? pre.base : askBase(key, (got || {}).conv);
     const text = cpaSpend && cpaBase ? won(Math.round(cpaSpend / cpaBase)) : dash;
     const sold = Number(shown.buy) || 0;
     return `${text}<small class="er-base">${pre ? '사전' : '신청'}</small><br><small class="er-cps"
@@ -15069,7 +15076,12 @@ if (eventReport) {
       const pre = lines.filter((one) => asksOf(one.name));
       if (pre.length) {
         whole.cpaSpend = pre.reduce((sum, one) => sum + (Number(one.sum.spend) || 0), 0);
-        whole.cpaBase = pre.reduce((sum, one) => sum + (Number(one.sum.conv) || 0), 0);
+        whole.cpaBase = askBase(promo, pre.reduce((sum, one) => sum + (Number(one.sum.conv) || 0), 0));
+        // 사전 단계가 하나뿐이면 그 줄도 적은 신청완료로 나눈다 (합계와 같은 값이 되게)
+        if (pre.length === 1) {
+          pre[0].sum.cpaSpend = whole.cpaSpend;
+          pre[0].sum.cpaBase = whole.cpaBase;
+        }
       }
     }
     const anyTyped = lines.some((one) => one.typed.sales !== '' || one.typed.rev !== '');
