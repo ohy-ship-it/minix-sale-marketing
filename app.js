@@ -10177,7 +10177,20 @@ if (mediaPerformance) {
        받는 쪽이 '이 결과가 구매인가 알람 신청인가' 를 가릴 수 있게 낱개도 함께 담는다. */
     custom: row.custom || 0,
     rev: Math.round(row.revenue || 0),
+    /* 1일 · 7일 클릭 값을 **둘 다** 담는다 (메타 · 카카오만 온다).
+       행사별 결과의 단계별 매체성과에서 1일 · 7일을 골라 볼 때 쓴다. */
+    win: crossWinOf(row.windows),
   });
+  const crossWinOf = (windows) => {
+    if (!windows || typeof windows !== 'object') return undefined;
+    const out = {};
+    Object.keys(windows).forEach((key) => {
+      const one = windows[key] || {};
+      out[key] = { conv: Number(one.results) || 0, purchase: Number(one.purchase) || 0,
+        rev: Math.round(Number(one.revenue) || 0) };
+    });
+    return Object.keys(out).length ? out : undefined;
+  };
 
   const salesPayload = () => {
     const period = currentRange();
@@ -14391,6 +14404,23 @@ if (eventReport) {
     catch (error) { /* 거들기다 */ }
   };
 
+  /* 단계별 매체성과의 어트리뷰션 — '' 는 파일을 받을 때 고른 기준 그대로, '1d' · '7d' 는
+     파일에 함께 담긴 1일 · 7일 클릭 값으로 바꿔 본다 (메타 · 카카오만 — 다른 매체는 기준이 하나다).
+     보는 사람 것이라 시트에 담지 않는다. */
+  const ER_WINDOW_KEY = 'minix-event-window';
+  let erWindow = '';
+  try { erWindow = String(window.localStorage.getItem(ER_WINDOW_KEY) || ''); } catch (error) { erWindow = ''; }
+  if (['1d', '7d'].indexOf(erWindow) < 0) erWindow = '';
+  const setErWindow = (value) => {
+    erWindow = ['1d', '7d'].indexOf(value) >= 0 ? value : '';
+    try { window.localStorage.setItem(ER_WINDOW_KEY, erWindow); } catch (error) { /* 거들기다 */ }
+  };
+  // 그 줄을 고른 어트리뷰션 값으로 바꾼다. 값이 안 담긴 줄(옛 파일 · 구글 · 네이버)은 그대로다.
+  const winRow = (row) => {
+    const one = erWindow && row && row.win && row.win[erWindow];
+    return one ? { ...row, conv: one.conv, purchase: one.purchase, rev: one.rev } : row;
+  };
+
   const today = new Date();
   const thisMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
 
@@ -14673,7 +14703,7 @@ if (eventReport) {
            당일 · 사후 광고비는 신청을 받으려고 쓴 돈이 아니라서다 (preCpaOf). */
         if (one.cpaSpend !== undefined) {
           const pre = moneyText(ratio(one.cpaSpend, one.cpaBase));
-          return pre === dash ? dash : `${pre}<small class="er-base">사전</small>`;
+          return pre === dash ? dash : `${pre}<small class="er-base">${one.cpaTag || '사전'}</small>`;
         }
         const ask = one.phase === undefined ? true : asksOf(one.phase);
         const base = one.base === undefined ? (ask ? one.conv : one.buy) : one.base;
@@ -14686,7 +14716,8 @@ if (eventReport) {
        다른 행사의 CPS 와 견줄 수가 없다. 이 칸은 늘 광고비 ÷ 판매량이다. */
     { name: 'CPS(판매량)', alarmOnly: true,
       cell: (one) => moneyText(ratio(one.spend, one.buy)) },
-    { name: 'ROAS', cell: (one) => (one.spend ? perfRoas(ratio(one.rev, one.spend) || 0) : dash) },
+    // 매출이 없으면(최종결과에 아직 안 적었으면) 0% 가 아니라 비워 둔다
+    { name: 'ROAS', cell: (one) => (one.spend && one.rev ? perfRoas(ratio(one.rev, one.spend) || 0) : dash) },
     { name: 'CVR', cell: (one) => pctText(ratio(one.buy, one.clk)) },
     { name: 'CPC', cell: (one) => moneyText(ratio(one.spend, one.clk)) },
     { name: 'CTR', cell: (one) => pctText(ratio(one.clk, one.imp)) },
@@ -14821,19 +14852,20 @@ if (eventReport) {
     const pre = phasePacks(promo).filter((one) => asksOf(one.name));
     if (!pre.length) return null;
     const rows = pre.reduce((all, one) => all.concat(one.rows), []);
-    return { spend: paidSpend(rows), base: askBase(promo, sumOf(rows).conv) };
+    return { spend: paidSpend(rows), base: askBase(promo) };
   };
-  /* CPA 의 밑(신청 수) — 사전알림 칸에 **적어 둔 신청완료**가 이긴다.
-     매체가 센 결과는 어트리뷰션 붙은 값이라 실제 신청 수와 다르다 (901건을 적었는데
-     파일의 결과 610건으로 나눠 13,494원이 나왔다). 안 적었으면 파일의 결과로 나눈다. */
-  const askBase = (promo, conv) => {
-    const typed = preNum(typedOf(promo).ask);
-    return typed === null ? (Number(conv) || 0) : typed;
-  };
+  /* CPA 의 밑(신청 수) — 사전알림 칸에 **적어 둔 신청완료만** 쓴다.
+     최종결과(종합결과 · 단계별 종합결과 · 목록 줄)는 손으로 적은 값으로만 센다 —
+     매체가 센 결과는 어트리뷰션 붙은 값이라 실제 신청 수와 다르다
+     (901건을 적었는데 파일의 결과 610건으로 나눠 13,494원이 나왔다).
+     안 적었으면 0 — CPA 는 '—' 로 비어 보인다. 매체 숫자는 ④ 단계별 매체성과에서 본다. */
+  const askBase = (promo) => preNum(typedOf(promo).ask) || 0;
   // 합계 자리에 사전 CPA 재료를 얹는다 (CPA 칸이 이걸 보고 사전으로 나눈다)
   const withPreCpa = (sum, promo, alarm) => {
-    const pre = alarm ? preCpaOf(promo) : null;
-    return pre ? { ...sum, cpaSpend: pre.spend, cpaBase: pre.base } : sum;
+    if (!alarm) return sum;
+    const pre = preCpaOf(promo);
+    return pre ? { ...sum, cpaSpend: pre.spend, cpaBase: pre.base, cpaTag: '사전' }
+      : { ...sum, cpaSpend: sum.spend, cpaBase: askBase(promo), cpaTag: '신청' };
   };
   const cpaOf = (shown, spend, got, alarm, key) => {
     if (!alarm) {
@@ -14843,14 +14875,13 @@ if (eventReport) {
     /* 사전알림 줄 — CPA 는 사전 광고비 ÷ 사전 신청, 아래 CPS 는 **전체 광고비** ÷ 판매량 */
     const pre = preCpaOf(key);
     const cpaSpend = pre ? pre.spend : spend;
-    const cpaBase = pre ? pre.base : askBase(key, (got || {}).conv);
+    const cpaBase = askBase(key);
     const text = cpaSpend && cpaBase ? won(Math.round(cpaSpend / cpaBase)) : dash;
     const sold = Number(shown.buy) || 0;
     return `${text}<small class="er-base">${pre ? '사전' : '신청'}</small><br><small class="er-cps"
       title="전체 광고비 ÷ 판매량">CPS ${spend && sold ? won(Math.round(spend / sold)) : dash}</small>`;
   };
-  const roasWhy = (key) => `총매출 ÷ 브검제외 광고비(없으면 붙인 파일의 집행 광고비)${revTyped(key)
-    ? ' — 수기로 적은 총 매출로 셌습니다' : ''}`;
+  const roasWhy = () => '손으로 적은 매출 ÷ 브검제외 광고비(없으면 붙인 파일의 집행 광고비)';
   const cpaWhy = (key, alarm) => (alarm
     ? '사전알림 행사 — CPA 는 사전 단계 광고비 ÷ 사전 결과(신청), 아래 CPS 는 전체 광고비 ÷ 판매량'
     : `브검제외 광고비(없으면 붙인 파일의 집행 광고비) ÷ 판매량${soldTyped(key) ? ' — 수기로 적은 총 판매수로 셌습니다' : ''}`);
@@ -14916,7 +14947,7 @@ if (eventReport) {
     : ' title="판매량은 손으로 적은 값만 셉니다 — 총 판매수나 단계별 판매수를 적어 주세요"'}>${shown.buy || soldTyped(key) ? num(shown.buy) : dash}</span></td>
         <td class="perf-num" title="${escape(cpaWhy(key, alarm))}">${cpaOf(shown, spend, got, alarm, key)}</td>
         <td class="perf-num" title="${escape(roasWhy(key))}"><span${revTyped(key)
-    ? ' class="is-manual"' : ''}>${spend ? perfRoas(ratio(shown.rev, spend) || 0) : dash}</span></td>`
+    ? ' class="is-manual"' : ''}>${spend && shown.rev ? perfRoas(ratio(shown.rev, spend) || 0) : dash}</span></td>`
     : `<td class="er-none" colspan="5">파일을 붙이거나 판매수 · 매출을 적으면 채워집니다</td>`}
       <td class="er-own" data-er="skip">
         <label class="er-pick" title="${escape(row.sku || '이 줄')} 의 전매체 파일 (이 줄에만 붙습니다 · 주차마다 하나씩)">
@@ -14984,10 +15015,13 @@ if (eventReport) {
       const typed = phaseTyped(promo, one.name);
       return sum + (typed.sales !== '' ? (Number(typed.sales) || 0) : 0);
     }, 0);
-    if (packs.length) {
-      const lines = packs.map((one) => withTyped(sumOf(one.rows), phaseTyped(promo, one.name)));
-      whole.rev = lines.reduce((sum, one) => sum + (Number(one.rev) || 0), 0);
-    }
+    /* 매출도 판매량과 같이 **손으로 적은 값만** 센다 (총 매출 · 없으면 단계별로 적은 매출).
+       파일의 판매전환값은 매체가 센 값이라 ④ 단계별 매체성과에서만 본다. */
+    whole.rev = packs.reduce((sum, one) => {
+      const typed = phaseTyped(promo, one.name);
+      return sum + (typed.rev !== '' ? (Number(typed.rev) || 0) : 0);
+    }, 0);
+    whole.conv = 0;   // 매체가 센 결과도 쓰지 않는다 (신청은 사전알림 칸에 적은 값)
     return withTyped(whole, { sales: typedOf(promo).sales, rev: typedOf(promo).rev });
   };
 
@@ -15057,8 +15091,10 @@ if (eventReport) {
       const typed = phaseTyped(promo, one.name);
       const sum = sumOf(one.rows);
       sum.spend = paidSpend(one.rows);
+      // 판매수 · 매출 · 신청은 **손으로 적은 값만** 센다 (매체 숫자는 ④ 단계별 매체성과에서)
       sum.buy = typed.sales !== '' ? (Number(typed.sales) || 0) : 0;
-      if (typed.rev !== '') sum.rev = Number(typed.rev) || 0;
+      sum.rev = typed.rev !== '' ? (Number(typed.rev) || 0) : 0;
+      sum.conv = 0;
       sum.phase = one.name;          // CPS · CPA 가 이걸 보고 나눌 밑을 고른다
       return { ...one, typed: typed, sum: sum };
     });
@@ -15074,9 +15110,12 @@ if (eventReport) {
        CPS(판매량) 는 그대로 전체 광고비 ÷ 판매량이다. */
     if (alarm) {
       const pre = lines.filter((one) => asksOf(one.name));
+      whole.cpaSpend = whole.spend;
+      whole.cpaBase = askBase(promo);
+      whole.cpaTag = '신청';
       if (pre.length) {
         whole.cpaSpend = pre.reduce((sum, one) => sum + (Number(one.sum.spend) || 0), 0);
-        whole.cpaBase = askBase(promo, pre.reduce((sum, one) => sum + (Number(one.sum.conv) || 0), 0));
+        whole.cpaTag = '사전';
         // 사전 단계가 하나뿐이면 그 줄도 적은 신청완료로 나눈다 (합계와 같은 값이 되게)
         if (pre.length === 1) {
           pre[0].sum.cpaSpend = whole.cpaSpend;
@@ -15132,8 +15171,17 @@ if (eventReport) {
      캠페인 하나다. 여기 판매량은 **매체가 준 값 그대로**다 (손으로 적은 판매수는
      어느 매체 몫인지 알 수 없어 나누지 않는다 — 위 ③ 에서만 덮는다). */
   const mediaTable = (rowId, promo, alarm) => {
-    const packs = phasePacks(promo);
+    // 1일 · 7일을 골랐으면 그 값으로 바꿔 센다 (winRow — 손으로 적은 매체는 그대로)
+    const packs = phasePacks(promo).map((one) => ({ ...one, rows: one.rows.map(winRow) }));
     if (!packs.length) return '<p class="perf-note">붙인 전매체 파일이 없습니다.</p>';
+    /* 1일 · 7일 값은 파일을 받을 때 함께 담긴다. 그 전에 받은 파일의 메타 · 카카오 줄에는
+       없어서 파일 기준 그대로 남는다 — 그렇다고 알려 주지 않으면 바뀐 줄 알고 읽는다. */
+    const stale = erWindow ? packs.reduce((all, one) => all.concat(one.rows), [])
+      .filter((row) => !row.hand && !row.win && (row.source === 'meta' || row.source === 'kakao')).length : 0;
+    const winNote = erWindow
+      ? `<p class="perf-note">${erWindow === '1d' ? '1일' : '7일'} 클릭 기준으로 셌습니다 (메타 · 카카오).${stale
+        ? ` 다만 <b>${num(stale)}줄</b>은 1일 · 7일 값이 담기기 전에 받은 파일이라 파일 기준 그대로입니다 — 전매체에서 다시 받아 붙여 주세요.` : ''}</p>`
+      : '';
     const block = (phase) => {
       /* 손으로 적은 매체는 **따로 세운다** — 같은 이름의 파일 매체와 합쳐지면
          어느 줄을 지우는 것인지 집을 수가 없다. 보이는 이름은 그대로 매체 이름이다. */
@@ -15182,7 +15230,7 @@ if (eventReport) {
           </tr>`).join('') : '');
         }).join('');
     };
-    return `<div class="tool-table-wrap"><table class="tool-table er-split">
+    return `${winNote}<div class="tool-table-wrap"><table class="tool-table er-split">
         <thead><tr><th>단계 · 매체 · 캠페인</th>${metricHeads(alarm)}</tr></thead>
         <tbody>${packs.map(block).join('')}</tbody>
       </table></div>`;
@@ -15205,7 +15253,7 @@ if (eventReport) {
       ${brand ? `<span class="er-typed er-brand-tag"
         title="이 행사에 섞인 브랜드검색 광고비입니다. 넣고 빼는 것은 화면 맨 위 [브검 포함] 으로 고릅니다">
         브랜드검색 <small>${money(brand)}</small></span>` : ''}
-      ${one.alarm ? '<span class="er-typed-note">사전알림 행사라 아래 표는 <b>CPA</b>(광고비 ÷ 결과) 로 셉니다</span>' : ''}
+      ${one.alarm ? '<span class="er-typed-note">사전알림 행사 — <b>CPA</b> 는 사전 광고비 ÷ 적은 신청완료, <b>CPS(판매량)</b> 는 전체 광고비 ÷ 적은 판매수</span>' : ''}
     </div>`;
   };
 
@@ -16023,6 +16071,10 @@ if (eventReport) {
           <label class="tool-copy-all er-withbrand${withBrand ? ' is-on' : ''}"
             title="브랜드검색은 정액(CPT) 이라 광고비가 계약 금액이고, 월별 예산에서는 고정비의 '브랜드검색' 으로 이미 잡혀 있습니다. 그래서 기본은 빼고 셉니다 — 켜면 이 화면의 광고비 · CPS · ROAS 를 모두 브검을 넣어 다시 셉니다">
             <input type="checkbox" data-er="withbrand"${withBrand ? ' checked' : ''}>브검 포함</label>
+          ${[['1d', '1일 클릭'], ['7d', '7일 클릭']].map(([key, label]) => `<label
+            class="tool-copy-all er-withbrand${erWindow === key ? ' is-on' : ''}"
+            title="단계별 매체성과의 결과 · 판매량 · 판매전환값을 ${label} 기준으로 봅니다 (메타 · 카카오). 끄면 파일을 받을 때 고른 기준 그대로입니다. 종합결과는 손으로 적은 값이라 바뀌지 않습니다">
+            <input type="checkbox" data-er="window" data-win="${key}"${erWindow === key ? ' checked' : ''}>${label}</label>`).join('')}
           <label class="tool-copy-all er-file" title="주차마다 그 주만 조회해 내려받은 파일을 하나씩 붙이세요">
             <i data-lucide="upload"></i>${files.length ? '파일 더 붙이기' : '전매체 파일 붙이기'}
             <input type="file" accept=".json,application/json" multiple data-er="file" hidden>
@@ -16702,6 +16754,12 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       const picked = Array.from(hit.files || []);
       hit.value = '';                   // 같은 파일을 다시 골라도 change 가 오게
       if (picked.length) fillOneUsed(hit.dataset.row, picked, hit);
+      return;
+    }
+    if (what === 'window') {
+      // 1일 · 7일은 둘 중 하나만 켠다 (둘 다 끄면 파일 기준 그대로)
+      setErWindow(hit.checked ? hit.dataset.win : '');
+      render();
       return;
     }
     if (what === 'withbrand') {

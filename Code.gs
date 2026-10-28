@@ -1917,6 +1917,9 @@ function metaSlotOf_(promoted) {
 function metaPick_(entry, slot) {
   entry.slot = slot || entry.slot || 'purchase';
   entry.results = Number(entry[entry.slot] || 0);
+  Object.keys(entry.windows || {}).forEach(function (w) {
+    entry.windows[w].results = Number(entry.windows[w][entry.slot] || 0);
+  });
   return entry;
 }
 
@@ -3164,9 +3167,31 @@ function metrics_(row, base, window) {
   base.results = base.purchase;
   base.revenue = purchaseValue_(row, field);
   base.attribution = window || '';
+  base.windows = metaWindows_(row);
 
   // 어트리뷰션 기간별 결과. 계정 기본 설정을 쓰는 중이라 칸이 안 오면 null 로 둔다.
   return base;
+}
+
+/* 1일 클릭 · 7일 클릭 값을 **둘 다** 담는다 (행사별 결과에서 골라 보려고).
+   고른 기준 하나만 담으면 파일을 받은 뒤에는 다른 기준으로 볼 길이 없다.
+   결과(results)는 metaPick_ 이 목표 전환으로 다시 적는다. */
+function metaWindows_(row) {
+  var out = {};
+  META_WINDOWS.forEach(function (w) {
+    var counted = countResults_(row ? row.actions : null, w);
+    var catalog = countResults_(row ? row.catalog_segment_actions : null, w);
+    var one = {
+      purchase: counted.purchase || catalog.purchase,
+      addToCart: counted.addToCart || catalog.addToCart,
+      lead: counted.lead || catalog.lead,
+      custom: counted.custom || catalog.custom,
+      revenue: purchaseValue_(row, w)
+    };
+    one.results = one.purchase;
+    out[w.replace('_click', '')] = one;
+  });
+  return out;
 }
 
 // field 를 주면 그 어트리뷰션 칸(1d_click · 7d_click)을 읽는다. 없으면 value(계정 기본).
@@ -4639,6 +4664,13 @@ function kakaoMetrics_(metrics, base, window) {
   base.slot = 'purchase';
   base.results = base.purchase;
   base.revenue = kakaoValue_(found, window);
+  // 1일 · 7일을 둘 다 담는다 (행사별 결과에서 골라 보려고 — 메타 metaWindows_ 와 같은 모양)
+  base.windows = {};
+  KAKAO_ATTRIBUTIONS.forEach(function (w) {
+    var each = kakaoResults_(found, w);
+    base.windows[w] = { purchase: each.purchase, addToCart: each.addToCart, lead: each.lead,
+      custom: 0, results: each.purchase, revenue: kakaoValue_(found, w) };
+  });
   return base;
 }
 
