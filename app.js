@@ -14669,6 +14669,12 @@ if (eventReport) {
     { name: 'CPS', alarmName: 'CPA',
       cell: (one, alarm) => {
         if (!alarm) return moneyText(ratio(one.spend, one.buy));
+        /* 합계 자리(종합결과 · 단계별 합계)의 CPA 는 **사전 단계 광고비 ÷ 사전 신청**이다.
+           당일 · 사후 광고비는 신청을 받으려고 쓴 돈이 아니라서다 (preCpaOf). */
+        if (one.cpaSpend !== undefined) {
+          const pre = moneyText(ratio(one.cpaSpend, one.cpaBase));
+          return pre === dash ? dash : `${pre}<small class="er-base">사전</small>`;
+        }
         const ask = one.phase === undefined ? true : asksOf(one.phase);
         const base = one.base === undefined ? (ask ? one.conv : one.buy) : one.base;
         const text = moneyText(ratio(one.spend, base));
@@ -14808,20 +14814,38 @@ if (eventReport) {
      사전알림 줄만 나누는 밑이 다르다. 그런 행사는 신청을 받는 것이 목표라 구매가
      거의 안 잡힌다 — 판매량으로 나누면 「한 건에 수십만 원」 처럼 보인다.
      (단계별 · 매체별 표가 CPS 를 CPA 로 바꿔 세는 것과 같은 규칙이다) */
-  const cpaOf = (shown, spend, got, alarm) => {
-    if (!spend) return dash;
-    const base = alarm ? Number((got || {}).conv) || 0 : Number(shown.buy) || 0;
-    const text = base ? won(Math.round(spend / base)) : dash;
-    if (!alarm) return text;
-    // 사전알림 줄은 판매량으로 나눈 CPS 도 아래에 적는다
+  /* 사전알림 CPA 의 재료 — **사전 단계**의 광고비와 결과(신청)만 모은다.
+     광고비는 단계별 표와 같이 브검을 빼고 센다 (스위치를 켜면 넣는다).
+     붙인 파일에 사전 단계가 없으면 null — 그때는 예전처럼 전체로 나눈다. */
+  const preCpaOf = (promo) => {
+    const pre = phasePacks(promo).filter((one) => asksOf(one.name));
+    if (!pre.length) return null;
+    const rows = pre.reduce((all, one) => all.concat(one.rows), []);
+    return { spend: paidSpend(rows), base: sumOf(rows).conv };
+  };
+  // 합계 자리에 사전 CPA 재료를 얹는다 (CPA 칸이 이걸 보고 사전으로 나눈다)
+  const withPreCpa = (sum, promo, alarm) => {
+    const pre = alarm ? preCpaOf(promo) : null;
+    return pre ? { ...sum, cpaSpend: pre.spend, cpaBase: pre.base } : sum;
+  };
+  const cpaOf = (shown, spend, got, alarm, key) => {
+    if (!alarm) {
+      const base = Number(shown.buy) || 0;
+      return spend && base ? won(Math.round(spend / base)) : dash;
+    }
+    /* 사전알림 줄 — CPA 는 사전 광고비 ÷ 사전 신청, 아래 CPS 는 **전체 광고비** ÷ 판매량 */
+    const pre = preCpaOf(key);
+    const cpaSpend = pre ? pre.spend : spend;
+    const cpaBase = pre ? pre.base : Number((got || {}).conv) || 0;
+    const text = cpaSpend && cpaBase ? won(Math.round(cpaSpend / cpaBase)) : dash;
     const sold = Number(shown.buy) || 0;
-    return `${text}<small class="er-base">신청</small><br><small class="er-cps"
-      title="광고비 ÷ 판매량">CPS ${sold ? won(Math.round(spend / sold)) : dash}</small>`;
+    return `${text}<small class="er-base">${pre ? '사전' : '신청'}</small><br><small class="er-cps"
+      title="전체 광고비 ÷ 판매량">CPS ${spend && sold ? won(Math.round(spend / sold)) : dash}</small>`;
   };
   const roasWhy = (key) => `총매출 ÷ 브검제외 광고비(없으면 붙인 파일의 집행 광고비)${revTyped(key)
     ? ' — 수기로 적은 총 매출로 셌습니다' : ''}`;
   const cpaWhy = (key, alarm) => (alarm
-    ? '사전알림 행사라 광고비 ÷ 결과 로 셌습니다'
+    ? '사전알림 행사 — CPA 는 사전 단계 광고비 ÷ 사전 결과(신청), 아래 CPS 는 전체 광고비 ÷ 판매량'
     : `브검제외 광고비(없으면 붙인 파일의 집행 광고비) ÷ 판매량${soldTyped(key) ? ' — 수기로 적은 총 판매수로 셌습니다' : ''}`);
 
   const line = (row) => {
@@ -14883,7 +14907,7 @@ if (eventReport) {
         <td class="perf-num"><span${soldTyped(key)
     ? ` class="is-manual" title="수기로 적은 총 판매수입니다${got ? ` (붙인 파일이 센 구매 수는 ${num(got.buy)} — 판매량에는 쓰지 않습니다)` : ''}"`
     : ' title="판매량은 손으로 적은 값만 셉니다 — 총 판매수나 단계별 판매수를 적어 주세요"'}>${shown.buy || soldTyped(key) ? num(shown.buy) : dash}</span></td>
-        <td class="perf-num" title="${escape(cpaWhy(key, alarm))}">${cpaOf(shown, spend, got, alarm)}</td>
+        <td class="perf-num" title="${escape(cpaWhy(key, alarm))}">${cpaOf(shown, spend, got, alarm, key)}</td>
         <td class="perf-num" title="${escape(roasWhy(key))}"><span${revTyped(key)
     ? ' class="is-manual"' : ''}>${spend ? perfRoas(ratio(shown.rev, spend) || 0) : dash}</span></td>`
     : `<td class="er-none" colspan="5">파일을 붙이거나 판매수 · 매출을 적으면 채워집니다</td>`}
@@ -14972,7 +14996,8 @@ if (eventReport) {
     /* **광고비에서만** 브검 몫을 뺀다. 전환 · 매출은 그대로다 — 브검으로 산 전환도
        행사가 거둔 전환이라서다. 그래서 셈한 칸(CPS · ROAS · CPC · CPM)이 그 광고비로
        다시 셈해진다. [브검 포함] 을 켜면 매체가 준 값 그대로 둔다. */
-    const shown = withBrand ? one : { ...one, spend: Math.max(one.spend - brand, 0) };
+    const shown = withPreCpa(withBrand ? one : { ...one, spend: Math.max(one.spend - brand, 0) },
+      promo, alarm);
     return `<div class="bg-stats er-hero">
       ${metricsOf(alarm).map((each) => statBox(metricName(each, alarm), each.cell(shown, alarm), '')).join('')}
     </div>
@@ -15038,12 +15063,14 @@ if (eventReport) {
     whole.spend = paidSpend(everyRow);
     whole.buy = lines.reduce((sum, one) => sum + (Number(one.sum.buy) || 0), 0);
     whole.rev = lines.reduce((sum, one) => sum + (Number(one.sum.rev) || 0), 0);
-    /* 합계의 CPA · CPS 는 **단계마다 쓴 밑을 더해** 나눈다. 사전은 신청, 당일은 구매라
-       밑이 섞이므로 '신청+구매' 라고 적어 둔다 — 한 가지로 센 값인 척하면 안 된다.
-       사전알림 행사가 아니면 밑이 판매량 하나뿐이라 섞일 것이 없다. */
+    /* 사전알림 행사의 합계 CPA 는 **사전 단계 광고비 ÷ 사전 신청**이다 (종합결과와 같다).
+       CPS(판매량) 는 그대로 전체 광고비 ÷ 판매량이다. */
     if (alarm) {
-      whole.base = lines.reduce((sum, one) =>
-        sum + (Number(asksOf(one.name) ? one.sum.conv : one.sum.buy) || 0), 0);
+      const pre = lines.filter((one) => asksOf(one.name));
+      if (pre.length) {
+        whole.cpaSpend = pre.reduce((sum, one) => sum + (Number(one.sum.spend) || 0), 0);
+        whole.cpaBase = pre.reduce((sum, one) => sum + (Number(one.sum.conv) || 0), 0);
+      }
     }
     const anyTyped = lines.some((one) => one.typed.sales !== '' || one.typed.rev !== '');
     return `<div class="tool-table-wrap"><table class="tool-table er-split">
