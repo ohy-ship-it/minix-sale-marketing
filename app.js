@@ -15606,7 +15606,8 @@ if (eventReport) {
     ? `<button type="button" class="er-ads-go" data-er="adsRedo" data-channel="${escape(promo)}"
         data-row="${escape(row.id)}">다시 묻기</button>` : ''}</h5>
       ${openAds === promo ? adsBlock(promo) : adsCall(promo, row)}
-      <textarea class="er-ads-note" data-er="adsNote" data-row="${escape(row.id)}" rows="3"
+      <textarea class="er-ads-note" data-er="adsNote" data-row="${escape(row.id)}" rows="3"${noteHeight
+    ? ` style="height:${noteHeight}px"` : ''}
         placeholder="소재 메모 — 어떤 소재가 잘 됐는지 · 다음에 바꿀 점 같은 것을 적어 두세요 (칸을 벗어나면 담깁니다)"
         >${escape(noteDraft[row.id] !== undefined ? noteDraft[row.id] : (row.adsNote || ''))}</textarea>
     </div>`;
@@ -16052,6 +16053,22 @@ if (eventReport) {
   const settingTimer = {};
   // 발행 소재 아래 메모 — 세팅명과 같은 까닭으로 적는 중인 값을 줄마다 기억해 둔다
   const noteDraft = {};
+  /* 메모 칸 높이 — 끌어서 늘린 크기를 기억한다. 화면이 다시 그려질 때마다(파일 · 추이가
+     늦게 도착할 때) 기본 높이로 돌아가던 것을 막는다. 보는 사람 것이라 이 브라우저에만 둔다. */
+  const NOTE_HEIGHT_KEY = 'minix-event-note-height';
+  let noteHeight = 0;
+  try { noteHeight = Number(window.localStorage.getItem(NOTE_HEIGHT_KEY)) || 0; } catch { noteHeight = 0; }
+  const keepNoteHeight = (box) => {
+    const height = Math.round(box.offsetHeight);
+    if (!height || height === noteHeight) return;
+    noteHeight = height;
+    try { window.localStorage.setItem(NOTE_HEIGHT_KEY, String(height)); } catch { /* 거들기다 */ }
+  };
+  // 크기 손잡이를 놓았을 때 그 높이를 적어 둔다
+  eventReport.addEventListener('pointerup', (event) => {
+    const box = event.target.closest && event.target.closest('.er-ads-note');
+    if (box) keepNoteHeight(box);
+  });
   const render = () => {
     const now = document.activeElement;
     const typing = now && now.classList
