@@ -2204,3 +2204,21 @@ html.is-gfa-stale,html.is-gfa-stale body{overflow:hidden}
   border:1px solid var(--line,#e5e4df);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;line-height:1.5;background:#fff}
 .er-ads-note:focus{border-color:#9fb3c8;outline:none}
 .er-ads-note.is-saving{opacity:.6}
+.er-share{display:flex;gap:6px;justify-content:flex-end;margin:0 0 10px}
+.er-print-title{display:none}
+/* 행사별 결과 PDF 저장 — 펼친 그 줄의 카드만 인쇄한다 (app.js printRow) */
+@media print{
+  @page{size:A4 landscape;margin:10mm}
+  body.er-printing{background:#fff}
+  body.er-printing *{visibility:hidden}
+  body.er-printing .er-print-target,body.er-printing .er-print-target *{visibility:visible}
+  body.er-printing .er-print-target{position:absolute;left:0;top:0;width:100%;padding:0;font-size:11px}
+  body.er-printing .er-print-target .er-share,
+  body.er-printing .er-print-target button,
+  body.er-printing .er-print-target label.er-pick{display:none!important}
+  body.er-printing .er-print-target .er-print-title{display:block;margin:0 0 10px;font-size:15px}
+  body.er-printing .er-print-target .tool-table-wrap{overflow:visible!important;max-height:none!important}
+  body.er-printing .er-print-target table{width:100%;font-size:10px}
+  body.er-printing .er-print-target tr,body.er-printing .er-print-target .bg-stat{break-inside:avoid}
+  body.er-printing .er-print-target textarea{border:none;resize:none;height:auto;min-height:0}
+}

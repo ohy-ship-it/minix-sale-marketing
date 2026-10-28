@@ -15576,7 +15576,13 @@ if (eventReport) {
         + '월별 예산에서 판매채널을 먼저 적어 주세요.</p></div>';
     }
     const twins = twinsOf(channel);
-    return `<div class="er-detail">
+    return `<div class="er-detail" data-row="${escape(row.id)}">
+      <div class="er-share" data-er="skip">
+        <button type="button" class="tool-copy-all" data-er="pdf" data-row="${escape(row.id)}"
+          title="이 행사 결과만 PDF 로 저장합니다 — 인쇄 창에서 대상을 'PDF로 저장' 으로 고르세요"><i data-lucide="file-down"></i>PDF 저장</button>
+        <button type="button" class="tool-copy-all" data-er="link" data-row="${escape(row.id)}"
+          title="이 행사 결과를 바로 여는 링크를 복사합니다 (미닉스 계정으로 로그인한 사람만 열 수 있습니다)"><i data-lucide="link"></i>공유 링크</button>
+      </div>
       ${ownFiles(promo)}
       ${mergeNote(promo)}
       ${twins.length > 1 ? `<p class="perf-note">이 달에 <b>${escape(channel)}</b> 로 적힌 줄이
@@ -17032,6 +17038,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       render();
       return;
     }
+    if (what === 'pdf') { printRow(hit.dataset.row); return; }
+    if (what === 'link') { copyRowLink(hit.dataset.row, hit); return; }
     if (what === 'pick') {
       open = open === hit.dataset.row ? '' : hit.dataset.row;
       openMedia = '';   // 다른 줄을 펼치면 매체 · 소재도 닫는다
@@ -17040,7 +17048,67 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     }
   });
 
-  openViewOnce(eventReport, load);
+  /* ── PDF 저장 · 공유 링크 ──────────────────────────────────────
+     PDF 는 브라우저 인쇄로 만든다 — 펼친 그 줄의 카드만 남기고 나머지는 인쇄에서 감춘다
+     (styles.css 의 er-printing). 파일 이름은 인쇄 창이 문서 제목을 쓰므로 잠깐 바꿔 둔다.
+     링크는 #event-report-view/<달>/<줄 번호> — 열면 그 달 · 그 줄을 펼쳐 보여 준다.
+     로그인(미닉스 계정)은 그대로 거친다 — 링크만으로 밖에서 숫자를 볼 수는 없다. */
+  const LINK_MARK = '#event-report-view/';
+  const rowLink = (rowId) => `${location.origin}${location.pathname}${LINK_MARK}`
+    + `${encodeURIComponent(month)}/${encodeURIComponent(rowId)}`;
+  const copyRowLink = (rowId, hit) => {
+    const link = rowLink(rowId);
+    const done = () => {
+      const was = hit.innerHTML;
+      hit.innerHTML = '<i data-lucide="check"></i>복사했습니다';
+      lucide.createIcons();
+      window.setTimeout(() => { if (hit.isConnected) { hit.innerHTML = was; lucide.createIcons(); } }, 1800);
+    };
+    if (window.navigator.clipboard?.writeText) {
+      window.navigator.clipboard.writeText(link).then(done, () => window.prompt('링크를 복사하세요', link));
+    } else window.prompt('링크를 복사하세요', link);
+  };
+  const printRow = (rowId) => {
+    const card = eventReport.querySelector(`.er-detail[data-row="${CSS.escape(String(rowId))}"]`);
+    if (!card) return;
+    const row = allPlanRows().find((one) => String(one.id) === String(rowId)) || {};
+    const head = [monthName(month), row.channel, row.sku, row.event].filter(Boolean).join(' · ');
+    // 인쇄본 맨 위에 무슨 행사인지 적는다 (화면에서는 줄 머리에 있어 카드 안에는 없다)
+    const title = document.createElement('h3');
+    title.className = 'er-print-title';
+    title.textContent = `행사별 결과 — ${head}`;
+    card.prepend(title);
+    const wasTitle = document.title;
+    document.title = `행사별결과_${head.replace(/[\\/:*?"<>|]/g, '').replace(/\s*·\s*/g, '_')}`;
+    card.classList.add('er-print-target');
+    document.body.classList.add('er-printing');
+    const undo = () => {
+      document.body.classList.remove('er-printing');
+      card.classList.remove('er-print-target');
+      title.remove();
+      document.title = wasTitle;
+      window.removeEventListener('afterprint', undo);
+    };
+    window.addEventListener('afterprint', undo);
+    window.print();
+  };
+  // 링크로 들어왔으면 그 달 · 그 줄을 연다. 맞으면 true.
+  const readLink = () => {
+    if (!location.hash.startsWith(LINK_MARK)) return false;
+    const [want, rowId] = location.hash.slice(LINK_MARK.length).split('/').map((one) => decodeURIComponent(one || ''));
+    if (!/^\d{4}-\d{2}$/.test(want)) return false;
+    month = want;
+    open = rowId || '';
+    openMedia = '';
+    openAds = '';
+    opening = false;          // 링크의 달을 지킨다 (가장 늦게 짠 달로 옮겨 가지 않게)
+    return true;
+  };
+  window.addEventListener('hashchange', () => {
+    if (!eventReport.hidden && readLink()) load();
+  });
+
+  openViewOnce(eventReport, () => { readLink(); load(); });
 }
 
 // ── 월별 예산 (화면 안에서 짠다) ────────────────────────────────────
