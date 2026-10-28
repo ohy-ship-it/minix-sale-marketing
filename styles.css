@@ -2200,3 +2200,7 @@ html.is-gfa-stale,html.is-gfa-stale body{overflow:hidden}
 .er-setting-in:hover{border-color:var(--line,#e5e4df);background:#fff}
 .er-setting-in:focus{border-color:#9fb3c8;background:#fff;outline:none}
 .er-setting-in.is-saving{opacity:.6}
+.er-ads-note{display:block;width:100%;box-sizing:border-box;margin-top:10px;min-height:64px;resize:vertical;
+  border:1px solid var(--line,#e5e4df);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;line-height:1.5;background:#fff}
+.er-ads-note:focus{border-color:#9fb3c8;outline:none}
+.er-ads-note.is-saving{opacity:.6}

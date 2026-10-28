@@ -15600,6 +15600,9 @@ if (eventReport) {
     ? `<button type="button" class="er-ads-go" data-er="adsRedo" data-channel="${escape(promo)}"
         data-row="${escape(row.id)}">다시 묻기</button>` : ''}</h5>
       ${openAds === promo ? adsBlock(promo) : adsCall(promo, row)}
+      <textarea class="er-ads-note" data-er="adsNote" data-row="${escape(row.id)}" rows="3"
+        placeholder="소재 메모 — 어떤 소재가 잘 됐는지 · 다음에 바꿀 점 같은 것을 적어 두세요 (칸을 벗어나면 담깁니다)"
+        >${escape(noteDraft[row.id] !== undefined ? noteDraft[row.id] : (row.adsNote || ''))}</textarea>
     </div>`;
   };
 
@@ -16041,13 +16044,17 @@ if (eventReport) {
      그래서 적는 동안의 값을 줄마다 기억해 두고, 다시 그릴 때 그 값과 커서를 되살린다. */
   const settingDraft = {};
   const settingTimer = {};
+  // 발행 소재 아래 메모 — 세팅명과 같은 까닭으로 적는 중인 값을 줄마다 기억해 둔다
+  const noteDraft = {};
   const render = () => {
-    const typing = document.activeElement && document.activeElement.classList
-      && document.activeElement.classList.contains('er-setting-in') ? document.activeElement : null;
-    const caret = typing ? { row: typing.dataset.row, at: typing.selectionStart } : null;
+    const now = document.activeElement;
+    const typing = now && now.classList
+      && (now.classList.contains('er-setting-in') || now.classList.contains('er-ads-note')) ? now : null;
+    const caret = typing ? { row: typing.dataset.row, at: typing.selectionStart,
+      cls: typing.classList.contains('er-ads-note') ? 'er-ads-note' : 'er-setting-in' } : null;
     renderNow();
     if (caret) {
-      const back = eventReport.querySelector(`.er-setting-in[data-row="${CSS.escape(caret.row)}"]`);
+      const back = eventReport.querySelector(`.${caret.cls}[data-row="${CSS.escape(caret.row)}"]`);
       if (back) { back.focus(); try { back.setSelectionRange(caret.at, caret.at); } catch (ignore) { /* 거들기다 */ } }
     }
   };
@@ -16735,7 +16742,21 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
   eventReport.addEventListener('input', (event) => {
     const hit = event.target.closest('[data-er="setting"]');
     if (hit) saveSetting(hit, false);
+    const note = event.target.closest('[data-er="adsNote"]');
+    if (note) noteDraft[note.dataset.row] = note.value;
   });
+
+  /* 발행 소재 메모 담기 — 월별 예산의 그 줄(adsNote)에 담겨 팀이 같이 본다.
+     칸을 벗어날 때(change) 한 번만 보낸다. 같은 값이면 다시 보내지 않는다. */
+  const saveAdsNote = (hit) => {
+    const rowId = hit.dataset.row;
+    const text = String(hit.value || '').replace(/\s+$/, '');
+    const row = allPlanRows().find((one) => String(one.id) === String(rowId));
+    if (row && String(row.adsNote || '') === text) { delete noteDraft[rowId]; return; }
+    if (row) row.adsNote = text;               // 다시 그려도 적은 값이 보이게 먼저 단다
+    putRowField(rowId, 'adsNote', text, hit, '소재 메모')
+      .then(() => { if (String(noteDraft[rowId] || '').replace(/\s+$/, '') === text) delete noteDraft[rowId]; });
+  };
 
   eventReport.addEventListener('change', (event) => {
     const hit = event.target.closest('[data-er]');
@@ -16750,6 +16771,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       return;
     }
     if (what === 'setting') { saveSetting(hit, true); return; }
+    if (what === 'adsNote') { saveAdsNote(hit); return; }
     if (what === 'usedFile') {
       const picked = Array.from(hit.files || []);
       hit.value = '';                   // 같은 파일을 다시 골라도 change 가 오게
