@@ -1944,6 +1944,7 @@ html.is-gated,html.is-gated body{overflow:hidden}
 .er-brand-tag{gap:4px;color:#96632a}
 /* CPA · CPS 옆의 작은 표 — 무엇으로 나눈 값인지 (신청 / 구매) */
 .er-base{margin-left:3px;font-size:9.5px;font-weight:600;color:#a5a49f}
+.er-cps{font-size:11px;font-weight:600;color:#7a7974;white-space:nowrap}
 /* 브검제외 광고비 — 월별 예산의 실사용비와 같은 칸이라 여기서도 적는다 */
 .er-used-cell{white-space:nowrap}
 .er-used-in{width:calc(100% - 20px);border:1px solid transparent;border-radius:5px;padding:2px 4px;

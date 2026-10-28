@@ -14676,21 +14676,27 @@ if (eventReport) {
         const tag = one.base === undefined ? (ask ? '신청' : '구매') : '신청+구매';
         return `${text}<small class="er-base">${tag}</small>`;
       } },
+    /* 사전알림 행사도 **판매량으로 나눈 CPS** 를 옆에 둔다 — 위 칸은 단계마다 밑이 달라
+       다른 행사의 CPS 와 견줄 수가 없다. 이 칸은 늘 광고비 ÷ 판매량이다. */
+    { name: 'CPS(판매량)', alarmOnly: true,
+      cell: (one) => moneyText(ratio(one.spend, one.buy)) },
     { name: 'ROAS', cell: (one) => (one.spend ? perfRoas(ratio(one.rev, one.spend) || 0) : dash) },
     { name: 'CVR', cell: (one) => pctText(ratio(one.buy, one.clk)) },
     { name: 'CPC', cell: (one) => moneyText(ratio(one.spend, one.clk)) },
     { name: 'CTR', cell: (one) => pctText(ratio(one.clk, one.imp)) },
     { name: 'CPM', cell: (one) => moneyText(ratio(one.spend * 1000, one.imp)) },
   ];
+  // 사전알림 행사에만 보이는 칸(CPS(판매량))은 그 밖의 행사에서는 뺀다
+  const metricsOf = (alarm) => METRICS.filter((one) => !one.alarmOnly || alarm);
   /* both 를 주면 두 이름을 같이 적는다 (단계별 표는 한 칸에 CPA 와 CPS 가 섞인다) */
   const metricName = (one, alarm, both) => {
     if (!one.alarmName) return one.name;
     if (both) return `${one.alarmName} · ${one.name}`;
     return alarm ? one.alarmName : one.name;
   };
-  const metricHeads = (alarm, both) => METRICS.map((one) =>
+  const metricHeads = (alarm, both) => metricsOf(alarm).map((one) =>
     `<th class="perf-num">${escape(metricName(one, alarm, both))}</th>`).join('');
-  const metricRow = (sum, alarm) => METRICS.map((one) =>
+  const metricRow = (sum, alarm) => metricsOf(alarm).map((one) =>
     `<td class="perf-num">${one.cell(sum, alarm)}</td>`).join('');
 
   // ── 사람이 적는 값 (판매채널 추이와 같은 자리에 담긴다) ──────────────
@@ -14805,7 +14811,12 @@ if (eventReport) {
   const cpaOf = (shown, spend, got, alarm) => {
     if (!spend) return dash;
     const base = alarm ? Number((got || {}).conv) || 0 : Number(shown.buy) || 0;
-    return base ? won(Math.round(spend / base)) : dash;
+    const text = base ? won(Math.round(spend / base)) : dash;
+    if (!alarm) return text;
+    // 사전알림 줄은 판매량으로 나눈 CPS 도 아래에 적는다
+    const sold = Number(shown.buy) || 0;
+    return `${text}<small class="er-base">신청</small><br><small class="er-cps"
+      title="광고비 ÷ 판매량">CPS ${sold ? won(Math.round(spend / sold)) : dash}</small>`;
   };
   const roasWhy = (key) => `총매출 ÷ 브검제외 광고비(없으면 붙인 파일의 집행 광고비)${revTyped(key)
     ? ' — 수기로 적은 총 매출로 셌습니다' : ''}`;
@@ -14963,7 +14974,7 @@ if (eventReport) {
        다시 셈해진다. [브검 포함] 을 켜면 매체가 준 값 그대로 둔다. */
     const shown = withBrand ? one : { ...one, spend: Math.max(one.spend - brand, 0) };
     return `<div class="bg-stats er-hero">
-      ${METRICS.map((each) => statBox(metricName(each, alarm), each.cell(shown, alarm), '')).join('')}
+      ${metricsOf(alarm).map((each) => statBox(metricName(each, alarm), each.cell(shown, alarm), '')).join('')}
     </div>
     ${brand ? `<p class="perf-note er-brand-note">${withBrand
       ? `브랜드검색 광고비 <b>${money(brand)}</b> 이 <b>들어 있는</b> 값입니다 — 고정비의 '브랜드검색' 과 겹칩니다.`
@@ -15064,7 +15075,7 @@ if (eventReport) {
   const HAND_FIELDS = [['media', '매체', 'text'], ['campaign', '캠페인', 'text'],
     ['spend', '광고비', 'number'], ['imp', '노출', 'number'], ['clk', '클릭', 'number'],
     ['conv', '판매량', 'number'], ['rev', '판매전환값', 'number']];
-  const handForm = (promo, name) => `<tr class="er-hand-row"><td colspan="${METRICS.length + 1}" data-er="skip">
+  const handForm = (promo, name) => `<tr class="er-hand-row"><td colspan="${metricsOf(isAlarm(promo)).length + 1}" data-er="skip">
       <div class="er-hand">
         ${HAND_FIELDS.map(([key, label, kind]) => `<label>${escape(label)}
           <input type="${kind}"${kind === 'number' ? ' min="0" step="1"' : ''} data-hand="${key}"
