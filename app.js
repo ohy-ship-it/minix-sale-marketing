@@ -16464,6 +16464,30 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     return out;
   };
   const hasHand = (row) => Object.keys(handExtra(row)).length > 0;
+  /* 이 줄에 손으로 적은 총판매수 · 총매출. 미닉스 매체결과도 이 값으로 CPS · ROAS 를 낸다 —
+     매체가 주는 전환은 어트리뷰션이 붙은 값이라 실제로 팔린 수와 다르고, 두 화면이 따로
+     적으면 같은 행사인데 숫자가 달라진다. 여기서 한 번만 적는다.
+     빈 값도 그대로 보낸다 — 지운 것이 그쪽에도 가야 옛 값이 남지 않는다 (받는 쪽은
+     **밀어넣은 값일 때만** 지우고, 미닉스에서 사람이 직접 적은 값은 그대로 둔다). */
+  const handManual = (row) => {
+    const one = typedOf(slotOf(row));
+    return { sales: String(one.sales || ''), revenue: String(one.rev || '') };
+  };
+  /* 총판매수 · 총매출만 미닉스에 맞춘다. 두 칸을 이어서 고치면 한 번만 가게 잠깐 모은다.
+     짝이 없는 줄은 보내지 않는다 — 나중에 [미닉스 고르기] 로 짝지을 때 함께 간다. */
+  const manualTimer = {};
+  const pushManual = (promo) => {
+    const row = allPlanRows().find((one) => String(one.id) === String(promo));
+    const link = linkOf(row);
+    if (!row || !link) return;
+    window.clearTimeout(manualTimer[promo]);
+    manualTimer[promo] = window.setTimeout(() => {
+      askSheet({ action: 'mediaPush', promoId: link.id, product: link.sent || link.product || row.sku || '',
+        files: [], setting: String(row.setting || ''), manual: handManual(row), by: '' })
+        .then(() => { pushNote = `총판매수 · 총매출을 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)}`; render(); })
+        .catch((reason) => { pushNote = `총판매수 · 총매출을 미닉스에 못 넣었습니다 — ${escape(reason.message)}`; render(); });
+    }, 600);
+  };
   /* 수기 매체를 몇 줄 보냈고 미닉스가 몇 줄 받았는지 적는다 — 어긋나면 어디서 끊겼는지 바로 보인다.
      보냈는데 0 이면 Apps Script 나 미닉스 서버가 옛 판이다 (둘 다 수기 매체를 모르면 0 이 온다). */
   const handSay = (row, got) => {
@@ -16538,7 +16562,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       }
       return Promise.all(jobs.map((job) => askSheet({ action: 'mediaPush',
         promoId: job.promoId, product: job.product, files: files,
-        extra: handExtra(job.row), setting: String(job.row.setting || ''), by: '' })
+        extra: handExtra(job.row), setting: String(job.row.setting || ''),
+        manual: handManual(job.row), by: '' })
         .then((got) => ({ ok: true, what: job.what + handSay(job.row, got), job: job }))
         .catch((reason) => ({ ok: false, what: job.what, why: reason.message }))))
         .then((done) => {
@@ -16760,7 +16785,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
       const link = linkOf(row);
       if (!row || !link) return;
       askSheet({ action: 'mediaPush', promoId: link.id, product: link.sent || link.product || row.sku || '',
-        files: [], setting: text, by: '' })
+        files: [], setting: text, manual: handManual(row), by: '' })
         .then(() => { pushNote = `세팅명을 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)} · ${escape(text || '(지움)')}`; render(); })
         .catch((reason) => { pushNote = `세팅명을 미닉스에 못 넣었습니다 — ${escape(reason.message)}`; render(); });
     };
@@ -16841,6 +16866,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
          사람이 이어서 누른 곳이 사라져 그 누름이 삼켜진다. */
       if (what === 'alarm') render();
       putTyped(promo, one, hit);
+      // 총판매수 · 총매출은 미닉스 매체결과도 같은 값을 쓴다 (짝이 있을 때만)
+      if (what === 'typed' && (hit.dataset.key === 'sales' || hit.dataset.key === 'rev')) pushManual(promo);
       return;
     }
     if (what === 'file' || what === 'one') {
@@ -16902,7 +16929,8 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
     const link = linkOf(row);
     if (!row || !link) return;
     askSheet({ action: 'mediaPush', promoId: link.id, product: link.sent || link.product || row.sku || '',
-      files: [], extra: handExtra(row), setting: String(row.setting || ''), by: '' })
+      files: [], extra: handExtra(row), setting: String(row.setting || ''),
+      manual: handManual(row), by: '' })
       .then((got) => { pushNote = `손으로 적은 매체를 미닉스에도 맞췄습니다 — ${escape(link.event || link.id)}${escape(handSay(row, got) || ' (수기 매체 0줄)')}`; render(); })
       .catch((reason) => { pushNote = `손으로 적은 매체를 미닉스에 못 넣었습니다 — ${escape(reason.message)}`; render(); });
   };

@@ -1741,7 +1741,7 @@ function myPagesUrl_() {
 }
 
 /* 행사 하나에 파일을 밀어넣는다.
-   payload: { promoId, product, files: [{ name, body }], extra: { 단계: [수기 매체] }, by }
+   payload: { promoId, product, files: [{ name, body }], extra: { 단계: [수기 매체] }, manual, by }
    extra 는 세일즈마케팅에서 손으로 적은 매체다 — 보내면 미닉스 수기 매체 칸의 밀어넣은 줄을 갈아 끼운다.
    파일 없이 extra 만 보내도 된다 (수기 매체만 고쳤을 때).
    promoId 는 **미닉스 행사 캘린더의 ID 칸** 값이다 — 이름이 아니라 번호로 짝지어야
@@ -1753,9 +1753,12 @@ function mediaPush_(payload) {
   var extra = (payload && payload.extra && typeof payload.extra === 'object') ? payload.extra : null;
   // 세팅명 — 세일즈마케팅 행사별 결과에 적은 이름. 미닉스 매체결과 카드 맨 앞에 들어간다 (빈 글자면 지운다)
   var setting = (payload && typeof payload.setting === 'string') ? payload.setting : null;
+  // 총판매수 · 총매출 — 세일즈마케팅에 적은 수기 값. 매체 전환은 어트리뷰션이 붙어 실제 판매와
+  // 다르니, 이 숫자를 보내 미닉스 매체결과가 같은 값으로 CPS · ROAS 를 낸다 ({} 면 밀어넣은 값을 뺀다).
+  var manual = (payload && payload.manual && typeof payload.manual === 'object') ? payload.manual : null;
   if (!promoId) throw new Error('행사 ID 가 비어 있습니다 (미닉스 행사 캘린더의 ID 칸).');
   if (!product) throw new Error('제품이 비어 있습니다.');
-  if (!files.length && !extra && setting === null) throw new Error('보낼 파일이 없습니다.');
+  if (!files.length && !extra && setting === null && !manual) throw new Error('보낼 파일이 없습니다.');
 
   var url = myPagesUrl_() + '/api/promos/' + encodeURIComponent(promoId) + '/media-push';
   var answer = UrlFetchApp.fetch(url, {
@@ -1768,6 +1771,7 @@ function mediaPush_(payload) {
       files: files,
       extra: extra || undefined,
       setting: setting === null ? undefined : setting,
+      manual: manual || undefined,
       by: String((payload && payload.by) || ''),
       at: new Date().toISOString()
     })
@@ -1796,7 +1800,7 @@ function mediaPush_(payload) {
   }
   return { ok: true, source: 'mediaPush', promoId: promoId, product: product,
     promo: body.promo || '', done: body.done || [], bad: body.bad || [], hand: body.hand || 0,
-    setting: body.setting || '' };
+    setting: body.setting || '', manual: body.manual || 0 };
 }
 
 /* 짝을 풀 때 — 그 행사에 밀어넣었던 파일의 숫자를 미닉스에서 뺀다.
