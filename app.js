@@ -16481,7 +16481,7 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
   /* 월별 예산 줄 하나에 맞는 캘린더 줄을 고른다.
      행사명이 **같아야** 한다 (그게 행사를 가리는 이름이다). 판매채널까지 같으면 더 좋고,
      한 행사가 채널 여럿에 걸쳐 있으면 행사명만 같아도 받는다.
-     제품은 그 줄의 SKU 와 가장 가까운 캘린더 줄에서 가져온다 — 없으면 SKU 를 그대로 쓴다. */
+     보낼 **제품은 그 줄의 SKU** 다 (아래 pushToMinix). 캘린더의 행사제품은 SKU 가 비었을 때만 쓴다. */
   const calMatch = (row) => {
     const link = linkOf(row);
     if (link) return { id: link.id, product: link.product || '', event: link.event || '', channel: link.channel || '' };
@@ -16520,8 +16520,12 @@ ${fresh ? '' : ' · <b>담아 둔 판</b>을 먼저 보여 드리고 있습니�
         const found = calMatch(row);
         const what = `${row.event || '(행사명 없음)'}${row.channel ? ` · ${row.channel}` : ''}`;
         if (!found) { lost.push(what); return; }
+        /* 제품은 **그 줄의 SKU** 다. 캘린더의 '행사제품' 을 먼저 쓰면, 한 행사에
+           제품이 둘 걸려 있을 때(더 플렌더MAX · mini) 두 줄이 같은 제품으로 가서
+           뒤에 보낸 것이 앞의 것을 덮는다 — 받는 쪽은 제품마다 카드를 따로 두므로
+           SKU 로 보내야 제품이 하나씩 늘어난다. SKU 가 비었을 때만 캘린더 값을 쓴다. */
         jobs.push({ row: row, promoId: found.id, found: found,
-          product: found.product || row.sku || '', what: what });
+          product: row.sku || found.product || '', what: what });
       });
       const lostSay = lost.length
         ? `미닉스 캘린더에서 같은 이름을 못 찾았습니다 — <b>${escape(lost.join(' · '))}</b>.
