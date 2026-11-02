@@ -9271,7 +9271,17 @@ function budgetDailyRun(event) {
    돌려주는 값 안에만 있어서(channelNotes), 전에는 다음 날 아침까지 기다려야
    무엇이 틀어졌는지 알 수 있었다. 여기서 바로 본다. */
 function budgetChannelCheck() {
+  /* 달을 물어본다. 그냥 [확인] 하면 이번 달이다 — 지난달에는 들어왔는데 이번 달만 0 인지
+     가리려면 달을 바꿔 볼 수 있어야 한다 (이번 달만 보면 월초에는 늘 0 이라 알 수가 없다). */
   var month = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM');
+  try {
+    var ui = SpreadsheetApp.getUi();
+    var answer = ui.prompt('판매채널 매체 확인',
+      '볼 달을 YYYY-MM 으로 적어 주세요 (비우면 이번 달 ' + month + ').', ui.ButtonSet.OK_CANCEL);
+    if (answer.getSelectedButton() !== ui.Button.OK) return '';
+    var typed = (String(answer.getResponseText() || '').match(/\d{4}-\d{2}/) || [])[0];
+    if (typed) month = typed;
+  } catch (ignore) { /* 편집기에서 실행하면 창이 없다 — 이번 달로 본다 */ }
   var since = month + '-01';
   var until = month + '-' + ('0' + budgetLastDay_(month)).slice(-2);
   var message;
