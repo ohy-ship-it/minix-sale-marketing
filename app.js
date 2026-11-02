@@ -18019,10 +18019,14 @@ if (budgetPlanView) {
     if (!auto) return '';
     const last = auto.last;
     const when = last && last.at ? clockText(last.at) : '';
+    /* 다 올렸어도 **못 읽은 매체**가 있었으면 그 까닭을 여기에 적는다.
+       한 매체가 넘어져도 나머지는 올라가므로 결과는 '성공' 이다 — 그래서 메타가
+       며칠째 안 들어와도 이 줄에는 아무 표가 없었다 (Code.gs budgetDailyGaps_). */
     const done = !last ? ''
       : last.ok === false ? `지난번 실패 — ${escape(last.note || '')}`
         : `마지막 ${escape(when)}${last.how ? ` · ${escape(last.how)}` : ''}`
-          + ` · 탭 ${num(last.tabs || 0)}개 · ${num(last.rows || 0)}줄`;
+          + ` · 탭 ${num(last.tabs || 0)}개 · ${num(last.rows || 0)}줄`
+          + (last.gaps ? ` · <b>못 읽은 매체 ${num(last.gaps)}곳</b> — ${escape(last.note || '')}` : '');
     if (auto.on) {
       return ` · 아침 <b>${escape(String(auto.hour || 11))}시</b>에 저절로 올라갑니다`
         + ` (${done || '아직 안 돌았습니다'})`;

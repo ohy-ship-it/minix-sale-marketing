@@ -278,6 +278,7 @@ function onOpen() {
       .addItem('아침 자동 올리기 켜기', 'budgetDailyInstall')
       .addItem('아침 자동 올리기 끄기', 'budgetDailyRemove')
       .addItem('자동 올리기 확인', 'budgetDailyCheck')
+      .addItem('판매채널 매체 확인 (메타 · 구글)', 'budgetChannelCheck')
       .addItem('손으로 건 트리거 표시하기', 'budgetDailyMarkOn'))
     .addSubMenu(SpreadsheetApp.getUi().createMenu('카페24')
       .addItem('연결하기', 'cafe24Connect')
@@ -9143,16 +9144,34 @@ function budgetDaily_(want) {
   }
 }
 
+/* 한 매체만 넘어졌을 때의 까닭. budgetFixedSpend_ 는 메타 · 구글 · GFA 가 각각
+   넘어져도 **나머지는 올린다** — 한 매체 때문에 그 달 전체를 비울 수는 없어서다.
+   그런데 그 까닭이 돌려주는 값 안에만 있어서(channelNotes · gfaNote), 기록 탭에는
+   '성공' 만 남았다. 메타가 몇 날 며칠 안 들어와도 아침에는 아무 표가 없었다.
+   여기서 한 줄로 모아, 적어 두는 자리와 기록 탭이 같이 쓴다. */
+function budgetDailyGaps_(found) {
+  var gaps = [];
+  (found && found.channelNotes || []).forEach(function (one) {
+    gaps.push('판매채널 매체를 못 읽음 — ' + String(one));
+  });
+  if (found && found.gfaNote) gaps.push('애드부스트(GFA)를 못 받음 — ' + String(found.gfaNote));
+  return gaps;
+}
+
 // 마지막으로 돈 결과를 적어 둔다. 화면이 '언제 올라갔나' 를 보여 줄 수 있게.
 // 스크립트 속성은 9KB 까지라 짧게만 남긴다.
 function budgetDailyMark_(found) {
+  var gaps = budgetDailyGaps_(found);
   var slim = {
     at: found.ranAt || new Date().toISOString(),
     ok: found.ok !== false,
     month: found.month || '',
     tabs: found.tabs || 0,
     rows: found.rows || 0,
-    note: String(found.note || found.error || '').slice(0, 300)
+    // 다 올렸어도 못 읽은 매체가 있으면 그것까지 적는다 (화면이 이 한 줄을 보여 준다)
+    gaps: gaps.length,
+    note: [String(found.note || found.error || ''), gaps.join(' / ')]
+      .filter(function (one) { return !!one; }).join(' · ').slice(0, 300)
   };
   slim.how = found.how || '';
   try {
@@ -9198,7 +9217,7 @@ function budgetDailyLog_(slim, how) {
   try {
     var sheet = budgetLogSheet_();
     sheet.appendRow([
-      new Date(), slim.ok ? '성공' : '실패', slim.month || '',
+      new Date(), slim.ok ? (slim.gaps ? '일부 못 읽음' : '성공') : '실패', slim.month || '',
       slim.tabs || 0, slim.rows || 0, how || '', String(slim.note || '').slice(0, 500)
     ]);
     // 오래된 줄은 지운다 (머리글 한 줄 + 남길 줄)
@@ -9237,11 +9256,43 @@ function budgetDailyRun(event) {
       close = { ok: false, month: budgetPrevMonth_(), error: String((error && error.message) || error) };
     }
     var how = (event ? '자동(트리거)' : '손으로') + ' · 지난달 마감';
+    var closeGaps = budgetDailyGaps_(close);
     budgetDailyLog_({ ok: close.ok !== false, month: close.month || '', tabs: close.tabs || 0,
-      rows: close.rows || 0, note: String(close.note || close.error || '') }, how);
+      rows: close.rows || 0, gaps: closeGaps.length,
+      note: [String(close.note || close.error || ''), closeGaps.join(' / ')]
+        .filter(function (one) { return !!one; }).join(' · ') }, how);
     Logger.log(JSON.stringify(close));
   }
   return slim;
+}
+
+/* 판매채널 광고비를 **지금 이 자리에서** 받아 본다 (시트 메뉴).
+   아침 자동 올리기가 메타 · 구글을 부르는 길과 똑같은 길이다 — 넘어지면 그 까닭이
+   돌려주는 값 안에만 있어서(channelNotes), 전에는 다음 날 아침까지 기다려야
+   무엇이 틀어졌는지 알 수 있었다. 여기서 바로 본다. */
+function budgetChannelCheck() {
+  var month = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM');
+  var since = month + '-01';
+  var until = month + '-' + ('0' + budgetLastDay_(month)).slice(-2);
+  var message;
+  try {
+    var got = budgetChannelSpend_(since, until);
+    var lines = (got.rows || []).map(function (one) {
+      return '· ' + one.channel + ' (' + one.media + ') — ' + Math.round(one.spend).toLocaleString() + '원'
+        + (one.adsets && one.adsets.length ? ' · 광고그룹 ' + one.adsets.length + '개' : ' · 걸린 광고그룹 없음');
+    });
+    message = month + ' 판매채널 광고비 (' + since + ' ~ ' + until + ')\n\n'
+      + (lines.length ? lines.join('\n') : '규칙에 걸린 줄이 없습니다.');
+    if ((got.notes || []).length) {
+      message += '\n\n못 읽은 매체\n' + got.notes.map(function (one) { return '· ' + one; }).join('\n')
+        + '\n\n(이 줄들은 월별 예산에서 0 으로 남습니다. 메타면 [메타 연결 확인] 을 먼저 눌러 보세요.)';
+    }
+  } catch (error) {
+    message = '판매채널 광고비를 받지 못했습니다.\n\n' + String((error && error.message) || error);
+  }
+  Logger.log(message);
+  try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
+  return message;
 }
 
 // 지난달 마감을 다시 받는 날 (매달 1일부터 이 날까지)
