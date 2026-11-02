@@ -245,7 +245,12 @@ def attach_driver(port: int):
         driver = webdriver.Chrome(options=options)
         driver.set_script_timeout(90)
         return driver
-    except Exception:
+    except Exception as error:
+        # 왜 못 붙었는지 남긴다. 삼켜 버리면 로그에 '크롬이 없습니다' 만 남아,
+        # 크롬이 멀쩡히 떠 있는데 못 붙은 날과 정말 안 떠 있는 날을 가릴 수가 없다.
+        # (디스크가 꽉 차면 크롬이 살아는 있어도 새 탭을 못 열어 붙기가 실패한다)
+        why = str(error).splitlines()[0] if str(error).strip() else repr(error)
+        print(f"  붙지 못했습니다 — {type(error).__name__}: {why[:200]}")
         return None
 
 
