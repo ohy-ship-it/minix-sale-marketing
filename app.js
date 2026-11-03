@@ -12870,6 +12870,9 @@ if (cafe24Result) {
     return `<div class="tool-card">
       <div class="tool-list-head"><h3>유입 광고 · UTM별 <small>정상 주문 ${num(utm.orderCount)}건${miss}</small></h3>
         <div class="tool-list-actions">
+          <button type="button" class="tool-copy-all" data-cafe="utm-copy"
+            title="지금 거른 그대로 베낍니다 — 엑셀 · 시트에 그대로 붙습니다">
+            <i data-lucide="copy"></i>표 복사</button>
           <button type="button" class="tool-copy-all" data-cafe="utm-excel"
             title="지금 거른 그대로 내려받습니다 — 엑셀이 바로 엽니다">
             <i data-lucide="sheet"></i>엑셀 받기</button>
@@ -12997,6 +13000,9 @@ if (cafe24Result) {
       <div class="tool-list-head"><h3>애널리틱스 기준 · 기여기간 30일
         <small>상품과 상관없이 기간 전체${outside}</small></h3>
         <div class="tool-list-actions">
+          <button type="button" class="tool-copy-all" data-cafe="ca-copy"
+            title="지금 거른 줄을 모두 베낍니다 — 표는 ${num(CA_SHOW)}줄만 보여도 다 베낍니다">
+            <i data-lucide="copy"></i>표 복사</button>
           <button type="button" class="tool-copy-all" data-cafe="ca-excel"
             title="지금 거른 줄을 모두 내려받습니다 — 표는 ${num(CA_SHOW)}줄만 보여도 파일에는 다 들어갑니다">
             <i data-lucide="sheet"></i>엑셀 받기</button>
@@ -13148,6 +13154,16 @@ if (cafe24Result) {
 
   cafe24Result.addEventListener('click', (event) => {
     if (event.target.closest('[data-cafe="go"]')) { look(); return; }
+    // 베끼기는 엑셀 받기와 같은 글을 쓴다 (탭으로 나뉘어 있어 시트에 그대로 붙는다)
+    const copyBtn = event.target.closest('[data-cafe="utm-copy"], [data-cafe="ca-copy"]');
+    if (copyBtn) {
+      const text = copyBtn.dataset.cafe === 'utm-copy' ? utmExcelText() : caExcelText();
+      if (window.navigator.clipboard?.writeText) window.navigator.clipboard.writeText(text).catch(() => {});
+      else window.prompt('복사하세요', text);
+      copyBtn.classList.add('is-copied');
+      window.setTimeout(() => copyBtn.classList.remove('is-copied'), 1200);
+      return;
+    }
     if (event.target.closest('[data-cafe="utm-excel"]')) {
       perfDownload(`카페24_유입광고_${since}_${until}.csv`, utmExcelText());
       return;
