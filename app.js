@@ -12868,7 +12868,13 @@ if (cafe24Result) {
     if (utmAd && utmAd !== '(없음)' && !adList.includes(utmAd)) utmAd = '';   // 새로 찾았더니 없는 매체
     const contents = [...new Set(utm.groups.map((row) => row.content).filter(Boolean))];
     return `<div class="tool-card">
-      <div class="tool-list-head"><h3>유입 광고 · UTM별 <small>정상 주문 ${num(utm.orderCount)}건${miss}</small></h3></div>
+      <div class="tool-list-head"><h3>유입 광고 · UTM별 <small>정상 주문 ${num(utm.orderCount)}건${miss}</small></h3>
+        <div class="tool-list-actions">
+          <button type="button" class="tool-copy-all" data-cafe="utm-excel"
+            title="지금 거른 그대로 내려받습니다 — 엑셀이 바로 엽니다">
+            <i data-lucide="sheet"></i>엑셀 받기</button>
+        </div>
+      </div>
       <div class="perf-filter cafe24-utm-filter">
         <label class="cafe24-date">광고매체
           <select data-cafe="utm-ad">
@@ -12886,6 +12892,17 @@ if (cafe24Result) {
       <div data-cafe="utm-body">${utmBody()}</div>
       <p class="perf-note">매출은 걸린 상품의 판매가 × 수량입니다 (주문에 다른 상품이 같이 있어도 그 몫은 빼고 셉니다).</p>
     </div>`;
+  };
+
+  /* 엑셀로 받기 — 화면에 보이는 그대로(거른 뒤) 내려 준다.
+     화면처럼 화살표로 잇지 않고 칸을 나눈다 — 엑셀에서 걸러 쓰려면 그 편이 낫다. */
+  const utmExcelText = () => {
+    const rows = ((found && found.utm && found.utm.groups) || []).filter(utmPass);
+    const sum = rows.reduce((all, row) => [all[0] + row.orders, all[1] + row.qty, all[2] + row.amount], [0, 0, 0]);
+    return [['광고매체', '콘텐츠', '검색어', '주문 건수', '판매 수량', '매출'],
+      ...rows.map((row) => [row.known ? (row.ad || '') : 'UTM 정보 없음',
+        row.content || '', row.keyword || '', row.orders, row.qty, row.amount]),
+      ['합계', '', '', ...sum]].map((line) => line.join('\t')).join('\n');
   };
 
   // 거르기는 표 부분만 다시 그린다 (콘텐츠 칸에 적는 중에 커서가 날아가지 않게)
@@ -12952,6 +12969,16 @@ if (cafe24Result) {
       </table></div>`;
   };
 
+  // 표는 CA_SHOW 줄만 보여 주지만, 파일에는 거른 줄을 모두 담는다 (받는 까닭이 그것이다)
+  const caExcelText = () => {
+    const rows = caMerged().filter(caPass);
+    const sum = rows.reduce((all, row) => [all[0] + row.orders, all[1] + row.amount, all[2] + row.inflow], [0, 0, 0]);
+    return [['채널', '세부항목', '키워드', '구매건수', '매출액', '유입수', '구매전환율'],
+      ...rows.map((row) => [row.channel || '', row.content || '', row.term || '',
+        row.orders, row.amount, row.inflow, rate(row.orders, row.inflow)]),
+      ['합계', '', '', ...sum, rate(sum[0], sum[2])]].map((line) => line.join('\t')).join('\n');
+  };
+
   const caTable = () => {
     const ca = found && found.ca;
     if (!ca) return '';
@@ -12968,7 +12995,13 @@ if (cafe24Result) {
       ? ` · 쌓인 날짜는 ${escapeHtml(ca.dataSince)} ~ ${escapeHtml(ca.dataUntil)}` : '';
     return `<div class="tool-card">
       <div class="tool-list-head"><h3>애널리틱스 기준 · 기여기간 30일
-        <small>상품과 상관없이 기간 전체${outside}</small></h3></div>
+        <small>상품과 상관없이 기간 전체${outside}</small></h3>
+        <div class="tool-list-actions">
+          <button type="button" class="tool-copy-all" data-cafe="ca-excel"
+            title="지금 거른 줄을 모두 내려받습니다 — 표는 ${num(CA_SHOW)}줄만 보여도 파일에는 다 들어갑니다">
+            <i data-lucide="sheet"></i>엑셀 받기</button>
+        </div>
+      </div>
       <div class="perf-filter cafe24-utm-filter">
         <label class="cafe24-date">채널
           <select data-cafe="ca-ad">
@@ -13115,6 +13148,14 @@ if (cafe24Result) {
 
   cafe24Result.addEventListener('click', (event) => {
     if (event.target.closest('[data-cafe="go"]')) { look(); return; }
+    if (event.target.closest('[data-cafe="utm-excel"]')) {
+      perfDownload(`카페24_유입광고_${since}_${until}.csv`, utmExcelText());
+      return;
+    }
+    if (event.target.closest('[data-cafe="ca-excel"]')) {
+      perfDownload(`카페24_애널리틱스30일_${since}_${until}.csv`, caExcelText());
+      return;
+    }
     if (event.target.closest('[data-cafe="utm-clear"]')) { utmAd = ''; utmContent = ''; render(); return; }
     if (event.target.closest('[data-cafe="ca-clear"]')) { caAd = ''; caContent = ''; render(); return; }
     const range = event.target.closest('[data-cafe="range"]');
