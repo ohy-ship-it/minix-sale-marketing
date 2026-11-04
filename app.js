@@ -8266,18 +8266,20 @@ if (brandSchedule) {
     { key: 'supply', name: '수급일자', type: 'date', icon: 'calendar-check' },
     /* 매체는 손으로 적어 넣을 수 있다 (custom) — 광고소재 기획 보드와 같은 방식이다. */
     { key: 'media', name: '매체', type: 'multi_select', icon: 'list', options: MEDIA_OPTIONS, custom: true },
-    { key: 'channel', name: '판매채널', type: 'multi_select', icon: 'store', options: CHANNEL_OPTIONS },
+    /* 판매채널도 손으로 적어 넣을 수 있다 (custom) — 새 채널과 행사를 잡을 때가 있다. */
+    { key: 'channel', name: '판매채널', type: 'multi_select', icon: 'store', options: CHANNEL_OPTIONS, custom: true },
     { key: 'done', name: '세팅완료', type: 'checkbox', icon: 'square-check-big' },
   ];
   const propByKey = Object.fromEntries(SCHEMA.map((prop) => [prop.key, prop]));
   const colorOf = (prop, value) => (prop.options || []).find(([option]) => option === value)?.[1] || 'default';
 
-  /* 손으로 적어 넣은 매체 · SKU 이름을 목록에 남겨 둔다.
+  /* 손으로 적어 넣은 매체 · SKU · 판매채널 이름을 목록에 남겨 둔다.
      일정에 붙인 이름은 시트로 올라가 팀 모두의 목록에 뜬다 (아래 optionsOf 가 rows 를 훑는다).
      아직 어느 일정에도 안 붙인 이름은 이 브라우저가 들고 있다. */
   const CUSTOM_KEYS = {
     media: 'minix-brand-schedule-media-custom',
     sku: 'minix-brand-schedule-sku-custom',
+    channel: 'minix-brand-schedule-channel-custom',
   };
   const customRead = (key) => {
     try {
@@ -8285,7 +8287,7 @@ if (brandSchedule) {
       return Array.isArray(kept) ? kept.filter((one) => typeof one === 'string' && one.trim()) : [];
     } catch { return []; }
   };
-  const customNames = { media: customRead('media'), sku: customRead('sku') };
+  const customNames = { media: customRead('media'), sku: customRead('sku'), channel: customRead('channel') };
   const customWrite = (key) => {
     try { localStorage.setItem(CUSTOM_KEYS[key], JSON.stringify(customNames[key])); } catch { /* 거들기다 */ }
   };
