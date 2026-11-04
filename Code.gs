@@ -292,6 +292,10 @@ function onOpen() {
       .addItem('지금 한 번 확인', 'bsInspectCheck')
       .addItem('1시간마다 켜기', 'bsInspectInstall')
       .addItem('끄기', 'bsInspectRemove'))
+    .addSubMenu(SpreadsheetApp.getUi().createMenu('메타 일일성과 슬랙')
+      .addItem('지금 한 번 보내기', 'metaDailySend')
+      .addItem('매일 아침 켜기', 'metaDailyInstall')
+      .addItem('끄기', 'metaDailyRemove'))
     .addToUi();
 }
 
@@ -7289,6 +7293,167 @@ function bsInspectRemove() {
       + BS_INSPECT_FN + ' 을 직접 지워 주세요.' + BR2 + budgetDailyHelp_(error));
   }
   return bsInspectAlert_(gone ? '브랜드검색 검수 알림을 껐습니다.' : '켜져 있는 검수 알림이 없습니다.');
+}
+
+// ── 메타 일일성과 슬랙 알림 ─────────────────────────────────────────
+// 어제 하루 광고세트별 지출을 매일 아침 슬랙으로 보낸다 (캠페인명 · 광고세트명 · 지출만).
+// 예전에는 claude.ai 클라우드 루틴이 했는데, 그 실행 환경이 바깥 연결을 막아 9월 말부터
+// 조용히 실패했고 토큰도 프롬프트에 적어 둬야 했다. 그래서 여기로 옮겼다.
+// 토큰은 META_ACCESS_TOKEN, 웹훅은 스크립트 속성 SLACK_WEBHOOK_META_DAILY 에서 읽는다.
+var META_DAILY_FN = 'metaDailyRun';
+var META_DAILY_HOUR = 10;          // 한국 시간 오전 10시쯤
+var META_DAILY_ACCOUNTS = [
+  ['act_370223898721955', '미닉스'], ['act_1010891704382690', '미닉스(네이버)'],
+  ['act_1467742828251405', '미닉스(CJ)'], ['act_1194498995371808', '미닉스(오늘의집)'],
+  ['act_876846528408565', '미닉스(컬리)'], ['act_1182774429560123', '미닉스(쿠팡)']
+];
+var META_DAILY_LINE = '━━━━━━━━━━━━━━━━';
+
+function metaDailyHook_() {
+  var hook = cleanToken_(PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_META_DAILY'));
+  if (!/^https:\/\/hooks\.slack\.com\//.test(hook)) {
+    throw new Error('SLACK_WEBHOOK_META_DAILY 스크립트 속성이 없거나 슬랙 웹훅 주소가 아닙니다. '
+      + 'Apps Script 프로젝트 설정(톱니) → 스크립트 속성 → 속성 추가 에서 '
+      + '이름 SLACK_WEBHOOK_META_DAILY · 값 https://hooks.slack.com/services/… 로 넣어 주세요.');
+  }
+  return hook;
+}
+
+function metaDailyWon_(value) {
+  return String(Math.round(Number(value) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// 오늘이 공휴일인가 (공휴일에는 보내지 않는다 — 클라우드 루틴 때와 같다). 못 물으면 평일로 본다.
+function metaDailyHoliday_() {
+  var today = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd');
+  try {
+    var response = UrlFetchApp.fetch('https://date.nager.at/api/v3/PublicHolidays/'
+      + today.slice(0, 4) + '/KR', { muteHttpExceptions: true });
+    if (response.getResponseCode() !== 200) return false;
+    return JSON.parse(response.getContentText()).some(function (one) { return one.date === today; });
+  } catch (error) {
+    return false;
+  }
+}
+
+function metaDailyText_(day) {
+  var range = JSON.stringify({ since: day, until: day });
+  var total = 0;
+  var parts = ['*🔵 [메타] 앳홈 미닉스 그룹 일별 성과 (' + day + ')*'];
+  META_DAILY_ACCOUNTS.forEach(function (pair) {
+    var label = pair[1];
+    var rows;
+    try {
+      rows = graphAll_('/' + pair[0] + '/insights', { level: 'adset',
+        fields: 'campaign_name,adset_name,spend', time_range: range, limit: 500 }, 10);
+    } catch (error) {
+      parts.push('*[' + label + ']* 조회 실패: ' + String((error && error.message) || error).slice(0, 200));
+      return;
+    }
+    rows = rows.filter(function (row) { return Number(row.spend) > 0; })
+      .sort(function (a, b) { return Number(b.spend) - Number(a.spend); });
+    if (!rows.length) {
+      parts.push('*[' + label + ']* 어제 집행 내역 없음 (지출 0)');
+      return;
+    }
+    var mine = 0;
+    var lines = ['*[' + label + ']*'];
+    rows.forEach(function (row) {
+      mine += Number(row.spend);
+      lines.push(META_DAILY_LINE, '*' + (row.campaign_name || '') + '*',
+        '광고세트: ' + (row.adset_name || ''), '지출: ' + metaDailyWon_(row.spend) + '원');
+    });
+    lines.push(META_DAILY_LINE, '[계정 합계 - ' + label + '] 지출: ' + metaDailyWon_(mine) + '원');
+    total += mine;
+    parts.push(lines.join('\n'));
+  });
+  parts.push(META_DAILY_LINE + '\n*[전체 합계 - ' + META_DAILY_ACCOUNTS.length + '개 계정]*\n'
+    + '총 지출: ' + metaDailyWon_(total) + '원');
+  return parts.join('\n\n');
+}
+
+// day 를 안 주면 어제(한국 시간)
+function metaDailyPost_(day) {
+  var hook = metaDailyHook_();
+  var when = day || Utilities.formatDate(new Date(Date.now() - 86400000), 'Asia/Seoul', 'yyyy-MM-dd');
+  var response = UrlFetchApp.fetch(hook, { method: 'post', contentType: 'application/json',
+    payload: JSON.stringify({ text: metaDailyText_(when) }), muteHttpExceptions: true });
+  if (response.getResponseCode() >= 400) {
+    throw new Error('슬랙 웹훅 (HTTP ' + response.getResponseCode() + '): ' + response.getContentText());
+  }
+  return when + ' 메타 일일성과를 슬랙으로 보냈습니다.';
+}
+
+// 트리거가 부른다. 오류를 밖으로 던지면 구글이 트리거를 꺼 버리므로 로그로만 남긴다.
+function metaDailyRun(event) {
+  try {
+    if (metaDailyHoliday_()) {
+      Logger.log('오늘은 공휴일이라 메타 일일성과를 보내지 않습니다.');
+      return '공휴일 — 건너뜀';
+    }
+    var message = metaDailyPost_();
+    Logger.log(message + (event ? ' (트리거)' : ''));
+    return message;
+  } catch (error) {
+    Logger.log('메타 일일성과 실패: ' + String((error && error.message) || error));
+    return String((error && error.message) || error);
+  }
+}
+
+// 시트 메뉴 '지금 한 번 보내기' — 날짜를 비우면 어제 것을 보낸다 (공휴일이어도 보낸다)
+function metaDailySend() {
+  var day = '';
+  try {
+    var ui = SpreadsheetApp.getUi();
+    var answer = ui.prompt('메타 일일성과 보내기', '보낼 날짜 (YYYY-MM-DD). 비우면 어제 것을 보냅니다.',
+      ui.ButtonSet.OK_CANCEL);
+    if (answer.getSelectedButton() !== ui.Button.OK) return '';
+    day = (answer.getResponseText().match(/\d{4}-\d{2}-\d{2}/) || [''])[0];
+  } catch (ignore) { /* 편집기에서 돌리면 어제 것 */ }
+  try {
+    return bsInspectAlert_(metaDailyPost_(day));
+  } catch (error) {
+    return bsInspectAlert_(String((error && error.message) || error));
+  }
+}
+
+function metaDailyClear_() {
+  var gone = 0;
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === META_DAILY_FN) {
+      ScriptApp.deleteTrigger(trigger);
+      gone += 1;
+    }
+  });
+  return gone;
+}
+
+function metaDailyInstall() {
+  try {
+    metaDailyHook_();   // 웹훅부터 확인한다 — 없으면 켜 봐야 매일 실패한다
+    metaDailyClear_();
+    ScriptApp.newTrigger(META_DAILY_FN).timeBased()
+      .atHour(META_DAILY_HOUR).nearMinute(0).everyDays(1).inTimezone('Asia/Seoul').create();
+  } catch (error) {
+    return bsInspectAlert_('켜지 못했습니다.' + BR2 + String((error && error.message) || error) + BR2
+      + '트리거 권한이 없으면 Apps Script 왼쪽 ⏰ 트리거 → 트리거 추가 에서 손으로 걸어 주세요.' + BR1
+      + '  실행할 함수 : ' + META_DAILY_FN + BR1
+      + '  이벤트 소스 : 시간 기반' + BR1
+      + '  트리거 유형 : 일 단위 타이머 · 오전 10시~11시');
+  }
+  return bsInspectAlert_('메타 일일성과 슬랙 알림을 켰습니다.' + BR2
+    + '한국 시간 매일 오전 ' + META_DAILY_HOUR + '시쯤 어제 광고세트별 지출을 보냅니다 (공휴일은 건너뜁니다).');
+}
+
+function metaDailyRemove() {
+  var gone;
+  try {
+    gone = metaDailyClear_();
+  } catch (error) {
+    return bsInspectAlert_('트리거를 지우지 못했습니다. Apps Script 의 ⏰ 트리거 화면에서 '
+      + META_DAILY_FN + ' 을 직접 지워 주세요.' + BR2 + budgetDailyHelp_(error));
+  }
+  return bsInspectAlert_(gone ? '메타 일일성과 슬랙 알림을 껐습니다.' : '켜져 있는 메타 일일성과 알림이 없습니다.');
 }
 
 // ── 브랜드검색 광고비 (사람이 적는다) ──────────────────────────────
