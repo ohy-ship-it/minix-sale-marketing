@@ -182,18 +182,52 @@ if (creativeBoard) {
     } catch { return []; }
   };
   const knownWrite = (ids) => { try { localStorage.setItem(KNOWN_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ } };
-  /* 카드도 같은 셈이다 — 시트에서 받은 적 있는 카드 ID. 서버는 여기에 없는 카드(이 화면이
-     본 적 없는, 남이 그 뒤에 적은 카드)를 지우지 않고 살려 둔다. */
-  const KNOWN_CARDS_KEY = 'minix-creative-cards-known';
-  const knownCardsRead = () => {
+  /* 카드는 여럿이 같이 고친다. 이 화면이 시트에서 **마지막으로 받은 카드의 모습**을 둔다 (base).
+     저장할 때 같이 보내면 서버가 칸마다 견줘, 이 사람이 안 고친 칸은 시트(남이 고친) 것을 지킨다.
+     견주는 셈은 Code.gs weeksMergeValue_ 와 같다 — 한쪽을 고치면 다른 쪽도 고칠 것. */
+  const CARD_BASE_KEY = 'minix-creative-cards-base';
+  let cardBase = (() => {
     try {
-      const kept = JSON.parse(localStorage.getItem(KNOWN_CARDS_KEY) || '[]');
-      return Array.isArray(kept) ? kept : [];
-    } catch { return []; }
+      const kept = JSON.parse(localStorage.getItem(CARD_BASE_KEY) || '{}');
+      return kept && typeof kept === 'object' && !Array.isArray(kept) ? kept : {};
+    } catch { return {}; }
+  })();
+  const cardBaseWrite = (list) => {
+    cardBase = {};
+    list.forEach((one) => one.rows.forEach((row) => { cardBase[row.id] = JSON.parse(JSON.stringify(row)); }));
+    try { localStorage.setItem(CARD_BASE_KEY, JSON.stringify(cardBase)); } catch { /* 거들기다 */ }
   };
-  const knownCardsWrite = (list) => {
-    const ids = list.flatMap((one) => one.rows.map((row) => row.id));
-    try { localStorage.setItem(KNOWN_CARDS_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ }
+  const canon = (value) => {
+    if (value === undefined) return '~';
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(canon).join(',')}]`;
+    return `{${Object.keys(value).filter((key) => value[key] !== undefined).sort()
+      .map((key) => `${JSON.stringify(key)}:${canon(value[key])}`).join(',')}}`;
+  };
+  const same = (a, b) => canon(a) === canon(b);
+  const isPlain = (value) => value && typeof value === 'object' && !Array.isArray(value);
+  // mine 이 base 와 같으면 theirs, theirs 가 base 와 같으면 mine, 둘 다 고쳤으면 한 겹 더 들어가 본다
+  const mergeValue = (mine, base, theirs) => {
+    if (same(mine, base)) return theirs;
+    if (same(theirs, base)) return mine;
+    const has = (list, item) => list.some((one) => same(one, item));
+    if (Array.isArray(mine) && Array.isArray(theirs)) {
+      const was = Array.isArray(base) ? base : [];
+      const out = theirs.filter((item) => !(has(was, item) && !has(mine, item)));
+      mine.forEach((item) => { if (!has(was, item) && !has(out, item)) out.push(item); });
+      return out;
+    }
+    if (isPlain(mine) && isPlain(theirs)) {
+      const from = isPlain(base) ? base : {};
+      const merged = {};
+      [...Object.keys(mine), ...Object.keys(theirs), ...Object.keys(from)].forEach((key) => {
+        if (key in merged) return;
+        const value = mergeValue(mine[key], from[key], theirs[key]);
+        if (value !== undefined) merged[key] = value;
+      });
+      return merged;
+    }
+    return mine;
   };
   const weekCache = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks)); } catch { /* 거들기다 */ } };
 
@@ -210,17 +244,63 @@ if (creativeBoard) {
 
   let weekSending = null;   // 지금 보내고 있는 저장 (끝나야 시트 값을 믿을 수 있다)
 
+  /* 저장 답으로 온 **합친 결과**를 화면에 들인다. 답이 오는 사이에 또 고친 칸은 지킨다
+     (보낸 모습 sent 를 base 로 놓고 같은 셈으로 견준다). */
+  const takeMerged = (sent, merged) => {
+    if (!Array.isArray(merged)) { cardBaseWrite(sent); return; }   // 옛 서버 — 보낸 것이 곧 시트다
+    const got = merged.map((one) => ({ id: one.id, rows: (one.rows || []).map(normalize) }));
+    const sentById = new Map(sent.flatMap((one) => one.rows.map((row) => [row.id, row])));
+    let changed = false;
+    got.forEach((there) => {
+      const week = weeks.find((one) => one.id === there.id);
+      if (!week) return;   // 그 사이 이 화면에서 지운 주차
+      const byId = new Map(there.rows.map((row) => [row.id, row]));
+      const out = [];
+      week.rows.forEach((now) => {
+        const was = sentById.get(now.id);
+        const theirs = byId.get(now.id);
+        if (!was) { out.push(now); return; }                          // 보낸 뒤 새로 만든 카드
+        if (!theirs) { if (!same(now, was)) out.push(now); else changed = true; return; }   // 남이 지웠다
+        const next = normalize(mergeValue(now, was, theirs));
+        if (same(next, now)) out.push(now);
+        else { out.push(next); changed = true; }
+      });
+      there.rows.forEach((theirs) => {
+        if (week.rows.some((row) => row.id === theirs.id) || sentById.has(theirs.id)) return;
+        out.push(theirs);   // 남이 적은 카드 (보낸 뒤 이 화면에서 지운 것은 다시 들이지 않는다)
+        changed = true;
+      });
+      week.rows = out;
+    });
+    cardBaseWrite(got);
+    if (!changed) return;
+    weekCache();
+    const open = currentWeek();
+    if (open) {
+      rows = open.rows;
+      renderBoard();
+      // 적고 있는 칸이 있으면 상세창은 다시 그리지 않는다 (글자가 끊긴다). 고친 값은 카드에 이미 들어 있다.
+      if (openId && !peek.contains(document.activeElement)) renderPeek();
+    }
+  };
+
   const sendWeeks = () => {
     // base = 이 화면이 아는 주차 ID. 시트에만 있고 여기에도 없는 주차는 서버가 살려 둔다.
-    // baseCards = 이 화면이 아는 카드 ID. 남이 그 뒤에 적은 카드는 서버가 살려 둔다.
-    const sent = weeks;
-    const mine = askSheet({ action: 'weeksPut', weeks: sent, base: knownRead(), baseCards: knownCardsRead(), by: '' })
+    // baseIds · baseCards = 이 화면이 받은 카드 모습. 서버가 칸마다 견줘 남이 고친 칸을 지킨다.
+    // 보낸 모습을 한 벌 떠 둔다 — 답이 오는 사이에 또 고칠 수 있다.
+    const sent = JSON.parse(JSON.stringify(weeks));
+    const sentById = new Map(sent.flatMap((one) => one.rows.map((row) => [row.id, row])));
+    const baseIds = Object.keys(cardBase);
+    const baseCards = {};   // 보낸 것과 같은 카드는 안 보낸다 (그 카드는 보낸 것이 곧 base)
+    baseIds.forEach((id) => { if (!same(sentById.get(id), cardBase[id])) baseCards[id] = cardBase[id]; });
+    const mine = askSheet({ action: 'weeksPut', weeks: sent, base: knownRead(), baseIds, baseCards, by: '' })
       .then((body) => {
         knownWrite(sent.map((one) => one.id));   // 시트가 이제 이 주차들을 안다
-        knownCardsWrite(sent);
+        takeMerged(sent, body && body.weeks);
         const at = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-        weekNote = body && body.revived
-          ? `저장됨 ${at} — 다른 사람이 적은 카드 ${body.revived}장을 지키고 같이 저장했습니다 (새로고침하면 보입니다)`
+        const theirs = (body && (body.merged || 0) + (body.revived || 0)) || 0;
+        weekNote = theirs
+          ? `저장됨 ${at} — 다른 사람이 그 사이 고친 카드 ${theirs}장과 합쳐 저장했습니다`
           : `저장됨 ${at}`;
       })
       .catch((reason) => { weekNote = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
@@ -301,7 +381,7 @@ if (creativeBoard) {
       }
       weekCache();
       knownWrite(got.map((one) => one.id));
-      knownCardsWrite(got);
+      cardBaseWrite(got);
       if (!push && !told) weekNote = weeks.length ? '' : '시트에 주차가 없습니다';
       if (push) save();               // 올려 준다 (save 가 알림도 갈아 준다)
       if (weekList && !weekList.hidden) renderWeekList();

@@ -728,41 +728,117 @@ function weeksGet_() {
   };
 }
 
-/* 주차 안의 카드도 주차와 같은 셈으로 지킨다.
-   keepUnseen_ 은 주차 통째만 본다 — 같은 주차를 열어 둔 옛 화면이 저장하면, 그 뒤에 남이
-   적은 카드가 말없이 사라졌다 (11월 1주차 더 시프트 카드 5장이 그렇게 날아갔다).
-   baseCards = 그 화면이 시트에서 받은 적 있는 카드 ID. 시트에는 있는데 보낸 목록에도
-   baseCards 에도 없는 카드는 그 화면이 본 적 없는 카드라, 원래 주차 끝에 다시 붙인다.
-   baseCards 를 안 보내는 옛 화면은 카드를 하나도 못 지운다 — 안전한 쪽이다.
-   돌려주는 값은 살린 카드 수. */
-function weeksKeepCards_(sheet, weeks, baseCards) {
+/* 주간소재요청 카드는 여럿이 같이 고친다. 저장은 주차 전체를 통째로 보내므로, 그대로 쓰면
+   뒤에 저장한 사람이 앞사람이 고친 것을 옛 값으로 덮는다 — 카드째 사라지기도 했다
+   (11월 1주차 더 시프트 카드 5장이 그렇게 날아갔다).
+   그래서 칸마다 셋을 견준다 (git 의 병합과 같은 셈이다).
+     mine   = 지금 보낸 카드
+     base   = 그 화면이 시트에서 마지막으로 받은 카드 (화면이 baseCards 로 보낸다)
+     theirs = 지금 시트에 있는 카드 (그 사이 남이 저장한 것)
+   mine 이 base 와 같은 칸 = 이 사람은 안 고친 칸 → 시트 것을 둔다.
+   theirs 가 base 와 같은 칸 = 남은 안 고친 칸 → 보낸 것을 쓴다.
+   둘 다 고친 칸만 보낸 쪽이 이긴다. 매체별 메모처럼 칸 안에 칸이 있으면 한 겹 더 들어가 보고,
+   매체 · 담당자 · SKU 같은 목록은 넣은 것 · 뺀 것을 각각 반영한다. */
+function weeksSame_(a, b) { return weeksCanon_(a) === weeksCanon_(b); }
+
+function weeksCanon_(value) {
+  if (value === undefined) return '~';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(weeksCanon_).join(',') + ']';
+  return '{' + Object.keys(value).filter(function (key) { return value[key] !== undefined; }).sort()
+    .map(function (key) { return JSON.stringify(key) + ':' + weeksCanon_(value[key]); }).join(',') + '}';
+}
+
+function weeksMergeValue_(mine, base, theirs) {
+  if (weeksSame_(mine, base)) return theirs;
+  if (weeksSame_(theirs, base)) return mine;
+  var has = function (list, item) {
+    return list.some(function (one) { return weeksSame_(one, item); });
+  };
+  if (Array.isArray(mine) && Array.isArray(theirs)) {
+    var was = Array.isArray(base) ? base : [];
+    var out = theirs.filter(function (item) { return !(has(was, item) && !has(mine, item)); });
+    mine.forEach(function (item) { if (!has(was, item) && !has(out, item)) out.push(item); });
+    return out;
+  }
+  var isObject = function (value) { return value && typeof value === 'object' && !Array.isArray(value); };
+  if (isObject(mine) && isObject(theirs)) {
+    var from = isObject(base) ? base : {};
+    var merged = {};
+    Object.keys(mine).concat(Object.keys(theirs), Object.keys(from)).forEach(function (key) {
+      if (key in merged) return;
+      var value = weeksMergeValue_(mine[key], from[key], theirs[key]);
+      if (value !== undefined) merged[key] = value;
+    });
+    return merged;
+  }
+  return mine;
+}
+
+/* 보낸 주차들의 카드를 시트 것과 합친다 (weeks 의 rows 를 바꿔 둔다).
+   payload.baseIds   = 그 화면이 시트에서 받은 적 있는 카드 ID 전부
+   payload.baseCards = 그중 지금 보낸 것과 다른 카드의 받은 모습 (같은 카드는 안 보낸다 — 보낸 것이 곧 base)
+   - 시트에만 있고 그 화면이 본 적 없는 카드 → 남이 그 뒤에 적은 카드라 살린다.
+   - 그 화면이 알던 카드가 보낸 목록에 없다 → 그 사람이 지웠다. 단, 그 사이 남이 고쳤으면 남긴다.
+   - 그 화면이 알던 카드가 시트에 없다 → 남이 지웠다. 이 사람도 안 고쳤으면 따라 지운다.
+   baseIds 를 안 보내는 옛 화면은 보낸 카드가 그대로 이기고, 본 적 없는 카드만 살린다. */
+function weeksMerge_(sheet, weeks, payload) {
+  var stats = { merged: 0, revived: 0 };
   var last = sheet.getLastRow();
-  if (last < 2) return 0;
+  if (last < 2) return stats;
+  var fresh = Array.isArray(payload && payload.baseIds);
+  var baseCards = (payload && payload.baseCards && !Array.isArray(payload.baseCards)) ? payload.baseCards : {};
   var known = {};
-  (baseCards || []).forEach(function (id) { known[String(id)] = true; });
-  weeks.forEach(function (one) {
-    (one.rows || []).forEach(function (card) { known[String(card && card.id)] = true; });
-  });
+  // 하루 동안 나갔던 화면(v320)은 baseCards 에 ID 목록만 담아 보낸다 — 아는 카드로만 쓴다
+  var ids = fresh ? payload.baseIds : (Array.isArray(payload && payload.baseCards) ? payload.baseCards : []);
+  ids.forEach(function (id) { known[String(id)] = true; });
+  var baseOf = function (id, mine) {
+    if (!known[id]) return null;
+    if (baseCards[id]) return baseCards[id];
+    return fresh ? mine : null;
+  };
 
-  var byWeek = {};
-  weeks.forEach(function (one) { byWeek[String(one.id || '')] = one; });
-
-  var revived = 0;
+  var sheetWeeks = {};
   sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).getValues().forEach(function (line) {
-    var week = byWeek[String(line[1] || '').trim()];
-    if (!week) return;   // 보내지 않은 주차는 keepUnseen_ 이 맡는다
     var cards = [];
     try { cards = JSON.parse(String(line[5] || '[]')) || []; } catch (error) { cards = []; }
-    cards.forEach(function (card) {
-      var id = String((card && card.id) || '');
-      if (!id || known[id]) return;
-      if (!week.rows) week.rows = [];
-      week.rows.push(card);
-      known[id] = true;
-      revived += 1;
-    });
+    sheetWeeks[String(line[1] || '').trim()] = cards;
   });
-  return revived;
+
+  weeks.forEach(function (week) {
+    var there = sheetWeeks[String(week.id || '')];
+    if (!there) return;   // 새 주차 — 보낸 그대로
+    var thereById = {};
+    there.forEach(function (card) { if (card && card.id) thereById[String(card.id)] = card; });
+    var out = [];
+    var seen = {};
+    (week.rows || []).forEach(function (mine) {
+      var id = String((mine && mine.id) || '');
+      seen[id] = true;
+      var theirs = thereById[id];
+      var base = baseOf(id, mine);
+      if (theirs && base) {
+        var merged = weeksMergeValue_(mine, base, theirs);
+        if (!weeksSame_(merged, mine)) stats.merged += 1;
+        out.push(merged);
+        return;
+      }
+      if (!theirs && base && weeksSame_(mine, base)) return;   // 남이 지웠고 이 사람은 안 고쳤다
+      out.push(mine);
+    });
+    there.forEach(function (theirs) {
+      var id = String((theirs && theirs.id) || '');
+      if (!id || seen[id]) return;
+      if (known[id]) {
+        var base = baseCards[id];
+        if (!base || weeksSame_(base, theirs)) return;   // 이 사람이 지웠다
+      }
+      out.push(theirs);   // 본 적 없는 카드 · 지운 뒤 남이 고친 카드
+      stats.revived += 1;
+    });
+    week.rows = out;
+  });
+  return stats;
 }
 
 // 화면이 가진 목록 전체를 그대로 받아 시트를 그 모양으로 맞춘다 (차례까지 그대로).
@@ -777,8 +853,8 @@ function weeksPut_(payload) {
   lock.waitLock(20000);
   try {
     var sheet = weeksSheet_();
-    // 이 화면이 본 적 없는 카드도 지우지 않고 그 주차에 살려 둔다 (아래 weeksKeepCards_)
-    var revived = weeksKeepCards_(sheet, weeks, payload && payload.baseCards);
+    // 카드는 칸마다 시트 것과 합친다 — 남이 그 사이 고친 칸 · 적은 카드를 지킨다 (weeksMerge_)
+    var stats = weeksMerge_(sheet, weeks, payload);
     // 이 화면이 본 적 없는 주차는 지우지 않고 뒤에 살려 둔다
     var kept = keepUnseen_(sheet, WEEKS_HEADERS.length, 2, weeks, payload && payload.base);
     var last = sheet.getLastRow();
@@ -802,7 +878,10 @@ function weeksPut_(payload) {
     if (kept.length) {
       sheet.getRange(sheet.getLastRow() + 1, 1, kept.length, WEEKS_HEADERS.length).setValues(kept);
     }
-    return { ok: true, saved: weeks.length, kept: kept.length, revived: revived,
+    // 합친 결과를 돌려준다 — 화면이 남이 고친 것을 받아 보여 주고, 다음 저장의 base 로 쓴다
+    return { ok: true, saved: weeks.length, kept: kept.length,
+      merged: stats.merged, revived: stats.revived,
+      weeks: weeks.map(function (one) { return { id: String(one.id || ''), rows: one.rows || [] }; }),
       savedAt: new Date().toISOString() };
   } finally {
     lock.releaseLock();
