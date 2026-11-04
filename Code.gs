@@ -401,7 +401,17 @@ function ensureColumns_(sheet, columns) {
 
   map = orderColumns_(sheet, wanted);
   applyPurposeRule_(sheet, map);
+  clearFormulaRules_(sheet, map);
   return map;
+}
+
+// 수식 칸에는 고르기 규칙(데이터 확인)을 두지 않는다. 열을 옮기다 옆 칸(소재유형 img · video)의
+// 규칙이 수식 칸으로 넘어오면, 수식을 쓸 때 '데이터 확인 규칙을 위반합니다' 로 통째로 멈춘다.
+function clearFormulaRules_(sheet, map) {
+  var rows = Math.max(sheet.getMaxRows() - 1, 1);
+  FORMULA_HEADERS.forEach(function (label) {
+    if (map[label]) sheet.getRange(2, map[label], rows, 1).clearDataValidations();
+  });
 }
 
 // 수식으로 만들던 열은 값이 있어도 지운다. (다시 만들 수 있는 값이다)
