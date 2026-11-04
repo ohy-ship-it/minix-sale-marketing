@@ -737,8 +737,9 @@ function weeksGet_() {
      theirs = 지금 시트에 있는 카드 (그 사이 남이 저장한 것)
    mine 이 base 와 같은 칸 = 이 사람은 안 고친 칸 → 시트 것을 둔다.
    theirs 가 base 와 같은 칸 = 남은 안 고친 칸 → 보낸 것을 쓴다.
-   둘 다 고친 칸만 보낸 쪽이 이긴다. 매체별 메모처럼 칸 안에 칸이 있으면 한 겹 더 들어가 보고,
-   매체 · 담당자 · SKU 같은 목록은 넣은 것 · 뺀 것을 각각 반영한다. */
+   둘 다 고친 칸은 글이면 줄 단위로 합치고, 그래도 겹치면 보낸 쪽을 두되 시트 쪽 값을
+   카드의 conflicts 에 남긴다 (화면이 띄워 사람이 고른다). 매체별 메모처럼 칸 안에 칸이 있으면
+   한 겹 더 들어가 보고, 매체 · 담당자 · SKU 같은 목록은 넣은 것 · 뺀 것을 각각 반영한다. */
 function weeksSame_(a, b) { return weeksCanon_(a) === weeksCanon_(b); }
 
 function weeksCanon_(value) {
@@ -749,9 +750,73 @@ function weeksCanon_(value) {
     .map(function (key) { return JSON.stringify(key) + ':' + weeksCanon_(value[key]); }).join(',') + '}';
 }
 
-function weeksMergeValue_(mine, base, theirs) {
+/* 글 칸(메모 · 비고)은 **줄 단위로** 합친다 — 한 사람은 첫 줄, 다른 사람은 셋째 줄을 고쳤으면
+   둘 다 남는다. 같은 줄을 둘 다 고쳤을 때만 못 합친다 (null 을 돌려준다).
+   셈은 git 의 diff3 과 같다: base 와 양쪽에서 그대로 남은 줄을 기둥 삼아, 기둥 사이 토막마다
+   한쪽만 바뀌었으면 그쪽을, 둘 다 같게 바뀌었으면 그것을 쓴다. */
+function weeksLcs_(a, b) {
+  var rows = a.length;
+  var cols = b.length;
+  var table = [];
+  for (var i = 0; i <= rows; i += 1) {
+    table.push([]);
+    for (var j = 0; j <= cols; j += 1) table[i].push(0);
+  }
+  for (var x = rows - 1; x >= 0; x -= 1) {
+    for (var y = cols - 1; y >= 0; y -= 1) {
+      table[x][y] = a[x] === b[y] ? table[x + 1][y + 1] + 1 : Math.max(table[x + 1][y], table[x][y + 1]);
+    }
+  }
+  var pair = {};
+  var p = 0;
+  var q = 0;
+  while (p < rows && q < cols) {
+    if (a[p] === b[q]) { pair[p] = q; p += 1; q += 1; }
+    else if (table[p + 1][q] >= table[p][q + 1]) p += 1;
+    else q += 1;
+  }
+  return pair;
+}
+
+function weeksMergeText_(mine, base, theirs) {
+  var was = String(base).split('\n');
+  var me = String(mine).split('\n');
+  var you = String(theirs).split('\n');
+  if (was.length * Math.max(me.length, you.length) > 250000) return null;   // 너무 길면 줄 셈을 하지 않는다
+  var toMe = weeksLcs_(was, me);
+  var toYou = weeksLcs_(was, you);
+  var out = [];
+  var i = 0;
+  var j = 0;
+  var k = 0;
+  while (true) {
+    var s = i;
+    while (s < was.length && !(toMe[s] !== undefined && toYou[s] !== undefined && toMe[s] >= j && toYou[s] >= k)) s += 1;
+    var endMe = s < was.length ? toMe[s] : me.length;
+    var endYou = s < was.length ? toYou[s] : you.length;
+    var partWas = was.slice(i, s).join('\n');
+    var partMe = me.slice(j, endMe);
+    var partYou = you.slice(k, endYou);
+    if (partMe.join('\n') === partWas && partMe.length === s - i) out = out.concat(partYou);
+    else if (partYou.join('\n') === partWas && partYou.length === s - i) out = out.concat(partMe);
+    else if (partMe.join('\n') === partYou.join('\n')) out = out.concat(partMe);
+    else return null;
+    if (s >= was.length) break;
+    out.push(was[s]);
+    i = s + 1;
+    j = endMe + 1;
+    k = endYou + 1;
+  }
+  return out.join('\n');
+}
+
+/* 칸 하나를 합친다. 둘 다 같은 칸을 다르게 고쳐 못 합치면 **보낸 쪽을 칸에 두고**
+   시트에 있던 값(남이 고친 것)을 clash 에 적어 둔다 — 말없이 버리지 않는다.
+   path 는 그 칸의 자리 ('note' · 'mediaNotes.메타'). */
+function weeksMergeValue_(mine, base, theirs, path, clash) {
   if (weeksSame_(mine, base)) return theirs;
   if (weeksSame_(theirs, base)) return mine;
+  if (weeksSame_(mine, theirs)) return mine;
   var has = function (list, item) {
     return list.some(function (one) { return weeksSame_(one, item); });
   };
@@ -767,12 +832,31 @@ function weeksMergeValue_(mine, base, theirs) {
     var merged = {};
     Object.keys(mine).concat(Object.keys(theirs), Object.keys(from)).forEach(function (key) {
       if (key in merged) return;
-      var value = weeksMergeValue_(mine[key], from[key], theirs[key]);
+      var value = weeksMergeValue_(mine[key], from[key], theirs[key], path ? path + '.' + key : key, clash);
       if (value !== undefined) merged[key] = value;
     });
     return merged;
   }
+  if (typeof mine === 'string' && typeof theirs === 'string' && typeof base === 'string') {
+    var text = weeksMergeText_(mine, base, theirs);
+    if (text !== null) return text;
+  }
+  if (clash && path) clash.push({ path: path, theirs: theirs === undefined ? '' : theirs });
   return mine;
+}
+
+// 카드에 겹친 칸을 적어 둔다 (화면이 상세창 위에 띄우고, 사람이 고르면 지운다)
+var WEEKS_CLASH_MAX = 10;
+function weeksNoteClash_(card, clash, by, at) {
+  if (!clash.length) return card;
+  var list = Array.isArray(card.conflicts) ? card.conflicts.slice() : [];
+  clash.forEach(function (one) {
+    if (one.path === 'conflicts' || one.path.indexOf('conflicts.') === 0) return;
+    list = list.filter(function (old) { return old.path !== one.path; });
+    list.push({ path: one.path, theirs: one.theirs, by: by, at: at });
+  });
+  card.conflicts = list.slice(-WEEKS_CLASH_MAX);
+  return card;
 }
 
 /* 보낸 주차들의 카드를 시트 것과 합친다 (weeks 의 rows 를 바꿔 둔다).
@@ -783,7 +867,7 @@ function weeksMergeValue_(mine, base, theirs) {
    - 그 화면이 알던 카드가 시트에 없다 → 남이 지웠다. 이 사람도 안 고쳤으면 따라 지운다.
    baseIds 를 안 보내는 옛 화면은 보낸 카드가 그대로 이기고, 본 적 없는 카드만 살린다. */
 function weeksMerge_(sheet, weeks, payload) {
-  var stats = { merged: 0, revived: 0 };
+  var stats = { merged: 0, revived: 0, clashed: 0 };
   var last = sheet.getLastRow();
   if (last < 2) return stats;
   var fresh = Array.isArray(payload && payload.baseIds);
@@ -802,12 +886,17 @@ function weeksMerge_(sheet, weeks, payload) {
   sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).getValues().forEach(function (line) {
     var cards = [];
     try { cards = JSON.parse(String(line[5] || '[]')) || []; } catch (error) { cards = []; }
-    sheetWeeks[String(line[1] || '').trim()] = cards;
+    sheetWeeks[String(line[1] || '').trim()] = {
+      cards: cards,
+      by: String(line[6] || ''),
+      at: line[7] instanceof Date ? line[7].toISOString() : String(line[7] || '')
+    };
   });
 
   weeks.forEach(function (week) {
-    var there = sheetWeeks[String(week.id || '')];
-    if (!there) return;   // 새 주차 — 보낸 그대로
+    var sheetWeek = sheetWeeks[String(week.id || '')];
+    if (!sheetWeek) return;   // 새 주차 — 보낸 그대로
+    var there = sheetWeek.cards;
     var thereById = {};
     there.forEach(function (card) { if (card && card.id) thereById[String(card.id)] = card; });
     var out = [];
@@ -818,7 +907,10 @@ function weeksMerge_(sheet, weeks, payload) {
       var theirs = thereById[id];
       var base = baseOf(id, mine);
       if (theirs && base) {
-        var merged = weeksMergeValue_(mine, base, theirs);
+        var clash = [];
+        var merged = weeksMergeValue_(mine, base, theirs, '', clash);
+        weeksNoteClash_(merged, clash, sheetWeek.by, sheetWeek.at);
+        stats.clashed += clash.length;
         if (!weeksSame_(merged, mine)) stats.merged += 1;
         out.push(merged);
         return;
@@ -880,7 +972,7 @@ function weeksPut_(payload) {
     }
     // 합친 결과를 돌려준다 — 화면이 남이 고친 것을 받아 보여 주고, 다음 저장의 base 로 쓴다
     return { ok: true, saved: weeks.length, kept: kept.length,
-      merged: stats.merged, revived: stats.revived,
+      merged: stats.merged, revived: stats.revived, clashed: stats.clashed,
       weeks: weeks.map(function (one) { return { id: String(one.id || ''), rows: one.rows || [] }; }),
       savedAt: new Date().toISOString() };
   } finally {

@@ -118,6 +118,8 @@ if (creativeBoard) {
     mediaNotes: row.mediaNotes && typeof row.mediaNotes === 'object' ? { ...row.mediaNotes } : {},
     mediaCounts: row.mediaCounts && typeof row.mediaCounts === 'object' ? { ...row.mediaCounts } : {},
     mediaDue: row.mediaDue && typeof row.mediaDue === 'object' ? { ...row.mediaDue } : {},
+    // 여럿이 같은 칸을 동시에 고쳐 못 합친 것 (상대 값). 비어 있으면 칸을 아예 두지 않는다.
+    ...(Array.isArray(row.conflicts) && row.conflicts.length ? { conflicts: row.conflicts.map((one) => ({ ...one })) } : {}),
   });
 
   const MONTH_CHOICES = Array.from({ length: 12 }, (unused, index) => `${index + 1}월`);
@@ -206,10 +208,61 @@ if (creativeBoard) {
   };
   const same = (a, b) => canon(a) === canon(b);
   const isPlain = (value) => value && typeof value === 'object' && !Array.isArray(value);
-  // mine 이 base 와 같으면 theirs, theirs 가 base 와 같으면 mine, 둘 다 고쳤으면 한 겹 더 들어가 본다
-  const mergeValue = (mine, base, theirs) => {
+  // 글 칸은 줄 단위로 합친다 (Code.gs weeksMergeText_ 와 같은 셈). 같은 줄을 둘 다 고쳤으면 null.
+  const lcsPairs = (a, b) => {
+    const table = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let x = a.length - 1; x >= 0; x -= 1) {
+      for (let y = b.length - 1; y >= 0; y -= 1) {
+        table[x][y] = a[x] === b[y] ? table[x + 1][y + 1] + 1 : Math.max(table[x + 1][y], table[x][y + 1]);
+      }
+    }
+    const pair = {};
+    let p = 0;
+    let q = 0;
+    while (p < a.length && q < b.length) {
+      if (a[p] === b[q]) { pair[p] = q; p += 1; q += 1; }
+      else if (table[p + 1][q] >= table[p][q + 1]) p += 1;
+      else q += 1;
+    }
+    return pair;
+  };
+  const mergeText = (mine, base, theirs) => {
+    const was = String(base).split('\n');
+    const me = String(mine).split('\n');
+    const you = String(theirs).split('\n');
+    if (was.length * Math.max(me.length, you.length) > 250000) return null;
+    const toMe = lcsPairs(was, me);
+    const toYou = lcsPairs(was, you);
+    let out = [];
+    let i = 0;
+    let j = 0;
+    let k = 0;
+    for (;;) {
+      let s = i;
+      while (s < was.length && !(toMe[s] !== undefined && toYou[s] !== undefined && toMe[s] >= j && toYou[s] >= k)) s += 1;
+      const endMe = s < was.length ? toMe[s] : me.length;
+      const endYou = s < was.length ? toYou[s] : you.length;
+      const partWas = was.slice(i, s).join('\n');
+      const partMe = me.slice(j, endMe);
+      const partYou = you.slice(k, endYou);
+      if (partMe.join('\n') === partWas && partMe.length === s - i) out = out.concat(partYou);
+      else if (partYou.join('\n') === partWas && partYou.length === s - i) out = out.concat(partMe);
+      else if (partMe.join('\n') === partYou.join('\n')) out = out.concat(partMe);
+      else return null;
+      if (s >= was.length) break;
+      out.push(was[s]);
+      i = s + 1;
+      j = endMe + 1;
+      k = endYou + 1;
+    }
+    return out.join('\n');
+  };
+  // mine 이 base 와 같으면 theirs, theirs 가 base 와 같으면 mine, 둘 다 고쳤으면 한 겹 더 들어가 본다.
+  // 그래도 못 합친 칸은 mine 을 두고 theirs 를 clash 에 적는다.
+  const mergeValue = (mine, base, theirs, path = '', clash = null) => {
     if (same(mine, base)) return theirs;
     if (same(theirs, base)) return mine;
+    if (same(mine, theirs)) return mine;
     const has = (list, item) => list.some((one) => same(one, item));
     if (Array.isArray(mine) && Array.isArray(theirs)) {
       const was = Array.isArray(base) ? base : [];
@@ -222,12 +275,30 @@ if (creativeBoard) {
       const merged = {};
       [...Object.keys(mine), ...Object.keys(theirs), ...Object.keys(from)].forEach((key) => {
         if (key in merged) return;
-        const value = mergeValue(mine[key], from[key], theirs[key]);
+        const value = mergeValue(mine[key], from[key], theirs[key], path ? `${path}.${key}` : key, clash);
         if (value !== undefined) merged[key] = value;
       });
       return merged;
     }
+    if (typeof mine === 'string' && typeof theirs === 'string' && typeof base === 'string') {
+      const text = mergeText(mine, base, theirs);
+      if (text !== null) return text;
+    }
+    if (clash && path && path !== 'conflicts' && !path.startsWith('conflicts.')) {
+      clash.push({ path, theirs: theirs === undefined ? '' : theirs });
+    }
     return mine;
+  };
+  // 못 합친 칸을 카드에 적어 둔다 (Code.gs weeksNoteClash_ 와 같다)
+  const noteClash = (card, clash, by, at) => {
+    if (!clash.length) return card;
+    let list = Array.isArray(card.conflicts) ? card.conflicts.slice() : [];
+    clash.forEach((one) => {
+      list = list.filter((old) => old.path !== one.path);
+      list.push({ path: one.path, theirs: one.theirs, by, at });
+    });
+    card.conflicts = list.slice(-10);
+    return card;
   };
   const weekCache = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks)); } catch { /* 거들기다 */ } };
 
@@ -261,7 +332,8 @@ if (creativeBoard) {
         const theirs = byId.get(now.id);
         if (!was) { out.push(now); return; }                          // 보낸 뒤 새로 만든 카드
         if (!theirs) { if (!same(now, was)) out.push(now); else changed = true; return; }   // 남이 지웠다
-        const next = normalize(mergeValue(now, was, theirs));
+        const clash = [];
+        const next = normalize(noteClash(mergeValue(now, was, theirs, '', clash), clash, '다른 사람', new Date().toISOString()));
         if (same(next, now)) out.push(now);
         else { out.push(next); changed = true; }
       });
@@ -299,9 +371,12 @@ if (creativeBoard) {
         takeMerged(sent, body && body.weeks);
         const at = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
         const theirs = (body && (body.merged || 0) + (body.revived || 0)) || 0;
-        weekNote = theirs
-          ? `저장됨 ${at} — 다른 사람이 그 사이 고친 카드 ${theirs}장과 합쳐 저장했습니다`
-          : `저장됨 ${at}`;
+        const clashed = (body && body.clashed) || 0;
+        weekNote = clashed
+          ? `저장됨 ${at} — 다른 사람과 같은 칸을 동시에 고친 곳이 ${clashed}군데 있습니다. ⚠ 표시된 카드를 열어 확인해 주세요`
+          : theirs
+            ? `저장됨 ${at} — 다른 사람이 그 사이 고친 카드 ${theirs}장과 합쳐 저장했습니다`
+            : `저장됨 ${at}`;
       })
       .catch((reason) => { weekNote = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
       .then(() => {
@@ -541,7 +616,7 @@ if (creativeBoard) {
       const cards = group.map((row) => `
         <article class="notion-card" draggable="true" data-id="${row.id}"
           title="끌어서 옮기기 (칸 · 차례) · 오른쪽 클릭 — 복제 · 링크 복사 · 삭제">
-          <h3>${escapeHtml(row.name || '제목 없음')}</h3>
+          <h3>${row.conflicts?.length ? '<span class="card-clash" title="다른 사람과 동시에 고친 칸이 있습니다">⚠</span>' : ''}${escapeHtml(row.name || '제목 없음')}</h3>
           ${CARD_PROPS.map((key) => cardLine(row, key)).join('')}
         </article>`).join('');
       return `<div class="notion-column ${COLUMN_CLASS[status]}" data-status="${escapeHtml(status)}">
@@ -632,6 +707,52 @@ if (creativeBoard) {
     </div>`;
   };
 
+  /* 같은 칸을 동시에 고쳐 못 합친 것. 칸에는 내 내용이 들어가 있고, 상대 내용을 여기 보여 준다.
+     [상대 내용으로 바꾸기] 또는 [내 내용 유지] 를 누르면 사라진다. */
+  const clashLabel = (path) => {
+    const [head, ...rest] = String(path).split('.');
+    const sub = rest.join('.');
+    if (head === 'mediaNotes') return `${sub} 요청 내용`;
+    if (head === 'mediaCounts') return `${sub} 소재 갯수`;
+    if (head === 'mediaDue') return `${sub} 전달 희망일정`;
+    if (head === 'note') return '본문 메모';
+    const prop = propByKey[head];
+    return prop ? `${prop.name}${sub ? ` (${sub})` : ''}` : path;
+  };
+  const clashText = (value) => {
+    if (value === null || value === undefined || value === '') return '(비어 있음)';
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) return value.join(', ');
+    if (isPlain(value) && value.start) return formatDate(value);
+    return JSON.stringify(value);
+  };
+  const renderClash = (row) => {
+    if (!row.conflicts?.length) return '';
+    return `<div class="peek-clash">${row.conflicts.map((one, at) => `
+      <section class="peek-clash-one">
+        <p><b>⚠ ${escapeHtml(clashLabel(one.path))}</b> — ${escapeHtml(String(one.by || '다른 사람').split('@')[0])}님이 같은 때 고쳤습니다.
+          지금 칸에는 <b>내 내용</b>이 들어가 있고, 상대 내용은 아래와 같습니다.</p>
+        <pre>${escapeHtml(clashText(one.theirs))}</pre>
+        <div class="peek-clash-actions">
+          <button type="button" data-clash-take="${at}">상대 내용으로 바꾸기</button>
+          <button type="button" data-clash-keep="${at}">내 내용 유지</button>
+        </div>
+      </section>`).join('')}</div>`;
+  };
+  const dropClash = (row, at, take) => {
+    const one = row.conflicts?.[at];
+    if (!one) return;
+    if (take) {
+      const [head, ...rest] = String(one.path).split('.');
+      const sub = rest.join('.');
+      if (sub && isPlain(row[head])) row[head][sub] = one.theirs;
+      else if (!sub) row[head] = one.theirs;
+    }
+    row.conflicts = row.conflicts.filter((unused, index) => index !== at);
+    if (!row.conflicts.length) delete row.conflicts;
+    commit();
+  };
+
   const renderPeek = () => {
     const row = rows.find((entry) => entry.id === openId);
     if (!row) return closePeek();
@@ -642,6 +763,7 @@ if (creativeBoard) {
           <button type="button" class="peek-close" aria-label="닫기"><i data-lucide="x"></i></button>
           <button type="button" class="peek-delete"><i data-lucide="trash-2"></i>삭제</button>
         </header>
+        ${renderClash(row)}
         <textarea class="peek-title" rows="1" data-edit="name" placeholder="제목 없음">${escapeHtml(row.name)}</textarea>
         <div class="peek-props">
           ${SCHEMA.filter((prop) => prop.key !== 'name' && !prop.hidden).map((prop) => `
@@ -849,6 +971,10 @@ if (creativeBoard) {
     if (event.target.closest('.peek-backdrop') || event.target.closest('.peek-close')) return closePeek();
     const row = rows.find((entry) => entry.id === openId);
     if (!row) return;
+    const clashTake = event.target.closest('[data-clash-take]');
+    if (clashTake) return dropClash(row, Number(clashTake.dataset.clashTake), true);
+    const clashKeep = event.target.closest('[data-clash-keep]');
+    if (clashKeep) return dropClash(row, Number(clashKeep.dataset.clashKeep), false);
     if (event.target.closest('.peek-delete')) {
       const index = rows.findIndex((entry) => entry.id === row.id);
       if (index >= 0) rows.splice(index, 1);
