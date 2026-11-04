@@ -8258,7 +8258,8 @@ if (brandSchedule) {
 
   const SCHEMA = [
     { key: 'name', name: '이름', type: 'title', icon: 'type' },
-    { key: 'sku', name: 'SKU', type: 'multi_select', icon: 'tag', options: SKU_OPTIONS },
+    /* SKU 도 손으로 적어 넣을 수 있다 (custom) — 새 제품이 나오면 목록에 없으니까. */
+    { key: 'sku', name: 'SKU', type: 'multi_select', icon: 'tag', options: SKU_OPTIONS, custom: true },
     { key: 'date', name: '날짜', type: 'date', icon: 'calendar' },
     /* 소재를 언제 받기로 했는지. **날짜와 따로 둔다** — 날짜는 달력에 카드를 놓는 자리라
        옮길 수 없고, 사람이 보고 싶어 하는 건 수급일자다. 그래서 카드에는 수급일자를 적는다. */
@@ -8271,19 +8272,22 @@ if (brandSchedule) {
   const propByKey = Object.fromEntries(SCHEMA.map((prop) => [prop.key, prop]));
   const colorOf = (prop, value) => (prop.options || []).find(([option]) => option === value)?.[1] || 'default';
 
-  /* 손으로 적어 넣은 매체 이름을 목록에 남겨 둔다.
+  /* 손으로 적어 넣은 매체 · SKU 이름을 목록에 남겨 둔다.
      일정에 붙인 이름은 시트로 올라가 팀 모두의 목록에 뜬다 (아래 optionsOf 가 rows 를 훑는다).
      아직 어느 일정에도 안 붙인 이름은 이 브라우저가 들고 있다. */
-  const CUSTOM_KEY = 'minix-brand-schedule-media-custom';
-  const customRead = () => {
+  const CUSTOM_KEYS = {
+    media: 'minix-brand-schedule-media-custom',
+    sku: 'minix-brand-schedule-sku-custom',
+  };
+  const customRead = (key) => {
     try {
-      const kept = JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]');
+      const kept = JSON.parse(localStorage.getItem(CUSTOM_KEYS[key]) || '[]');
       return Array.isArray(kept) ? kept.filter((one) => typeof one === 'string' && one.trim()) : [];
     } catch { return []; }
   };
-  let customNames = customRead();
-  const customWrite = () => {
-    try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(customNames)); } catch { /* 거들기다 */ }
+  const customNames = { media: customRead('media'), sku: customRead('sku') };
+  const customWrite = (key) => {
+    try { localStorage.setItem(CUSTOM_KEYS[key], JSON.stringify(customNames[key])); } catch { /* 거들기다 */ }
   };
 
   // 고를 수 있는 값 — 정해 둔 목록 + 어느 일정에든 붙어 있는 이름 + 적어 둔 이름 (빛깔은 default)
@@ -8297,7 +8301,7 @@ if (brandSchedule) {
       more.push([name, 'default']);
     };
     rows.forEach((row) => (row[prop.key] || []).forEach(add));
-    if (prop.key === 'media') customNames.forEach(add);
+    (customNames[prop.key] || []).forEach(add);
     return known.concat(more);
   };
   // 일정에 붙어 있는 이름인가 (아니면 이 브라우저에만 적어 둔 것이라 지울 수 있다)
@@ -8626,9 +8630,9 @@ if (brandSchedule) {
     const picked = already ? already[0] : name;
     if (!row[key].includes(picked)) row[key] = [...row[key], picked];
     // 목록에도 남긴다 — 이 일정에서 빼도 다른 일정에서 또 고를 수 있게
-    if (key === 'media' && isCustom(propByKey[key], picked) && !customNames.includes(picked)) {
-      customNames = [...customNames, picked];
-      customWrite();
+    if (customNames[key] && isCustom(propByKey[key], picked) && !customNames[key].includes(picked)) {
+      customNames[key] = [...customNames[key], picked];
+      customWrite(key);
     }
     box.value = '';
     commit();
@@ -8918,8 +8922,9 @@ if (brandSchedule) {
     const dropOption = event.target.closest('[data-drop-option]');
     if (dropOption) {
       const gone = dropOption.dataset.dropOption;
-      customNames = customNames.filter((one) => one !== gone);
-      customWrite();
+      const dropKey = dropOption.dataset.dropKey;
+      customNames[dropKey] = (customNames[dropKey] || []).filter((one) => one !== gone);
+      customWrite(dropKey);
       renderPeek();
       const list = peek.querySelector(`[data-options="${dropOption.dataset.dropKey}"]`);
       if (list) list.hidden = false;
