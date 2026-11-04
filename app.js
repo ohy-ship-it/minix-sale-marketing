@@ -290,12 +290,12 @@ if (creativeBoard) {
     return mine;
   };
   // 못 합친 칸을 카드에 적어 둔다 (Code.gs weeksNoteClash_ 와 같다)
-  const noteClash = (card, clash, by, at) => {
+  const noteClash = (card, clash, by, at, keptBy = '') => {
     if (!clash.length) return card;
     let list = Array.isArray(card.conflicts) ? card.conflicts.slice() : [];
     clash.forEach((one) => {
       list = list.filter((old) => old.path !== one.path);
-      list.push({ path: one.path, theirs: one.theirs, by, at });
+      list.push({ path: one.path, theirs: one.theirs, by, keptBy, at });
     });
     card.conflicts = list.slice(-10);
     return card;
@@ -333,7 +333,8 @@ if (creativeBoard) {
         if (!was) { out.push(now); return; }                          // 보낸 뒤 새로 만든 카드
         if (!theirs) { if (!same(now, was)) out.push(now); else changed = true; return; }   // 남이 지웠다
         const clash = [];
-        const next = normalize(noteClash(mergeValue(now, was, theirs, '', clash), clash, '다른 사람', new Date().toISOString()));
+        const next = normalize(noteClash(mergeValue(now, was, theirs, '', clash), clash, '다른 사람',
+          new Date().toISOString(), firebase.auth().currentUser?.email || ''));
         if (same(next, now)) out.push(now);
         else { out.push(next); changed = true; }
       });
@@ -356,7 +357,16 @@ if (creativeBoard) {
     }
   };
 
+  /* 저장은 **한 번에 하나만** 보낸다. 앞 저장의 답이 오기 전에 다음 저장을 보내면, 다음 저장의
+     base 가 아직 옛 값이라 서버가 방금 내가 저장한 값을 '남이 고친 값' 으로 보고 겹쳤다고 적었다
+     (글자를 치는 동안 0.7초마다 저장이 나가서 혼자 쳐도 그랬다). 보내는 중이면 끝난 뒤 한 번 더 보낸다. */
+  let weekAgain = false;
+
   const sendWeeks = () => {
+    if (weekSending) {
+      weekAgain = true;
+      return weekSending;
+    }
     // base = 이 화면이 아는 주차 ID. 시트에만 있고 여기에도 없는 주차는 서버가 살려 둔다.
     // baseIds · baseCards = 이 화면이 받은 카드 모습. 서버가 칸마다 견줘 남이 고친 칸을 지킨다.
     // 보낸 모습을 한 벌 떠 둔다 — 답이 오는 사이에 또 고칠 수 있다.
@@ -382,6 +392,12 @@ if (creativeBoard) {
       .then(() => {
         if (weekSending === mine) weekSending = null;
         if (weekList && !weekList.hidden) renderWeekList();
+        // 보내는 사이에 또 고쳤으면 이어서 보낸다 (이 약속은 그것까지 끝나야 풀린다 — flushWeeks 가 기다린다)
+        if (weekAgain) {
+          weekAgain = false;
+          return sendWeeks();
+        }
+        return undefined;
       });
     weekSending = mine;
     return mine;
@@ -726,18 +742,33 @@ if (creativeBoard) {
     if (isPlain(value) && value.start) return formatDate(value);
     return JSON.stringify(value);
   };
+  /* 경고는 보는 사람이 누구든 같은 뜻이어야 한다. 먼저 저장한 사람 화면에서는 칸에 이미
+     상대 내용이 들어가 있으므로 '내 내용' 같은 말을 쓰면 거꾸로 읽힌다. 그래서 이름으로 적는다. */
+  const clashWho = (mail, fallback) => {
+    const me = String(firebase.auth().currentUser?.email || '').toLowerCase();
+    const who = String(mail || '').toLowerCase();
+    if (!who) return fallback;
+    if (who === me) return '나';
+    return `${who.split('@')[0]}님`;
+  };
   const renderClash = (row) => {
     if (!row.conflicts?.length) return '';
-    return `<div class="peek-clash">${row.conflicts.map((one, at) => `
+    return `<div class="peek-clash">${row.conflicts.map((one, at) => {
+      const kept = clashWho(one.keptBy, '나중에 저장한 사람');
+      const other = clashWho(one.by, '먼저 저장한 사람');
+      const same = kept === other;
+      return `
       <section class="peek-clash-one">
-        <p><b>⚠ ${escapeHtml(clashLabel(one.path))}</b> — ${escapeHtml(String(one.by || '다른 사람').split('@')[0])}님이 같은 때 고쳤습니다.
-          지금 칸에는 <b>내 내용</b>이 들어가 있고, 상대 내용은 아래와 같습니다.</p>
+        <p><b>⚠ ${escapeHtml(clashLabel(one.path))}</b> — 두 곳에서 같은 때 고쳤습니다.
+          지금 칸에는 <b>${escapeHtml(same ? '나중에 저장한' : kept)}</b> 내용이 들어가 있고,
+          아래는 <b>${escapeHtml(same ? '먼저 저장한' : other)}</b> 내용입니다.</p>
         <pre>${escapeHtml(clashText(one.theirs))}</pre>
         <div class="peek-clash-actions">
-          <button type="button" data-clash-take="${at}">상대 내용으로 바꾸기</button>
-          <button type="button" data-clash-keep="${at}">내 내용 유지</button>
+          <button type="button" data-clash-take="${at}">아래 내용으로 바꾸기</button>
+          <button type="button" data-clash-keep="${at}">지금 칸 그대로 두기</button>
         </div>
-      </section>`).join('')}</div>`;
+      </section>`;
+    }).join('')}</div>`;
   };
   const dropClash = (row, at, take) => {
     const one = row.conflicts?.[at];

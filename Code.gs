@@ -874,13 +874,15 @@ function weeksMergeValue_(mine, base, theirs, path, clash) {
 
 // 카드에 겹친 칸을 적어 둔다 (화면이 상세창 위에 띄우고, 사람이 고르면 지운다)
 var WEEKS_CLASH_MAX = 10;
-function weeksNoteClash_(card, clash, by, at) {
+// by = 시트에 있던 값을 저장한 사람 · keptBy = 지금 저장해 칸에 값이 들어간 사람.
+// 화면은 보는 사람이 누구든 이 둘로 문구를 만든다 ('내 내용' 처럼 보는 쪽에 따라 뜻이 바뀌는 말을 담지 않는다).
+function weeksNoteClash_(card, clash, by, at, keptBy) {
   if (!clash.length) return card;
   var list = Array.isArray(card.conflicts) ? card.conflicts.slice() : [];
   clash.forEach(function (one) {
     if (one.path === 'conflicts' || one.path.indexOf('conflicts.') === 0) return;
     list = list.filter(function (old) { return old.path !== one.path; });
-    list.push({ path: one.path, theirs: one.theirs, by: by, at: at });
+    list.push({ path: one.path, theirs: one.theirs, by: by, keptBy: keptBy || '', at: at });
   });
   card.conflicts = list.slice(-WEEKS_CLASH_MAX);
   return card;
@@ -936,7 +938,7 @@ function weeksMerge_(sheet, weeks, payload) {
       if (theirs && base) {
         var clash = [];
         var merged = weeksMergeValue_(mine, base, theirs, '', clash);
-        weeksNoteClash_(merged, clash, sheetWeek.by, sheetWeek.at);
+        weeksNoteClash_(merged, clash, sheetWeek.by, sheetWeek.at, String((payload && payload.by) || ''));
         stats.clashed += clash.length;
         if (!weeksSame_(merged, mine)) stats.merged += 1;
         out.push(merged);
