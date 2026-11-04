@@ -15,7 +15,9 @@ var FALLBACK_COLUMNS = [
 // 파일명 뒤에 붙는 열. utm-builder 시트와 같은 차례로 둔다.
 //   url → LINK(GA) · NT · FM → 캠페인명 · 광고그룹명 · 광고명 → utm_*
 // 랜딩링크 · 목적 · 타겟팅 · 담당자는 사람이 채우는 칸이다. (담당자는 앱에서도 보낸다)
-var INPUT_HEADERS = ['랜딩링크', '목적', '타겟팅', '담당자'];
+// URL유형은 UTM 빌더가 적는다 — 'FM(라이브예고)' 로 적힌 줄만 FM(라이브예고) 칸을 채운다.
+var INPUT_HEADERS = ['랜딩링크', '목적', '타겟팅', '담당자', 'URL유형'];
+var LIVE_PREVIEW_TYPE = 'FM(라이브예고)';
 var FORMULA_HEADERS = ['LINK(GA)', 'NT(일반)', 'NT(쇼핑스토리)', 'FM(쇼핑라이브)', 'FM(라이브예고)',
   '캠페인명', '광고그룹명', '광고명'];
 
@@ -515,8 +517,8 @@ function colLetter_(index) {
 //   NT(쇼핑스토리) = 랜딩링크 &nt_source · nt_medium · nt_detail  ← 파라미터가 이미 붙은 주소 뒤에 잇는다
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
 //   FM(라이브예고) = 예고 주소(LIVE_PREVIEW_BASE) + 랜딩링크 ?fm · sn · ea
-//                  랜딩링크가 라이브 번호(또는 예고 주소)일 때만 — UTM 빌더에서 라이브예고로 만든 줄이다.
-//                  랜딩링크가 비었거나 다른 주소면 비운다 (예고 주소만 덩그러니 들어가지 않게)
+//                  UTM 빌더에서 라이브예고로 만든 줄(URL유형 = FM(라이브예고))만 채운다.
+//                  표시가 없는 옛 줄은 랜딩링크가 라이브 번호 · 예고 주소일 때만 채운다.
 //   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
 //   광고그룹명    = [행사명]_타겟팅_매출채널              ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
 //   광고명        = 행사일자 _ 제품코드 _ 파일명 _ 타겟팅 _ 담당자 (= utm_content)
@@ -573,8 +575,10 @@ function utmFormulas_(map, row) {
   var head = 'IF(' + url + '="","?",' + url + '&IF(ISNUMBER(FIND("?",' + url + ')),"&","?"))';
   // 라이브예고 — 예고 주소 뒤에 랜딩링크(앞에 붙은 예고 주소 · 슬래시는 뗀다)를 잇는다
   var liveTail = 'REGEXREPLACE(' + url + '&"","^(https?://view[.]shoppinglive[.]naver[.]com/lives/|/+)","")';
-  // 랜딩링크가 예고 주소 · 라이브 번호(숫자)로 시작할 때만 라이브예고 줄이다
-  var isLive = 'REGEXMATCH(' + url + '&"","^(https?://view[.]shoppinglive[.]naver[.]com/lives/|/*[0-9])")';
+  // 빌더가 URL유형에 라이브예고라고 적었거나, 랜딩링크가 예고 주소 · 라이브 번호로 시작하면 라이브예고 줄이다
+  var urlType = map['URL유형'] ? cell('URL유형') : '""';
+  var isLive = 'OR(TRIM(' + urlType + '&"")="' + LIVE_PREVIEW_TYPE + '",REGEXMATCH(' + url
+    + '&"","^(https?://view[.]shoppinglive[.]naver[.]com/lives/|/*[0-9])"))';
   var liveHead ='"' + LIVE_PREVIEW_BASE + '"&' + liveTail + '&IF(ISNUMBER(FIND("?",' + url + ')),"&","?")';
 
   return [

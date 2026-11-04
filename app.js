@@ -7700,6 +7700,8 @@ if (utmBuilder) {
     { key: 'owner', label: '담당자' },
     { key: 'url', label: '랜딩링크' },
     { key: 'purposeCode', label: '목적' },
+    // 시트가 FM(라이브예고) 칸을 채울지 이 값으로 가린다 (라이브예고로 만든 줄만 채운다)
+    { key: 'urlType', label: 'URL유형' },
   ];
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -8218,6 +8220,7 @@ if (utmBuilder) {
         url: state.url,
         campaign: finalNameOf(filename),
         type: found?.type || '',
+        urlType: state.urlType,
         createdAt: new Date().toISOString(),
         sent: false,
       };
@@ -8281,6 +8284,8 @@ if (utmBuilder) {
     owner: entry.owner || '',
     url: entry.url || '',
     purposeCode: purposeCode(entry.purpose),
+    // 줄을 넣을 때 고른 URL 유형 (예전 줄은 지금 고른 유형으로 본다)
+    urlType: (URL_TYPES.find(([value]) => value === (entry.urlType || state.urlType)) || [])[1] || '',
   });
 
   // 파트마다 탭이 달라 파트별로 나눠 보낸다. UTM 값은 시트가 다시 만든다.
