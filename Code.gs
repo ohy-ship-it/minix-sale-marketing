@@ -15,10 +15,13 @@ var FALLBACK_COLUMNS = [
 // 파일명 뒤에 붙는 열. utm-builder 시트와 같은 차례로 둔다.
 //   url → LINK(GA) · NT · FM → 캠페인명 · 광고그룹명 · 광고명 → utm_*
 // 랜딩링크 · 목적 · 타겟팅 · 담당자는 사람이 채우는 칸이다. (담당자는 앱에서도 보낸다)
-// URL유형은 UTM 빌더가 적는다 — 'FM(라이브예고)' 로 적힌 줄만 FM(라이브예고) 칸을 채운다.
+// URL유형은 UTM 빌더가 적는다 — 'FM(라이브예고)' 로 적힌 줄만 워크스페이스 전용 칸을 채운다.
 var INPUT_HEADERS = ['랜딩링크', '목적', '타겟팅', '담당자', 'URL유형'];
 var LIVE_PREVIEW_TYPE = 'FM(라이브예고)';
-var FORMULA_HEADERS = ['LINK(GA)', 'NT(일반)', 'NT(쇼핑스토리)', 'FM(쇼핑라이브)', 'FM(라이브예고)',
+// FM(라이브예고) 는 예고 주소(http~) 없이 랜딩링크 뒤에 파라미터만 잇는다.
+// 예고 주소까지 붙인 완성 링크는 워크스페이스 전용 칸에 따로 둔다.
+var LIVE_PREVIEW_WS = 'FM(라이브예고)_워크스페이스';
+var FORMULA_HEADERS = ['LINK(GA)', 'NT(일반)', 'NT(쇼핑스토리)', 'FM(쇼핑라이브)', 'FM(라이브예고)', LIVE_PREVIEW_WS,
   '캠페인명', '광고그룹명', '광고명'];
 
 // 라이브예고는 쇼핑라이브 예고 페이지 주소로 늘 시작한다 — 랜딩링크에는 그 뒤 토막(라이브 번호)만 적는다.
@@ -323,13 +326,13 @@ function fillAllUtm() {
   return fixed;
 }
 
-/* FM(라이브예고) 칸만 채운다. '전체 행 다시 계산' 은 광고명 · 링크까지 모두 다시 써서,
-   규칙이 바뀐 뒤(광고명에 타겟팅)에는 이미 집행 중인 옛 줄의 광고명이 바뀐다.
-   새로 생긴 이 칸만 채울 때는 이걸 쓴다. */
+/* FM(라이브예고) 칸 · 워크스페이스 전용 칸만 채운다. '전체 행 다시 계산' 은 광고명 · 링크까지
+   모두 다시 써서, 규칙이 바뀐 뒤(광고명에 타겟팅)에는 이미 집행 중인 옛 줄의 광고명이 바뀐다.
+   이 두 칸만 채울 때는 이걸 쓴다. */
 function fillLivePreview() {
   var book = SpreadsheetApp.openById(SHEET_ID);
   ensureConfigSheet_(book);
-  var at = FORMULA_HEADERS.indexOf('FM(라이브예고)');
+  var labels = ['FM(라이브예고)', LIVE_PREVIEW_WS];
   var filled = 0;
   book.getSheets().forEach(function (sheet) {
     if (String(sheet.getName()).indexOf(TND_FLAT_PREFIX) === 0 || !isPartSheet_(sheet)) return;
@@ -337,15 +340,20 @@ function fillLivePreview() {
     var last = sheet.getLastRow();
     if (last < 2 || !hasSources_(map)) return;
     var names = sheet.getRange(2, map['파일명'], last - 1, 1).getValues();
-    var grid = names.map(function (line, i) {
+    var rows = names.map(function (line, i) {
       var name = String(line[0]).trim();
-      if (name === '' || name.indexOf(VERTICAL_MARK) >= 0) return [''];
+      if (name === '' || name.indexOf(VERTICAL_MARK) >= 0) return null;
       filled += 1;
-      return [utmFormulas_(map, i + 2)[at]];
+      return utmFormulas_(map, i + 2);
     });
-    sheet.getRange(2, map['FM(라이브예고)'], grid.length, 1).setFormulas(grid);
+    labels.forEach(function (label) {
+      var at = FORMULA_HEADERS.indexOf(label);
+      sheet.getRange(2, map[label], rows.length, 1).setFormulas(rows.map(function (one) {
+        return [one ? one[at] : ''];
+      }));
+    });
   });
-  var message = 'FM(라이브예고) 칸을 ' + filled + '줄 채웠습니다 (다른 칸은 그대로 둡니다).';
+  var message = 'FM(라이브예고) · 워크스페이스 칸을 ' + filled + '줄 채웠습니다 (다른 칸은 그대로 둡니다).';
   Logger.log(message);
   try { SpreadsheetApp.getUi().alert(message); } catch (ignore) { /* 로그로만 */ }
   return message;
@@ -516,9 +524,9 @@ function colLetter_(index) {
 //   NT(일반)      = 랜딩링크 ?nt_source(소스_미디엄) · nt_medium(광고명)
 //   NT(쇼핑스토리) = 랜딩링크 &nt_source · nt_medium · nt_detail  ← 파라미터가 이미 붙은 주소 뒤에 잇는다
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
-//   FM(라이브예고) = 예고 주소(LIVE_PREVIEW_BASE) + 랜딩링크 ?fm · sn · ea
+//   FM(라이브예고) = 랜딩링크(라이브 번호) ?fm · sn · ea   ← 예고 주소(http~)는 붙이지 않는다
+//   FM(라이브예고)_워크스페이스 = 예고 주소(LIVE_PREVIEW_BASE) + 위와 같은 꼬리
 //                  워크스페이스 UTM 빌더에서 라이브예고로 만든 줄(URL유형 = FM(라이브예고))만 채운다.
-//                  그 밖의 줄(시트에서 손으로 적은 줄 · 다른 유형으로 만든 줄)은 비운다.
 //   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
 //   광고그룹명    = [행사명]_타겟팅_매출채널              ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
 //   광고명        = 행사일자 _ 제품코드 _ 파일명 _ 타겟팅 _ 담당자 (= utm_content)
@@ -578,7 +586,8 @@ function utmFormulas_(map, row) {
   // 워크스페이스 UTM 빌더가 URL유형에 라이브예고라고 적은 줄만 라이브예고 줄이다 (그 밖의 줄은 빈칸)
   var urlType = map['URL유형'] ? cell('URL유형') : '""';
   var isLive = 'TRIM(' + urlType + '&"")="' + LIVE_PREVIEW_TYPE + '"';
-  var liveHead ='"' + LIVE_PREVIEW_BASE + '"&' + liveTail + '&IF(ISNUMBER(FIND("?",' + url + ')),"&","?")';
+  var liveJoin = '&IF(ISNUMBER(FIND("?",' + url + ')),"&","?")';
+  var liveParams = 'TEXTJOIN("&",TRUE,' + param('fm', source) + ',' + param('sn', medium) + ',' + param('ea', content) + ')';
 
   return [
     '=IF(OR(' + url + '="",' + source + '=""),"",' + head + '&TEXTJOIN("&",TRUE,'
@@ -590,8 +599,9 @@ function utmFormulas_(map, row) {
       + param('nt_source', source) + ',' + param('nt_medium', medium) + ',' + param('nt_detail', content) + '))',
     '=IF(' + source + '="","",' + head + '&TEXTJOIN("&",TRUE,'
       + param('fm', source) + ',' + param('sn', medium) + ',' + param('ea', content) + '))',
-    '=IF(OR(' + source + '="",NOT(' + isLive + ')),"",' + liveHead + '&TEXTJOIN("&",TRUE,'
-      + param('fm', source) + ',' + param('sn', medium) + ',' + param('ea', content) + '))',
+    '=IF(' + source + '="","",' + liveTail + liveJoin + '&' + liveParams + ')',
+    '=IF(OR(' + source + '="",NOT(' + isLive + ')),"","' + LIVE_PREVIEW_BASE + '"&' + liveTail + liveJoin
+      + '&' + liveParams + ')',
     '=IF(' + source + '="","",TEXTJOIN("_",TRUE,' + source + ',' + productFull + ',' + campaign + '))',
     '=IF(TEXTJOIN("",TRUE,' + promo + ',' + age + ',' + targeting + ',' + sales + ')="","",'
       + '"["&' + promo + '&"]"&' + age + '&"_"&' + targeting + '&"_"&' + sales + ')',
