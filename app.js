@@ -182,6 +182,19 @@ if (creativeBoard) {
     } catch { return []; }
   };
   const knownWrite = (ids) => { try { localStorage.setItem(KNOWN_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ } };
+  /* 카드도 같은 셈이다 — 시트에서 받은 적 있는 카드 ID. 서버는 여기에 없는 카드(이 화면이
+     본 적 없는, 남이 그 뒤에 적은 카드)를 지우지 않고 살려 둔다. */
+  const KNOWN_CARDS_KEY = 'minix-creative-cards-known';
+  const knownCardsRead = () => {
+    try {
+      const kept = JSON.parse(localStorage.getItem(KNOWN_CARDS_KEY) || '[]');
+      return Array.isArray(kept) ? kept : [];
+    } catch { return []; }
+  };
+  const knownCardsWrite = (list) => {
+    const ids = list.flatMap((one) => one.rows.map((row) => row.id));
+    try { localStorage.setItem(KNOWN_CARDS_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ }
+  };
   const weekCache = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks)); } catch { /* 거들기다 */ } };
 
   /* 시트 것으로 바꿔 그리기 **직전의 모습**을 한 벌 남겨 둔다.
@@ -199,10 +212,16 @@ if (creativeBoard) {
 
   const sendWeeks = () => {
     // base = 이 화면이 아는 주차 ID. 시트에만 있고 여기에도 없는 주차는 서버가 살려 둔다.
-    const mine = askSheet({ action: 'weeksPut', weeks: weeks, base: knownRead(), by: '' })
-      .then(() => {
-        knownWrite(weeks.map((one) => one.id));   // 시트가 이제 이 주차들을 안다
-        weekNote = `저장됨 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
+    // baseCards = 이 화면이 아는 카드 ID. 남이 그 뒤에 적은 카드는 서버가 살려 둔다.
+    const sent = weeks;
+    const mine = askSheet({ action: 'weeksPut', weeks: sent, base: knownRead(), baseCards: knownCardsRead(), by: '' })
+      .then((body) => {
+        knownWrite(sent.map((one) => one.id));   // 시트가 이제 이 주차들을 안다
+        knownCardsWrite(sent);
+        const at = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+        weekNote = body && body.revived
+          ? `저장됨 ${at} — 다른 사람이 적은 카드 ${body.revived}장을 지키고 같이 저장했습니다 (새로고침하면 보입니다)`
+          : `저장됨 ${at}`;
       })
       .catch((reason) => { weekNote = `시트에 저장 못 함 — ${reason.message} (이 브라우저에는 남아 있습니다)`; })
       .then(() => {
@@ -282,6 +301,7 @@ if (creativeBoard) {
       }
       weekCache();
       knownWrite(got.map((one) => one.id));
+      knownCardsWrite(got);
       if (!push && !told) weekNote = weeks.length ? '' : '시트에 주차가 없습니다';
       if (push) save();               // 올려 준다 (save 가 알림도 갈아 준다)
       if (weekList && !weekList.hidden) renderWeekList();

@@ -728,6 +728,43 @@ function weeksGet_() {
   };
 }
 
+/* 주차 안의 카드도 주차와 같은 셈으로 지킨다.
+   keepUnseen_ 은 주차 통째만 본다 — 같은 주차를 열어 둔 옛 화면이 저장하면, 그 뒤에 남이
+   적은 카드가 말없이 사라졌다 (11월 1주차 더 시프트 카드 5장이 그렇게 날아갔다).
+   baseCards = 그 화면이 시트에서 받은 적 있는 카드 ID. 시트에는 있는데 보낸 목록에도
+   baseCards 에도 없는 카드는 그 화면이 본 적 없는 카드라, 원래 주차 끝에 다시 붙인다.
+   baseCards 를 안 보내는 옛 화면은 카드를 하나도 못 지운다 — 안전한 쪽이다.
+   돌려주는 값은 살린 카드 수. */
+function weeksKeepCards_(sheet, weeks, baseCards) {
+  var last = sheet.getLastRow();
+  if (last < 2) return 0;
+  var known = {};
+  (baseCards || []).forEach(function (id) { known[String(id)] = true; });
+  weeks.forEach(function (one) {
+    (one.rows || []).forEach(function (card) { known[String(card && card.id)] = true; });
+  });
+
+  var byWeek = {};
+  weeks.forEach(function (one) { byWeek[String(one.id || '')] = one; });
+
+  var revived = 0;
+  sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).getValues().forEach(function (line) {
+    var week = byWeek[String(line[1] || '').trim()];
+    if (!week) return;   // 보내지 않은 주차는 keepUnseen_ 이 맡는다
+    var cards = [];
+    try { cards = JSON.parse(String(line[5] || '[]')) || []; } catch (error) { cards = []; }
+    cards.forEach(function (card) {
+      var id = String((card && card.id) || '');
+      if (!id || known[id]) return;
+      if (!week.rows) week.rows = [];
+      week.rows.push(card);
+      known[id] = true;
+      revived += 1;
+    });
+  });
+  return revived;
+}
+
 // 화면이 가진 목록 전체를 그대로 받아 시트를 그 모양으로 맞춘다 (차례까지 그대로).
 // 여러 사람이 같은 순간에 저장하면 뒤에 온 것이 이긴다 — 자물쇠로 겹쳐 쓰는 것만 막는다.
 function weeksPut_(payload) {
@@ -740,6 +777,8 @@ function weeksPut_(payload) {
   lock.waitLock(20000);
   try {
     var sheet = weeksSheet_();
+    // 이 화면이 본 적 없는 카드도 지우지 않고 그 주차에 살려 둔다 (아래 weeksKeepCards_)
+    var revived = weeksKeepCards_(sheet, weeks, payload && payload.baseCards);
     // 이 화면이 본 적 없는 주차는 지우지 않고 뒤에 살려 둔다
     var kept = keepUnseen_(sheet, WEEKS_HEADERS.length, 2, weeks, payload && payload.base);
     var last = sheet.getLastRow();
@@ -763,7 +802,8 @@ function weeksPut_(payload) {
     if (kept.length) {
       sheet.getRange(sheet.getLastRow() + 1, 1, kept.length, WEEKS_HEADERS.length).setValues(kept);
     }
-    return { ok: true, saved: weeks.length, kept: kept.length, savedAt: new Date().toISOString() };
+    return { ok: true, saved: weeks.length, kept: kept.length, revived: revived,
+      savedAt: new Date().toISOString() };
   } finally {
     lock.releaseLock();
   }
