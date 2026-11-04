@@ -505,6 +505,8 @@ function colLetter_(index) {
 //   NT(쇼핑스토리) = 랜딩링크 &nt_source · nt_medium · nt_detail  ← 파라미터가 이미 붙은 주소 뒤에 잇는다
 //   FM(쇼핑라이브) = 랜딩링크 ?fm · sn · ea               ← 랜딩링크가 비면 파라미터만 남는다
 //   FM(라이브예고) = 예고 주소(LIVE_PREVIEW_BASE) + 랜딩링크 ?fm · sn · ea
+//                  랜딩링크가 라이브 번호(또는 예고 주소)일 때만 — UTM 빌더에서 라이브예고로 만든 줄이다.
+//                  랜딩링크가 비었거나 다른 주소면 비운다 (예고 주소만 덩그러니 들어가지 않게)
 //   캠페인명      = 소스_제품정식명_목적(영문)           ← utm-builder 캠페인 열과 같은 규칙
 //   광고그룹명    = [행사명]_타겟팅_매출채널              ← 빈 칸도 자리를 지킨다 ([a]_none_naver)
 //   광고명        = 행사일자 _ 제품코드 _ 파일명 _ 타겟팅 _ 담당자 (= utm_content)
@@ -561,7 +563,9 @@ function utmFormulas_(map, row) {
   var head = 'IF(' + url + '="","?",' + url + '&IF(ISNUMBER(FIND("?",' + url + ')),"&","?"))';
   // 라이브예고 — 예고 주소 뒤에 랜딩링크(앞에 붙은 예고 주소 · 슬래시는 뗀다)를 잇는다
   var liveTail = 'REGEXREPLACE(' + url + '&"","^(https?://view[.]shoppinglive[.]naver[.]com/lives/|/+)","")';
-  var liveHead = '"' + LIVE_PREVIEW_BASE + '"&' + liveTail + '&IF(ISNUMBER(FIND("?",' + url + ')),"&","?")';
+  // 랜딩링크가 예고 주소 · 라이브 번호(숫자)로 시작할 때만 라이브예고 줄이다
+  var isLive = 'REGEXMATCH(' + url + '&"","^(https?://view[.]shoppinglive[.]naver[.]com/lives/|/*[0-9])")';
+  var liveHead ='"' + LIVE_PREVIEW_BASE + '"&' + liveTail + '&IF(ISNUMBER(FIND("?",' + url + ')),"&","?")';
 
   return [
     '=IF(OR(' + url + '="",' + source + '=""),"",' + head + '&TEXTJOIN("&",TRUE,'
@@ -573,7 +577,7 @@ function utmFormulas_(map, row) {
       + param('nt_source', source) + ',' + param('nt_medium', medium) + ',' + param('nt_detail', content) + '))',
     '=IF(' + source + '="","",' + head + '&TEXTJOIN("&",TRUE,'
       + param('fm', source) + ',' + param('sn', medium) + ',' + param('ea', content) + '))',
-    '=IF(' + source + '="","",' + liveHead + '&TEXTJOIN("&",TRUE,'
+    '=IF(OR(' + source + '="",NOT(' + isLive + ')),"",' + liveHead + '&TEXTJOIN("&",TRUE,'
       + param('fm', source) + ',' + param('sn', medium) + ',' + param('ea', content) + '))',
     '=IF(' + source + '="","",TEXTJOIN("_",TRUE,' + source + ',' + productFull + ',' + campaign + '))',
     '=IF(TEXTJOIN("",TRUE,' + promo + ',' + age + ',' + targeting + ',' + sales + ')="","",'
