@@ -2803,9 +2803,21 @@ function metaMake_(payload) {
   /* 캠페인에 카탈로그가 걸려 있어도 여기서 멈추지 않는다 — 옆 광고세트의 제품 세트를
      물려받아 넣어 본다. 그래도 안 되면 아래에서 까닭을 말하고 멈춘다. */
 
+  /* 이미 있는 캠페인이 **캠페인 예산(CBO)** 이면 광고세트에 예산을 넣으면 안 된다 —
+     메타가 '광고 세트 예산 또는 캠페인 예산만 설정할 수 있습니다' 로 되돌려준다. */
+  var campaignBudget = '';
+  if (campaignId) {
+    try {
+      var cb = graph_('/' + campaignId, { fields: 'daily_budget,lifetime_budget' });
+      if (Number(cb.daily_budget) > 0) campaignBudget = '일예산 ' + cb.daily_budget + '원';
+      else if (Number(cb.lifetime_budget) > 0) campaignBudget = '총예산 ' + cb.lifetime_budget + '원';
+    } catch (error) { /* 못 읽으면 아래에서 메타 답을 보고 한 번 더 해 본다 */ }
+  }
+
   if (campaignId) {
     log.push('캠페인은 이미 있는 것을 씁니다 (' + campaignId + ')'
-      + (campaignCatalog ? ' — 카탈로그가 걸린 캠페인입니다' : ''));
+      + (campaignCatalog ? ' — 카탈로그가 걸린 캠페인입니다' : '')
+      + (campaignBudget ? ' — 캠페인 예산(' + campaignBudget + ')이라 광고세트 예산은 넣지 않습니다' : ''));
   } else {
     var made = graphPost_('/' + account + '/campaigns', {
       name: campaignName, objective: objective, status: 'PAUSED',
@@ -2935,7 +2947,10 @@ function metaMake_(payload) {
     // 글자로 굳혀서 넣는다 (메타는 유닉스 초를 받는다).
     if (start > 0) params.start_time = String(start);
     if (end > 0) params.end_time = String(end);
-    params[budgetType === 'lifetime' ? 'lifetime_budget' : 'daily_budget'] = budget;
+    var budgetKey = budgetType === 'lifetime' ? 'lifetime_budget' : 'daily_budget';
+    // 캠페인 예산이면 예산과 입찰 전략은 캠페인 것을 따른다
+    if (campaignBudget) delete params.bid_strategy;
+    else params[budgetKey] = budget;
 
     /* 픽셀 · 제품 세트 때문에 막히면 **다음 후보로 다시 해 본다.**
        실패한 POST 는 아무것도 만들지 않으므로 다시 보내도 광고세트가 겹치지 않는다.
@@ -2952,6 +2967,14 @@ function metaMake_(payload) {
         usedPixel = tries[t];
       } catch (error) {
         trouble = String((error && error.message) || error);
+        // 캠페인 예산을 못 읽었는데 메타가 예산이 겹친다고 하면 광고세트 예산을 빼고 같은 후보로 다시
+        if (!campaignBudget && /캠페인 예산|campaign budget/i.test(trouble)) {
+          campaignBudget = '캠페인 예산';
+          delete params[budgetKey];
+          delete params.bid_strategy;
+          t -= 1; tried -= 1;
+          continue;
+        }
         if (!/픽셀|pixel|제품 세트|product set/i.test(trouble)) break;
       }
     }
@@ -2977,7 +3000,8 @@ function metaMake_(payload) {
     adsetId = String(group.id || '');
     if (!adsetId) throw new Error('광고세트를 만들었는데 번호를 못 받았습니다.');
     log.push('광고세트를 만들었습니다 (' + adsetId + ' · '
-      + (budgetType === 'lifetime' ? '총예산 ' : '일예산 ') + budget + '원)');
+      + (campaignBudget ? '예산은 캠페인 것(' + campaignBudget + ')을 씁니다'
+        : (budgetType === 'lifetime' ? '총예산 ' : '일예산 ') + budget + '원') + ')');
   }
 
   // ③ 이미 있는 광고 이름 — 같은 이름으로 두 번 만들지 않게 화면에 알려 준다
