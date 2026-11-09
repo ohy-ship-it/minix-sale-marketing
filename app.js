@@ -3863,7 +3863,7 @@ if (contentSchedule) {
     }
 
     return `<div class="sup-cal-head">
-        <b>${year}년 ${month}월</b>
+        ${monthPick(false)}
         <span class="sup-nav">
           <button type="button" class="sup-arrow" data-move="-1" aria-label="지난 달"><i data-lucide="chevron-left"></i></button>
           <button type="button" class="sup-today" data-move="0">오늘</button>
@@ -3891,10 +3891,45 @@ if (contentSchedule) {
     ['owners', '담당자', 'list'],
   ];
 
-  const table = () => `<div class="tool-table-wrap">
+  /* 달 고르개 — 퍼포먼스일정처럼 년 · 월을 골라 바로 건너뛴다 (◀ 오늘 ▶ 은 그대로 둔다).
+     표에서는 '전체' 도 고를 수 있다 — 표는 고치는 자리라 달을 넘나들며 볼 일이 있다. */
+  let tableAll = false;
+  const yearOptions = () => {
+    const years = rows.flatMap((row) => [row.hand, row.take]).filter(Boolean).map((day) => Number(day.slice(0, 4)));
+    years.push(Number(today.slice(0, 4)), Number(cursor.slice(0, 4)));
+    const list = [];
+    for (let year = Math.min(...years) - 1; year <= Math.max(...years) + 1; year += 1) list.push(year);
+    return list;
+  };
+  const monthPick = (allowAll) => `<span class="cal-pick">
+      <select class="cal-year" data-jump="year" aria-label="년도">
+        ${yearOptions().map((value) => `<option value="${value}"${String(value) === cursor.slice(0, 4) ? ' selected' : ''}>${value}년</option>`).join('')}
+      </select>
+      <select class="cal-month" data-jump="month" aria-label="월">
+        ${allowAll ? `<option value=""${tableAll ? ' selected' : ''}>전체</option>` : ''}
+        ${Array.from({ length: 12 }, (unused, i) => i + 1).map((value) => `<option value="${value}"${!(allowAll && tableAll) && value === Number(cursor.slice(5, 7)) ? ' selected' : ''}>${value}월</option>`).join('')}
+      </select>
+    </span>`;
+
+  // 표에 보일 줄 — 전달 일자 · 수급 일자 중 하나라도 그 달이면 보인다 (날짜가 없는 줄도 놓치지 않게 보인다)
+  const tableRows = () => (tableAll ? visibleRows() : visibleRows().filter((row) => {
+    const days = [row.hand, row.take].filter(Boolean);
+    return !days.length || days.some((day) => day.slice(0, 7) === cursor);
+  }));
+
+  const table = () => `<div class="sup-cal-head">
+      ${monthPick(true)}
+      <span class="sup-nav">
+        <button type="button" class="sup-arrow" data-move="-1" aria-label="지난 달"><i data-lucide="chevron-left"></i></button>
+        <button type="button" class="sup-today" data-move="0">오늘</button>
+        <button type="button" class="sup-arrow" data-move="1" aria-label="다음 달"><i data-lucide="chevron-right"></i></button>
+      </span>
+      <small>${tableRows().length}개${tableAll ? '' : ' · 날짜가 비어 있는 줄도 함께 보입니다'}</small>
+    </div>
+    <div class="tool-table-wrap">
       <table class="tool-table sup-table">
         <thead><tr>${COLUMNS.map(([, label]) => `<th>${label}</th>`).join('')}<th>색</th><th></th></tr></thead>
-        <tbody>${visibleRows().map((row) => `<tr data-id="${escapeHtml(row.id)}">
+        <tbody>${tableRows().map((row) => `<tr data-id="${escapeHtml(row.id)}">
           ${COLUMNS.map(([key, , kind]) => `<td>${kind === 'date'
             ? `<input type="date" data-cell="${key}" value="${escapeHtml(row[key])}">`
             : `<input type="text" data-cell="${key}" value="${escapeHtml(kind === 'list' ? row[key].join(', ') : row[key])}"${kind === 'list' ? ' placeholder="쉼표로 여러 개"' : ''}>`}</td>`).join('')}
@@ -4025,6 +4060,7 @@ if (contentSchedule) {
     const move = event.target.closest('[data-move]');
     if (move) {
       const step = Number(move.dataset.move);
+      tableAll = false;              // 달을 넘기면 '전체' 에서 그 달 보기로 돌아온다
       if (!step) cursor = today.slice(0, 7);
       else {
         const [year, month] = cursor.split('-').map(Number);
@@ -4073,6 +4109,16 @@ if (contentSchedule) {
     takeCell(event.target);
   });
   contentSchedule.addEventListener('change', (event) => {
+    const jump = event.target.closest('[data-jump]');
+    if (jump) {
+      if (jump.dataset.jump === 'month' && !jump.value) { tableAll = true; render(); return; }
+      tableAll = false;
+      const year = jump.dataset.jump === 'year' ? jump.value : cursor.slice(0, 4);
+      const month = jump.dataset.jump === 'month' ? jump.value : cursor.slice(5, 7);
+      cursor = `${year}-${pad(Number(month))}`;
+      render();
+      return;
+    }
     if (takeCell(event.target) && event.target.dataset.cell === 'color') render();
   });
 
