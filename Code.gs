@@ -7560,7 +7560,7 @@ function bsInspectRemove() {
 }
 
 // ── 메타 일일성과 슬랙 알림 ─────────────────────────────────────────
-// 어제 하루 광고세트별 지출을 매일 아침 슬랙으로 보낸다 (캠페인명 · 광고세트명 · 지출만).
+// 오늘(보내는 날) 광고세트별 지출을 매일 아침 슬랙으로 보낸다 — 보내는 시각까지 쓴 금액 (캠페인명 · 광고세트명 · 지출만).
 // 예전에는 claude.ai 클라우드 루틴이 했는데, 그 실행 환경이 바깥 연결을 막아 9월 말부터
 // 조용히 실패했고 토큰도 프롬프트에 적어 둬야 했다. 그래서 여기로 옮겼다.
 // 토큰은 META_ACCESS_TOKEN, 웹훅은 스크립트 속성 SLACK_WEBHOOK_META_DAILY 에서 읽는다.
@@ -7617,7 +7617,7 @@ function metaDailyText_(day) {
     rows = rows.filter(function (row) { return Number(row.spend) > 0; })
       .sort(function (a, b) { return Number(b.spend) - Number(a.spend); });
     if (!rows.length) {
-      parts.push('*[' + label + ']* 어제 집행 내역 없음 (지출 0)');
+      parts.push('*[' + label + ']* 집행 내역 없음 (지출 0)');
       return;
     }
     var mine = 0;
@@ -7636,10 +7636,10 @@ function metaDailyText_(day) {
   return parts.join('\n\n');
 }
 
-// day 를 안 주면 어제(한국 시간)
+// day 를 안 주면 오늘(한국 시간)
 function metaDailyPost_(day) {
   var hook = metaDailyHook_();
-  var when = day || Utilities.formatDate(new Date(Date.now() - 86400000), 'Asia/Seoul', 'yyyy-MM-dd');
+  var when = day || Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd');
   var response = UrlFetchApp.fetch(hook, { method: 'post', contentType: 'application/json',
     payload: JSON.stringify({ text: metaDailyText_(when) }), muteHttpExceptions: true });
   if (response.getResponseCode() >= 400) {
@@ -7664,16 +7664,16 @@ function metaDailyRun(event) {
   }
 }
 
-// 시트 메뉴 '지금 한 번 보내기' — 날짜를 비우면 어제 것을 보낸다 (공휴일이어도 보낸다)
+// 시트 메뉴 '지금 한 번 보내기' — 날짜를 비우면 오늘 것을 보낸다 (공휴일이어도 보낸다)
 function metaDailySend() {
   var day = '';
   try {
     var ui = SpreadsheetApp.getUi();
-    var answer = ui.prompt('메타 일일성과 보내기', '보낼 날짜 (YYYY-MM-DD). 비우면 어제 것을 보냅니다.',
+    var answer = ui.prompt('메타 일일성과 보내기', '보낼 날짜 (YYYY-MM-DD). 비우면 오늘 것을 보냅니다.',
       ui.ButtonSet.OK_CANCEL);
     if (answer.getSelectedButton() !== ui.Button.OK) return '';
     day = (answer.getResponseText().match(/\d{4}-\d{2}-\d{2}/) || [''])[0];
-  } catch (ignore) { /* 편집기에서 돌리면 어제 것 */ }
+  } catch (ignore) { /* 편집기에서 돌리면 오늘 것 */ }
   try {
     return bsInspectAlert_(metaDailyPost_(day));
   } catch (error) {
@@ -7706,7 +7706,7 @@ function metaDailyInstall() {
       + '  트리거 유형 : 일 단위 타이머 · 오전 10시~11시');
   }
   return bsInspectAlert_('메타 일일성과 슬랙 알림을 켰습니다.' + BR2
-    + '한국 시간 매일 오전 ' + META_DAILY_HOUR + '시쯤 어제 광고세트별 지출을 보냅니다 (공휴일은 건너뜁니다).');
+    + '한국 시간 매일 오전 ' + META_DAILY_HOUR + '시쯤 오늘(보내는 시각까지) 광고세트별 지출을 보냅니다 (공휴일은 건너뜁니다).');
 }
 
 function metaDailyRemove() {
