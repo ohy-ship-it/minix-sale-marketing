@@ -3115,6 +3115,117 @@ if (filenameTool) {
     else render();
   };
 
+  /* ── 퍼포먼스일정에서 불러오기 ─────────────────────────────────────
+     달을 고르면 그 달에 걸친 일정을 드롭다운으로 보여 주고, 고르면 행사일자(시작일) ·
+     행사채널 · 상품명을 채운다. 행사명은 늘 그렇듯 날짜 · 채널로 다시 만든다.
+     일정 쪽 이름은 이 화면 목록과 표기가 조금 다르다 ('더플렌더 MAX' · '마켓컬리') —
+     띄어쓰기 · 대소문자를 지우고 견주고, 그래도 다른 것은 아래 짝으로 잇는다.
+     짝이 없으면 그 칸은 비워 둔다 (엉뚱한 값을 넣는 것보다 낫다).
+     매체는 채우지 않는다 — 일정의 매체(브검 · 페이드 · CRM)는 이 화면의 지면 목록과 다르다. */
+  const SCHED_CACHE_KEY = 'minix-brand-schedule-v1';     // 퍼포먼스일정 화면이 담아 두는 사본
+  const SCHED_CHANNEL_ALIAS = { '마켓컬리': '컬리', '지마켓': 'G마켓', '카톡딜': '카카오' };
+  const SCHED_SKU_ALIAS = { '에어드라이': '더에어드라이' };
+  const flat = (text) => String(text || '').toLowerCase().replace(/\s+/g, '');
+  const matchIn = (list, name, alias) => {
+    const want = alias[String(name || '').trim()] || name;
+    return list.find((one) => flat(one) === flat(want)) || '';
+  };
+  const schedListOf = (value) => (Array.isArray(value) ? value : String(value || '').split(','))
+    .map((one) => String(one).trim()).filter(Boolean);
+  const schedRow = (row = {}) => ({
+    id: String(row.id || ''), name: String(row.name || ''),
+    sku: schedListOf(row.sku), channel: schedListOf(row.channel),
+    start: (row.date && row.date.start) || '', end: (row.date && (row.date.end || row.date.start)) || '',
+  });
+
+  let schedRows = null;          // null = 아직 안 받았다
+  let schedState = 'idle';       // idle · loading · done · fail
+  let schedNote = '';
+  try {
+    const kept = JSON.parse(localStorage.getItem(SCHED_CACHE_KEY) || 'null');
+    if (Array.isArray(kept)) schedRows = kept.map(schedRow);
+  } catch { /* 사본이 없으면 시트에서 받는다 */ }
+
+  const pullSchedules = () => {
+    if (schedState === 'loading') return;
+    schedState = 'loading';
+    askSheet({ action: 'scheduleGet' })
+      .then((body) => {
+        schedRows = (body.rows || []).map(schedRow);
+        schedState = 'done';
+        schedNote = '';
+      })
+      .catch((reason) => {
+        schedState = 'fail';
+        schedNote = `퍼포먼스일정을 못 불러왔습니다 — ${reason.message}`;
+      })
+      .then(() => { if (!filenameTool.hidden && !modal.open && !typeOpen) render(); });
+  };
+
+  const schedMonth = () => state.schedMonth || String(state.date || todayIso()).slice(0, 7);
+
+  // 고른 달에 하루라도 걸친 일정 (시작일 차례)
+  const schedOfMonth = () => {
+    const month = schedMonth();
+    const first = `${month}-01`;
+    const last = `${month}-31`;
+    return (schedRows || [])
+      .filter((one) => one.start && one.start <= last && (one.end || one.start) >= first)
+      .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.name.localeCompare(b.name)));
+  };
+
+  const schedLabel = (one) => {
+    const day = (iso) => (iso ? `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}` : '');
+    const span = one.end && one.end !== one.start ? `${day(one.start)}~${day(one.end)}` : day(one.start);
+    const tail = [one.channel.join('·'), one.sku.join('·')].filter(Boolean).join(' / ');
+    return `${span} ${one.name || '(이름 없음)'}${tail ? ` — ${tail}` : ''}`;
+  };
+
+  const schedControl = () => {
+    // 담아 둔 사본이 있어도 화면을 처음 열 때 한 번은 시트에서 새로 받는다 (안 보일 때는 묻지 않는다)
+    if (schedState === 'idle' && !filenameTool.hidden) pullSchedules();
+    const list = schedOfMonth();
+    const waiting = schedRows === null && schedState === 'loading';
+    return `<div class="tool-grid tool-sched">
+        <label>달<input type="month" data-sched-month value="${escapeHtml(schedMonth())}"></label>
+        <label class="tool-wide">퍼포먼스일정에서 불러오기
+          <select data-sched-pick${waiting ? ' disabled' : ''}>
+            <option value="">${waiting ? '불러오는 중…'
+              : list.length ? `일정 ${list.length}개 — 골라서 채우기` : '이 달 일정이 없습니다'}</option>
+            ${list.map((one) => `<option value="${escapeHtml(one.id)}"${one.id === state.schedId ? ' selected' : ''}>${escapeHtml(schedLabel(one))}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      ${schedNote ? `<small class="tool-picks-note">${escapeHtml(schedNote)}</small>` : ''}`;
+  };
+
+  const fillFromSchedule = (id) => {
+    const one = (schedRows || []).find((row) => row.id === id);
+    state.schedId = id;
+    if (!one) { save(); render(); return; }
+    const channel = one.channel.map((name) => matchIn(CHANNELS, name, SCHED_CHANNEL_ALIAS)).find(Boolean) || '';
+    const product = one.sku.map((name) => matchIn(PRODUCTS, name, SCHED_SKU_ALIAS)).find(Boolean) || '';
+    if (one.start) state.date = one.start;
+    state.channel = channel;
+    state.product = product;
+    // 다른 행사를 고른 것이라 손으로 고쳐 둔 행사명도 새로 만든다
+    state.event = '';
+    state.autoEvent = '';
+    syncEvent();
+    const missed = [];
+    if (one.channel.length && !channel) missed.push(`판매채널 '${one.channel.join(', ')}'`);
+    if (one.sku.length && !product) missed.push(`SKU '${one.sku.join(', ')}'`);
+    const many = [];
+    if (one.channel.length > 1 && channel) many.push(`판매채널 ${one.channel.length}개 중 ${channel}`);
+    if (one.sku.length > 1 && product) many.push(`SKU ${one.sku.length}개 중 ${product}`);
+    schedNote = [
+      missed.length ? `${missed.join(' · ')} 는 이 화면 목록에 없어 비워 두었습니다 — 직접 골라 주세요.` : '',
+      many.length ? `${many.join(' · ')} 를 넣었습니다.` : '',
+    ].filter(Boolean).join(' ');
+    save();
+    render();
+  };
+
   const render = () => {
     const code = codeOf(state.type);
     const seq = code ? nextSequence(code) : 0;
@@ -3127,6 +3238,7 @@ if (filenameTool) {
       </div>
 
       <section class="tool-card">
+        ${schedControl()}
         <div class="tool-grid">
           <label>행사일자<input type="date" data-field="date" value="${escapeHtml(state.date)}"></label>
           <label>행사채널<select data-field="channel"><option value=""${state.channel ? '' : ' selected'}>선택 안 함</option>${CHANNELS.map((value) => `<option${value === state.channel ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
@@ -3245,6 +3357,17 @@ if (filenameTool) {
   });
 
   filenameTool.addEventListener('change', (event) => {
+    const month = event.target.closest('[data-sched-month]');
+    if (month) {
+      state.schedMonth = month.value;
+      state.schedId = '';
+      schedNote = '';
+      save();
+      render();
+      return;
+    }
+    const schedPick = event.target.closest('[data-sched-pick]');
+    if (schedPick) return fillFromSchedule(schedPick.value);
     const field = event.target.closest('[data-field]');
     if (!field || (field.tagName !== 'SELECT' && field.type !== 'date' && field.type !== 'checkbox')) return;
     state[field.dataset.field] = field.type === 'checkbox' ? field.checked : field.value;
@@ -3392,6 +3515,12 @@ if (filenameTool) {
   // 처음 열 때도 행사명을 채워 둔다 (날짜는 오늘, 채널은 목록 첫 값이 들어가 있다)
   if (syncEvent()) save();
   render();
+  // 화면을 열 때마다 퍼포먼스일정을 새로 받는다 (그 사이 남이 일정을 더했을 수 있다)
+  new MutationObserver(() => {
+    if (filenameTool.hidden || schedState === 'loading') return;
+    schedState = 'idle';
+    pullSchedules();
+  }).observe(filenameTool, { attributes: true, attributeFilter: ['hidden'] });
   // 시트의 마지막 번호를 미리 받아 둔다 (발번을 기다리지 않게).
   // 화면을 열 때 받는다 — 페이지가 뜨자마자 받으면 다른 화면이 그 뒤에 줄을 선다.
   openViewOnce(filenameTool, pullSeq);
