@@ -4006,7 +4006,7 @@ if (contentSchedule) {
      카드 하나가 일정 한 줄이다. 줄 번호를 'cr-카드ID' 로 두어, 다시 눌러도 겹치지 않고
      이미 넣은 줄은 **수급 일자만** 카드에 맞춘다 — 이 화면에서 고친 전달 일자 · 참고사항 · 색은 그대로 둔다.
      카드에 날짜가 없으면 매체별 전달희망일정 중 가장 이른 날을 쓰고, 그것도 없으면 건너뛴다.
-     매체마다 날이 다르면 참고사항에 매체별 날짜를 적어 둔다. */
+     참고사항에는 아무것도 적지 않는다 (카드 밑에 빨간 글씨로 길게 붙어 보기 어려웠다). */
   const CREATIVE_PREFIX = 'cr-';
   const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 
@@ -4015,16 +4015,16 @@ if (contentSchedule) {
     const main = card.dueDate && isDay(card.dueDate.start) ? card.dueDate.start : '';
     const take = main || dues.map(([, day]) => day).sort()[0] || '';
     if (!take) return null;
-    const odd = dues.filter(([, day]) => day !== take);
-    const parts = ['광고소재 기획', card.event || ''].filter(Boolean);
-    if (odd.length) parts.push(`매체별 수급 ${dues.map(([name, day]) => `${name} ${shortDay(day)}`).join(' · ')}`);
+    // 참고사항은 비워 둔다 — 콘텐츠팀이 적는 칸이다 (예전에는 '광고소재 기획 · 행사명 · 매체별 수급' 을 적었다)
     return {
       id: CREATIVE_PREFIX + card.id,
       name: String(card.name || card.event || '(이름 없음)'),
       sku: listOf(card.sku), media: listOf(card.media), owners: listOf(card.owners),
-      take, note: parts.join(' · '),
+      take,
     };
   };
+  // 예전에 가져오며 저절로 적어 둔 참고사항인가 (사람이 적은 것은 이렇게 시작하지 않는다)
+  const autoNote = (row) => row.id.indexOf(CREATIVE_PREFIX) === 0 && /^광고소재 기획( · |$)/.test(row.note || '');
 
   /* quiet = 화면을 열 때 저절로 도는 것. 바뀐 게 없으면 아무 말도 하지 않는다.
      (버튼을 누른 때는 늘 몇 개를 넣었는지 알려 준다) */
@@ -4047,7 +4047,7 @@ if (contentSchedule) {
           if (!one) { skipped += 1; return; }
           const have = rows.find((row) => row.id === one.id);
           if (!have) {
-            rows.push(normalize({ ...one, hand: '', icon: '', color: '' }));
+            rows.push(normalize({ ...one, hand: '', icon: '', color: '', note: '' }));
             made += 1;
             return;
           }
@@ -4055,13 +4055,15 @@ if (contentSchedule) {
           // 비어 있는 칸만 채운다 (이 화면에서 적은 값은 덮지 않는다)
           if (!have.name) have.name = one.name;
           ['sku', 'media', 'owners'].forEach((key) => { if (!have[key].length) have[key] = one[key]; });
-          if (!have.note) have.note = one.note;
         }));
+        // 예전에 저절로 적어 둔 참고사항을 지운다
+        let cleared = 0;
+        rows.forEach((row) => { if (autoNote(row)) { row.note = ''; cleared += 1; } });
         const said = `광고소재 기획에서 새로 ${made}개 · 수급 일자 바뀐 ${moved}개`
           + (skipped ? ` · 전달희망일정이 없어 건너뛴 카드 ${skipped}개` : '');
         const unified = unifySku();    // 가져온 줄의 SKU 이름도 있던 이름에 맞춘다
-        if (made || moved || unified) save();     // 저장이 끝나면 알림 줄은 '저장됨' 으로 바뀐다
-        if (quiet && !made && !moved) { if (unified) render(); return; }
+        if (made || moved || unified || cleared) save();     // 저장이 끝나면 알림 줄은 '저장됨' 으로 바뀐다
+        if (quiet && !made && !moved) { if (unified || cleared) render(); return; }
         note = said;
         render();
         flashNote(said);
