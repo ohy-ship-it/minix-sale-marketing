@@ -2683,7 +2683,7 @@ if (filenameTool) {
     { key: 'channel', label: '행사채널' },
   ];
 
-  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', medias: [], type: MESSAGE_TYPES[0][0], vertical: false, customTypes: [], customMedia: [], autoEvent: '' };
+  const defaults = { date: todayIso(), channel: CHANNELS[0], product: '', event: '', medias: [], type: MESSAGE_TYPES[0][0], noVertical: false, customTypes: [], customMedia: [], autoEvent: '' };
   let state = { ...defaults };
   let issued = [];
   // 한 번 나간 번호는 목록에서 지워도 다시 쓰지 않는다
@@ -2837,22 +2837,23 @@ if (filenameTool) {
     }));
     issued = [...made, ...issued];
     watermark[code] = Math.max(watermark[code] || 0, seq);
-    if (state.vertical) syncVertical();
+    syncVertical();
     save();
     render();
     scrollToList();
   };
 
-  // 세로형 토글: 켜면 가로 파일명마다 (세로) 를 하나씩 붙이고, 끄면 모두 없앤다
+  /* 세로형은 **메타 줄에만 저절로** 붙는다 — 메타는 피드(가로)와 스토리 · 릴스(세로)를 함께 쓴다.
+     다른 매체 줄에는 붙이지 않는다. [세로형 없음] 을 켜면 모두 뗀다. */
+  const VERTICAL_MEDIA = ['메타'];
+  const wantsVertical = (entry) => !state.noVertical
+    && VERTICAL_MEDIA.indexOf(String(entry.media || '').trim()) >= 0;
   const syncVertical = () => {
-    if (!state.vertical) {
-      issued = issued.filter((entry) => !entry.vertical);
-      return;
-    }
     const next = [];
     issued.forEach((entry) => {
       if (entry.vertical) return;
       next.push(entry);
+      if (!wantsVertical(entry)) return;
       // 매체를 여럿 고르면 파일명이 같은 줄이 여럿이다. 매체까지 보아야 짝이 겹치지 않는다.
       const twin = issued.find((other) => other.vertical
         && other.filename === entry.filename + VERTICAL_SUFFIX
@@ -3234,7 +3235,7 @@ if (filenameTool) {
     filenameTool.innerHTML = `
       <div class="tool-head">
         <h2>광고소재 파일명</h2>
-        <p>행사 정보를 채우고 메시지 유형을 고르면 파일명이 발번됩니다. <b>${escapeHtml(VERTICAL_SUFFIX)}</b> 는 목록에서 <b>세로형 추가</b>를 누를 때만 붙습니다.</p>
+        <p>행사 정보를 채우고 메시지 유형을 고르면 파일명이 발번됩니다. 매체가 <b>메타</b>인 줄에는 <b>${escapeHtml(VERTICAL_SUFFIX)}</b> 파일명이 저절로 함께 나옵니다 (필요 없으면 목록의 <b>세로형 없음</b>).</p>
       </div>
 
       <section class="tool-card">
@@ -3268,7 +3269,8 @@ if (filenameTool) {
         <div class="tool-list-head">
           <h3>발번 목록 <small>${issuedCount()}건</small></h3>
           <div class="tool-list-actions">
-            <label class="tool-check"><input type="checkbox" data-field="vertical"${state.vertical ? ' checked' : ''}>세로형</label>
+            <label class="tool-check"><input type="checkbox" data-field="noVertical"${state.noVertical ? ' checked' : ''}
+              title="메타 줄에 저절로 붙는 (세로) 파일명을 모두 뺍니다">세로형 없음</label>
             <button type="button" class="tool-copy-all"${issued.length ? '' : ' disabled'} title="목록의 파일명을 한 줄에 하나씩 복사합니다"><i data-lucide="copy"></i>파일명만 복사</button>
             <button type="button" class="tool-clear"${issued.length ? '' : ' disabled'}>전체 비우기</button>
           </div>
@@ -3372,7 +3374,7 @@ if (filenameTool) {
     if (!field || (field.tagName !== 'SELECT' && field.type !== 'date' && field.type !== 'checkbox')) return;
     state[field.dataset.field] = field.type === 'checkbox' ? field.checked : field.value;
     if (field.dataset.field === 'date' || field.dataset.field === 'channel') syncEvent();
-    if (field.dataset.field === 'vertical') {
+    if (field.dataset.field === 'noVertical') {
       syncVertical();
       save();
       render();
@@ -3453,7 +3455,7 @@ if (filenameTool) {
 
     if (event.target.closest('.tool-reset')) {
       if (issued.length && !window.confirm(`입력값과 발번 목록 ${issuedCount()}건을 모두 지울까요?`)) return;
-      state = { date: '', channel: '', product: '', event: '', media: '', type: '', vertical: false, customTypes: state.customTypes, customMedia: state.customMedia };
+      state = { date: '', channel: '', product: '', event: '', medias: [], type: '', noVertical: false, customTypes: state.customTypes, customMedia: state.customMedia };
       issued = [];
       save();
       render();
@@ -3514,6 +3516,10 @@ if (filenameTool) {
 
   // 처음 열 때도 행사명을 채워 둔다 (날짜는 오늘, 채널은 목록 첫 값이 들어가 있다)
   if (syncEvent()) save();
+  // 옛 규칙(세로형 토글)으로 쌓인 목록도 지금 규칙(메타 줄만)으로 맞춘다
+  delete state.vertical;
+  syncVertical();
+  save();
   render();
   // 화면을 열 때마다 퍼포먼스일정을 새로 받는다 (그 사이 남이 일정을 더했을 수 있다)
   new MutationObserver(() => {
