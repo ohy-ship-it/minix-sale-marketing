@@ -7600,39 +7600,94 @@ function metaDailyHoliday_() {
   }
 }
 
-function metaDailyText_(day) {
-  var range = JSON.stringify({ since: day, until: day });
-  var total = 0;
-  var parts = ['*🔵 [메타] 앳홈 미닉스 그룹 일별 성과 (' + day + ')*'];
-  META_DAILY_ACCOUNTS.forEach(function (pair) {
-    var label = pair[1];
-    var rows;
-    try {
-      rows = graphAll_('/' + pair[0] + '/insights', { level: 'adset',
-        fields: 'campaign_name,adset_name,spend', time_range: range, limit: 500 }, 10);
-    } catch (error) {
-      parts.push('*[' + label + ']* 조회 실패: ' + String((error && error.message) || error).slice(0, 200));
-      return;
-    }
-    rows = rows.filter(function (row) { return Number(row.spend) > 0; })
-      .sort(function (a, b) { return Number(b.spend) - Number(a.spend); });
-    if (!rows.length) {
-      parts.push('*[' + label + ']* 집행 내역 없음 (지출 0)');
-      return;
-    }
-    var mine = 0;
-    var lines = ['*[' + label + ']*'];
-    rows.forEach(function (row) {
-      mine += Number(row.spend);
-      lines.push(META_DAILY_LINE, '*' + (row.campaign_name || '') + '*',
-        '광고세트: ' + (row.adset_name || ''), '지출: ' + metaDailyWon_(row.spend) + '원');
-    });
-    lines.push(META_DAILY_LINE, '[계정 합계 - ' + label + '] 지출: ' + metaDailyWon_(mine) + '원');
-    total += mine;
-    parts.push(lines.join('\n'));
+/* 매체마다 계정 목록과 그날 줄({ campaign, adset, spend })을 주는 법.
+   메타는 지출 세 칸만 바로 묻는다 (metaReport_ 는 무거워서). 나머지는 매체별 성과 화면이
+   쓰는 보고서를 그대로 부른다 — 모두 campaigns · adsets(campaignId · name · spend) 모양이다.
+   네이버 GFA 는 적재 시트에서 읽으므로 그날 적재가 아직이면 빈다.
+   네이버 검색광고(브랜드검색)는 정액이라 「광고비」 시트에 적어 둔 금액을 나눈 값이다. */
+function metaDailyFromReport_(body) {
+  var names = {};
+  ((body && body.campaigns) || []).forEach(function (one) { names[one.id] = one.name; });
+  return ((body && body.adsets) || []).map(function (one) {
+    return { campaign: names[one.campaignId] || one.campaignName || '', adset: one.name || '',
+      spend: Number(one.spend) || 0 };
   });
-  parts.push(META_DAILY_LINE + '\n*[전체 합계 - ' + META_DAILY_ACCOUNTS.length + '개 계정]*\n'
-    + '총 지출: ' + metaDailyWon_(total) + '원');
+}
+
+function metaDailyLive_(list) {
+  return (list || []).filter(function (one) { return !one.disabled; });
+}
+
+var META_DAILY_MEDIA = [
+  { label: '메타', accounts: function () {
+      return META_DAILY_ACCOUNTS.map(function (pair) { return { id: pair[0], name: pair[1] }; });
+    },
+    rows: function (id, day) {
+      return graphAll_('/' + id + '/insights', { level: 'adset',
+        fields: 'campaign_name,adset_name,spend', time_range: JSON.stringify({ since: day, until: day }),
+        limit: 500 }, 10).map(function (row) {
+          return { campaign: row.campaign_name || '', adset: row.adset_name || '', spend: Number(row.spend) || 0 };
+        });
+    } },
+  { label: '구글', accounts: function () { return metaDailyLive_(adsAccounts_()); },
+    rows: function (id, day) {
+      return metaDailyFromReport_(adsReport_({ account: id, since: day, until: day, refresh: true }));
+    } },
+  { label: '카카오', accounts: function () { return metaDailyLive_(kakaoAccounts_()); },
+    rows: function (id, day) {
+      return metaDailyFromReport_(kakaoReport_({ account: id, since: day, until: day, refresh: true }));
+    } },
+  { label: '네이버 GFA', accounts: function () { return naverAccounts_(); },
+    rows: function (id, day) {
+      return metaDailyFromReport_(naverReport_({ account: id, since: day, until: day, refresh: true }));
+    } },
+  { label: '네이버 검색광고', accounts: function () { return naverSaAccounts_(); },
+    rows: function (id, day) {
+      return metaDailyFromReport_(naverSaReport_({ since: day, until: day }));
+    } }
+];
+
+// 지출이 있는 줄만 싣는다 — 안 돌아간 계정 · 매체는 아예 빼고, 못 읽은 곳만 맨 아래 한 줄로 알린다.
+function metaDailyText_(day) {
+  var total = 0;
+  var parts = ['*📊 앳홈 미닉스 전체 매체 일별 지출 (' + day + ')*'];
+  var trouble = [];
+  var shortly = function (error) { return String((error && error.message) || error).slice(0, 150); };
+
+  META_DAILY_MEDIA.forEach(function (media) {
+    var accounts;
+    try { accounts = media.accounts() || []; }
+    catch (error) { trouble.push(media.label + ' — ' + shortly(error)); return; }
+
+    var block = [];
+    var mediaSum = 0;
+    accounts.forEach(function (account) {
+      var rows;
+      try { rows = media.rows(account.id, day) || []; }
+      catch (error) { trouble.push(media.label + ' ' + (account.name || account.id) + ' — ' + shortly(error)); return; }
+      rows = rows.filter(function (row) { return row.spend > 0; })
+        .sort(function (a, b) { return b.spend - a.spend; });
+      if (!rows.length) return;
+      var mine = 0;
+      var lines = ['*[' + media.label + ' · ' + (account.name || account.id) + ']*'];
+      rows.forEach(function (row) {
+        mine += row.spend;
+        lines.push(META_DAILY_LINE, '*' + row.campaign + '*',
+          '광고세트: ' + row.adset, '지출: ' + metaDailyWon_(row.spend) + '원');
+      });
+      lines.push(META_DAILY_LINE, '[계정 합계] 지출: ' + metaDailyWon_(mine) + '원');
+      mediaSum += mine;
+      block.push(lines.join('\n'));
+    });
+    if (!block.length) return;
+    parts = parts.concat(block);
+    parts.push('*[' + media.label + ' 합계] ' + metaDailyWon_(mediaSum) + '원*');
+    total += mediaSum;
+  });
+
+  if (parts.length === 1) parts.push('지출이 잡힌 광고가 없습니다.');
+  parts.push(META_DAILY_LINE + '\n*[전체 합계]* 총 지출: ' + metaDailyWon_(total) + '원');
+  if (trouble.length) parts.push('⚠ 못 읽은 곳\n' + trouble.join('\n'));
   return parts.join('\n\n');
 }
 
