@@ -4026,13 +4026,17 @@ if (contentSchedule) {
     };
   };
 
+  /* quiet = 화면을 열 때 저절로 도는 것. 바뀐 게 없으면 아무 말도 하지 않는다.
+     (버튼을 누른 때는 늘 몇 개를 넣었는지 알려 준다) */
   let importing = false;
-  const importCreative = () => {
-    if (importing) return;
+  const importCreative = (quiet) => {
+    if (importing) return Promise.resolve();
     importing = true;
-    note = '광고소재 기획 카드를 읽는 중…';
-    tell();
-    askSheet({ action: 'weeksGet' })
+    if (!quiet) {
+      note = '광고소재 기획 카드를 읽는 중…';
+      tell();
+    }
+    return askSheet({ action: 'weeksGet' })
       .then((body) => {
         let made = 0;
         let moved = 0;
@@ -4057,11 +4061,13 @@ if (contentSchedule) {
           + (skipped ? ` · 전달희망일정이 없어 건너뛴 카드 ${skipped}개` : '');
         const unified = unifySku();    // 가져온 줄의 SKU 이름도 있던 이름에 맞춘다
         if (made || moved || unified) save();     // 저장이 끝나면 알림 줄은 '저장됨' 으로 바뀐다
+        if (quiet && !made && !moved) { if (unified) render(); return; }
         note = said;
         render();
         flashNote(said);
       })
       .catch((reason) => {
+        if (quiet) return;             // 저절로 도는 것은 못 읽어도 화면을 어지럽히지 않는다
         note = `광고소재 기획을 못 읽었습니다 — ${reason.message}`;
         tell();
       })
@@ -4437,13 +4443,14 @@ if (contentSchedule) {
   // 같은 탭에 링크를 붙여 넣으면 문서를 다시 읽지 않고 해시만 바뀐다 — 그때도 열어 준다
   window.addEventListener('hashchange', () => { if (pulled) openLinked(); });
 
-  // 화면을 열 때 한 번만 받아 온다
+  /* 화면을 열 때 시트는 한 번만 받아 온다. 광고소재 기획 카드는 **열 때마다** 저절로 가져온다
+     (버튼을 안 눌러도 새 카드 · 바뀐 전달희망일정이 들어온다). 버튼은 지금 바로 맞추고 싶을 때 쓴다. */
   new MutationObserver(() => {
     if (contentSchedule.hidden) { closePeek(); return; }
-    if (pulled) return;
+    if (pulled) { importCreative(true); return; }
     note = '시트에서 불러오는 중…';
     render();
-    pull(false).then(openLinked);
+    pull(false).then(openLinked).then(() => importCreative(true));
   }).observe(contentSchedule, { attributes: true, attributeFilter: ['hidden'] });
   render();
   if (!contentSchedule.hidden) pull(false).then(openLinked);
