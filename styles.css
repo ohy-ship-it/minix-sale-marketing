@@ -111,6 +111,11 @@ body:has(#creative-board:not([hidden])) .topbar,body:has(#filename-tool:not([hid
 .peek-warning{margin:0 0 8px;font-size:11px;color:#d44c47}
 .peek-done{width:100%;border:0;border-radius:7px;background:#2f86d9;color:#fff;padding:11px;font:700 12px inherit;cursor:pointer}
 .peek-done:hover{background:#2a78c4}
+/* 광고소재 기획 상세창 — 중간 저장 · 저장 상태 */
+.peek-save-note{display:block;margin:0 0 6px;font:500 11px inherit;color:#787774;min-height:14px}
+.peek-save{width:100%;display:flex;align-items:center;justify-content:center;gap:5px;margin-bottom:6px;border:1px solid #d9d8d4;border-radius:7px;background:#fff;color:#37352f;padding:9px;font:600 12px inherit;cursor:pointer}
+.peek-save:hover{background:#f7f7f5}
+.peek-save svg{width:13px;height:13px}
 
 /* 매체별 요청사항 */
 .media-notes{display:grid;gap:14px;margin-top:22px}

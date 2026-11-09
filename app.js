@@ -393,6 +393,7 @@ if (creativeBoard) {
       .then(() => {
         if (weekSending === mine) weekSending = null;
         if (weekList && !weekList.hidden) renderWeekList();
+        tellPeek();
         // 보내는 사이에 또 고쳤으면 이어서 보낸다 (이 약속은 그것까지 끝나야 풀린다 — flushWeeks 가 기다린다)
         if (weekAgain) {
           weekAgain = false;
@@ -404,11 +405,22 @@ if (creativeBoard) {
     return mine;
   };
 
+  /* 카드 상세창에도 저장 상태를 적는다. 칸을 고치면 0.7초 뒤 저절로 저장되는데,
+     그 소식이 주차 목록에만 떠서 카드를 연 채로는 저장됐는지 알 수 없었다. */
+  const tellPeek = () => {
+    // peek 은 아래에서 만든다 — 그 전에 불리면(처음 읽을 때) 조용히 넘어간다
+    try {
+      const box = peek.querySelector('.peek-save-note');
+      if (box) box.textContent = weekNote;
+    } catch { /* 아직 상세창이 없다 */ }
+  };
+
   const save = () => {
     weekCache();
     if (weekSaveWait) window.clearTimeout(weekSaveWait);
     weekNote = '저장 중…';
     if (weekList && !weekList.hidden) renderWeekList();
+    tellPeek();
     weekSaveWait = window.setTimeout(() => {
       weekSaveWait = null;
       sendWeeks();
@@ -808,6 +820,8 @@ if (creativeBoard) {
         ${renderMediaNotes(row)}
         <footer class="peek-footer">
           <p class="peek-warning" hidden>제목을 입력해 주세요.</p>
+          <span class="peek-save-note" title="칸을 고치면 저절로 저장됩니다">${escapeHtml(weekNote)}</span>
+          <button type="button" class="peek-save" title="지금까지 적은 것을 바로 시트에 저장합니다 (창은 그대로 열어 둡니다)"><i data-lucide="save"></i>중간 저장</button>
           <button type="button" class="peek-done">요청 완료하기</button>
         </footer>
       </aside>`;
@@ -1023,6 +1037,15 @@ if (creativeBoard) {
       delete row.mediaCounts[name];
       delete row.mediaDue[name];
       commit();
+      return;
+    }
+    if (event.target.closest('.peek-save')) {
+      // 기다리는 저장이 있으면 지금 보내고, 없으면 한 번 더 보낸다 (제목이 비어 있어도 저장은 된다)
+      weekCache();
+      weekNote = '저장 중…';
+      tellPeek();
+      if (weekSaveWait) flushWeeks();
+      else sendWeeks();
       return;
     }
     if (event.target.closest('.peek-done')) {
