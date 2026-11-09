@@ -3695,6 +3695,39 @@ if (contentSchedule) {
     if (box) box.textContent = note;
   };
 
+  /* SKU 는 띄어쓰기만 다른 이름이 갈려 둘로 보인다 ('더 플렌더mini' · '더플렌더mini' —
+     광고소재 기획에서 가져온 줄이 붙임 이름을 쓴다). 띄어쓰기 · 대소문자를 지운 열쇠가 같으면
+     **가장 많이 쓰인 이름** 하나로 맞춘다 (같으면 먼저 나온 것). 바뀐 줄이 있으면 true. */
+  const skuKey = (name) => String(name || '').toLowerCase().replace(/\s+/g, '');
+  const unifySku = () => {
+    const tally = new Map();
+    rows.forEach((row) => row.sku.forEach((name) => {
+      const key = skuKey(name);
+      if (!tally.has(key)) tally.set(key, new Map());
+      const names = tally.get(key);
+      names.set(name, (names.get(name) || 0) + 1);
+    }));
+    const pick = new Map();
+    tally.forEach((names, key) => {
+      let best = '';
+      let most = -1;
+      names.forEach((count, name) => { if (count > most) { best = name; most = count; } });
+      pick.set(key, best);
+    });
+    let changed = false;
+    rows.forEach((row) => {
+      const next = [];
+      row.sku.forEach((name) => {
+        const one = pick.get(skuKey(name)) || name;
+        if (one !== name) changed = true;
+        if (!next.includes(one)) next.push(one);
+        else changed = true;
+      });
+      row.sku = next;
+    });
+    return changed;
+  };
+
   const pull = (mine) => askSheet({ action: 'supplyGet' })
     .then((body) => {
       const got = (body.rows || []).map(normalize);
@@ -3709,6 +3742,7 @@ if (contentSchedule) {
       } else {
         rows = got;
       }
+      if (unifySku()) push = true;    // 갈려 있던 SKU 이름을 하나로 맞췄으면 시트에도 올린다
       cache();
       knownWrite(got.map((one) => one.id));
       if (!push) note = rows.length ? '' : '시트에 일정이 없습니다';
@@ -4021,7 +4055,8 @@ if (contentSchedule) {
         }));
         const said = `광고소재 기획에서 새로 ${made}개 · 수급 일자 바뀐 ${moved}개`
           + (skipped ? ` · 전달희망일정이 없어 건너뛴 카드 ${skipped}개` : '');
-        if (made || moved) save();     // 저장이 끝나면 알림 줄은 '저장됨' 으로 바뀐다
+        const unified = unifySku();    // 가져온 줄의 SKU 이름도 있던 이름에 맞춘다
+        if (made || moved || unified) save();     // 저장이 끝나면 알림 줄은 '저장됨' 으로 바뀐다
         note = said;
         render();
         flashNote(said);
