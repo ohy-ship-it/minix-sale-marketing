@@ -3919,6 +3919,8 @@ if (contentSchedule) {
           <h2>행사 광고 일정</h2>
           <span class="week-note">${escapeHtml(note)}</span>
           <button type="button" class="week-pull" title="시트에서 다시 불러옵니다"><i data-lucide="refresh-cw"></i>새로고침</button>
+          <button type="button" class="week-pull" data-import="creative"
+            title="광고소재 기획 카드의 전달희망일정을 수급 일자로 넣습니다 (이미 넣은 카드는 수급 일자만 맞춥니다)"><i data-lucide="download"></i>광고소재 기획에서 가져오기</button>
         </div>
         <div class="sup-tabs">
           <button type="button" class="sup-tab${view === 'cal' ? ' is-on' : ''}" data-view="cal"><i data-lucide="calendar"></i>캘린더 보기</button>
@@ -3930,8 +3932,75 @@ if (contentSchedule) {
     lucide.createIcons();
   };
 
+  /* ── 광고소재 기획 → 콘텐츠 일정 ──────────────────────────────────
+     기획 카드의 **전달희망일정**(콘텐츠팀이 소재를 넘겨줄 날 = 우리가 받는 날)을 **수급 일자**로 넣는다.
+     카드 하나가 일정 한 줄이다. 줄 번호를 'cr-카드ID' 로 두어, 다시 눌러도 겹치지 않고
+     이미 넣은 줄은 **수급 일자만** 카드에 맞춘다 — 이 화면에서 고친 전달 일자 · 참고사항 · 색은 그대로 둔다.
+     카드에 날짜가 없으면 매체별 전달희망일정 중 가장 이른 날을 쓰고, 그것도 없으면 건너뛴다.
+     매체마다 날이 다르면 참고사항에 매체별 날짜를 적어 둔다. */
+  const CREATIVE_PREFIX = 'cr-';
+  const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+
+  const fromCard = (card) => {
+    const dues = Object.entries(card.mediaDue || {}).filter(([, day]) => isDay(day));
+    const main = card.dueDate && isDay(card.dueDate.start) ? card.dueDate.start : '';
+    const take = main || dues.map(([, day]) => day).sort()[0] || '';
+    if (!take) return null;
+    const odd = dues.filter(([, day]) => day !== take);
+    const parts = ['광고소재 기획', card.event || ''].filter(Boolean);
+    if (odd.length) parts.push(`매체별 수급 ${dues.map(([name, day]) => `${name} ${shortDay(day)}`).join(' · ')}`);
+    return {
+      id: CREATIVE_PREFIX + card.id,
+      name: String(card.name || card.event || '(이름 없음)'),
+      sku: listOf(card.sku), media: listOf(card.media), owners: listOf(card.owners),
+      take, note: parts.join(' · '),
+    };
+  };
+
+  let importing = false;
+  const importCreative = () => {
+    if (importing) return;
+    importing = true;
+    note = '광고소재 기획 카드를 읽는 중…';
+    tell();
+    askSheet({ action: 'weeksGet' })
+      .then((body) => {
+        let made = 0;
+        let moved = 0;
+        let skipped = 0;
+        (body.weeks || []).forEach((week) => (week.rows || []).forEach((card) => {
+          if (!card || !card.id) return;
+          const one = fromCard(card);
+          if (!one) { skipped += 1; return; }
+          const have = rows.find((row) => row.id === one.id);
+          if (!have) {
+            rows.push(normalize({ ...one, hand: '', icon: '', color: '' }));
+            made += 1;
+            return;
+          }
+          if (have.take !== one.take) { have.take = one.take; moved += 1; }
+          // 비어 있는 칸만 채운다 (이 화면에서 적은 값은 덮지 않는다)
+          if (!have.name) have.name = one.name;
+          ['sku', 'media', 'owners'].forEach((key) => { if (!have[key].length) have[key] = one[key]; });
+          if (!have.note) have.note = one.note;
+        }));
+        const said = `광고소재 기획에서 새로 ${made}개 · 수급 일자 바뀐 ${moved}개`
+          + (skipped ? ` · 전달희망일정이 없어 건너뛴 카드 ${skipped}개` : '');
+        if (made || moved) save();     // 저장이 끝나면 알림 줄은 '저장됨' 으로 바뀐다
+        note = said;
+        render();
+        flashNote(said);
+      })
+      .catch((reason) => {
+        note = `광고소재 기획을 못 읽었습니다 — ${reason.message}`;
+        tell();
+      })
+      .then(() => { importing = false; });
+  };
+
   // ── 손대기 ────────────────────────────────────────────────────
   contentSchedule.addEventListener('click', (event) => {
+    if (event.target.closest('[data-import="creative"]')) return importCreative();
     if (event.target.closest('.week-pull')) { note = '시트에서 불러오는 중…'; render(); pull(true); return; }
 
     const tab = event.target.closest('[data-view]');
