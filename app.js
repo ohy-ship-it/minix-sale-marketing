@@ -30,7 +30,8 @@ if (creativeBoard) {
 
   const SCHEMA = [
     { key: 'name', name: '이름', type: 'title', icon: 'type' },
-    { key: 'sku', name: 'SKU', type: 'multi_select', icon: 'tag', options: SKU_OPTIONS },
+    // SKU 도 손으로 적어 넣을 수 있다 (custom) — 새 제품이 나오면 목록에 없으니까 (매체와 같은 방식).
+    { key: 'sku', name: 'SKU', type: 'multi_select', icon: 'tag', options: SKU_OPTIONS, custom: true },
     { key: 'status', name: '상태', type: 'status', icon: 'loader', options: STATUS_OPTIONS },
     // 행사채널은 값은 보관하되 화면에는 내보내지 않는다
     { key: 'channel', name: '행사채널', type: 'select', icon: 'circle-chevron-down', options: CHANNEL_OPTIONS, hidden: true },
@@ -53,16 +54,16 @@ if (creativeBoard) {
      그런데 아직 아무 카드에도 안 붙인 이름은 어디에도 없어서, 적어 놓고 다른 카드로
      옮기면 목록에서 사라졌다. 그 사이를 이 브라우저가 메운다 —
      한 번이라도 카드에 붙는 순간부터는 시트 쪽이 맡는다 (그때부터 팀 전체가 본다). */
-  const CUSTOM_KEY = 'minix-creative-media-custom';
-  const customRead = () => {
+  const CUSTOM_KEY = { media: 'minix-creative-media-custom', sku: 'minix-creative-sku-custom' };
+  const customRead = (key) => {
     try {
-      const kept = JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]');
+      const kept = JSON.parse(localStorage.getItem(CUSTOM_KEY[key]) || '[]');
       return Array.isArray(kept) ? kept.filter((one) => typeof one === 'string' && one.trim()) : [];
     } catch { return []; }
   };
-  let customNames = customRead();
-  const customWrite = () => {
-    try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(customNames)); } catch { /* 거들기다 */ }
+  const customNames = { media: customRead('media'), sku: customRead('sku') };
+  const customWrite = (key) => {
+    try { localStorage.setItem(CUSTOM_KEY[key], JSON.stringify(customNames[key])); } catch { /* 거들기다 */ }
   };
 
   /* 고를 수 있는 값 — 정해 둔 목록 + 어딘가 카드에 붙어 있는 이름 + 적어 둔 이름.
@@ -79,7 +80,7 @@ if (creativeBoard) {
     weeks.forEach((week) => (week.rows || []).forEach((row) => {
       (row[prop.key] || []).forEach(add);
     }));
-    if (prop.key === 'media') customNames.forEach(add);
+    (customNames[prop.key] || []).forEach(add);
     return known.concat(more);
   };
 
@@ -565,7 +566,7 @@ if (creativeBoard) {
       const names = row.sku.length ? row.sku : ['미지정'];
       names.forEach((name) => counts.set(name, (counts.get(name) || 0) + 1));
     });
-    const ordered = new Map([...SKU_OPTIONS.map(([name]) => name), '미지정']
+    const ordered = new Map([...optionsOf(propByKey.sku).map(([name]) => name), '미지정']
       .filter((name) => counts.has(name))
       .map((name) => [name, counts.get(name)]));
     return renderTally('SKU 건수', 'layers', ordered, (name) => (name === '미지정' ? 'gray' : colorOf(propByKey.sku, name)));
@@ -588,7 +589,7 @@ if (creativeBoard) {
   const renderFilters = () => {
     filters.innerHTML = `<div class="board-summaries">${renderSkuSummary()}${renderOwnerSummary()}</div>` + FACETS.map((facet) => `<div class="filter-row${active[facet.key].length ? ' is-active' : ''}">
         <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
-        <span class="filter-options">${facet.options.map(([name, color]) => `<button type="button" class="filter-chip chip chip-${color}${active[facet.key].includes(name) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(name)}" aria-pressed="${active[facet.key].includes(name)}">${escapeHtml(name)}</button>`).join('')}</span>
+        <span class="filter-options">${optionsOf(propByKey[facet.key]).map(([name, color]) => `<button type="button" class="filter-chip chip chip-${color}${active[facet.key].includes(name) ? ' is-on' : ''}" data-facet="${facet.key}" data-value="${escapeHtml(name)}" aria-pressed="${active[facet.key].includes(name)}">${escapeHtml(name)}</button>`).join('')}</span>
       </div>`).join('')
       + (anyFilter()
         ? `<div class="filter-summary"><button type="button" class="filter-clear">전체 보기</button><span class="filter-count">${visibleRows().length}개 표시</span></div>`
@@ -836,9 +837,9 @@ if (creativeBoard) {
     if (!row[key].includes(picked)) row[key] = [...row[key], picked];
     if (key === 'media' && row.mediaNotes[picked] === undefined) row.mediaNotes[picked] = NOTE_TEMPLATE;
     // 목록에도 남긴다 — 이 카드에서 빼도 다음에 또 고를 수 있게
-    if (key === 'media' && isCustom(propByKey[key], picked) && !customNames.includes(picked)) {
-      customNames = [...customNames, picked];
-      customWrite();
+    if (customNames[key] && isCustom(propByKey[key], picked) && !customNames[key].includes(picked)) {
+      customNames[key] = [...customNames[key], picked];
+      customWrite(key);
     }
     box.value = '';
     commit();
@@ -1057,8 +1058,11 @@ if (creativeBoard) {
     const dropOption = event.target.closest('[data-drop-option]');
     if (dropOption) {
       const gone = dropOption.dataset.dropOption;
-      customNames = customNames.filter((one) => one !== gone);
-      customWrite();
+      const dropKey = dropOption.dataset.dropKey;
+      if (customNames[dropKey]) {
+        customNames[dropKey] = customNames[dropKey].filter((one) => one !== gone);
+        customWrite(dropKey);
+      }
       renderPeek();
       const list = peek.querySelector(`[data-options="${dropOption.dataset.dropKey}"]`);
       if (list) list.hidden = false;
