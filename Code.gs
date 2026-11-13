@@ -293,6 +293,10 @@ function onOpen() {
       .addItem('아침 자동 적재 켜기', 'cafe24DailyInstall')
       .addItem('아침 자동 적재 끄기', 'cafe24DailyRemove')
       .addItem('응답 모양 보기', 'cafe24Probe'))
+    .addSubMenu(SpreadsheetApp.getUi().createMenu('네이버 GFA')
+      .addItem('지금 적재 요청', 'gfaJobAsk')
+      .addItem('적재 상태 보기', 'gfaJobCheck')
+      .addItem('요청 지우기', 'gfaJobCancel'))
     .addSubMenu(SpreadsheetApp.getUi().createMenu('브랜드검색 검수 알림')
       .addItem('지금 한 번 확인', 'bsInspectCheck')
       .addItem('1시간마다 켜기', 'bsInspectInstall')
@@ -2220,6 +2224,9 @@ function handleAction_(payload) {
     if (payload.action === 'naverAppend') return naverAppend_(payload);
     // 적재가 멈췄는지만 가볍게 — 화면이 팝업을 띄울지 가리는 데 쓴다
     if (payload.action === 'naverFresh') return naverFresh_();
+    // 시트에서 '지금 적재' 를 누르면 쪽지가 남고, PC 가 이 둘로 집어 가고 결과를 적는다
+    if (payload.action === 'naverJobPeek') return naverJobPeek_();
+    if (payload.action === 'naverJobDone') return naverJobDone_(payload);
     // 네이버 검색광고(브랜드검색) — GFA 와 달리 공개 API 가 있어 여기서 바로 부른다
     if (payload.action === 'naverSaAccounts') return { ok: true, accounts: naverSaAccounts_() };
     if (payload.action === 'naverSaReport') return naverSaReport_(payload);
@@ -6840,6 +6847,119 @@ function naverFresh_() {
   };
   cachePut_(cache, key, JSON.stringify(result), NAVER_FRESH_CACHE_SECONDS);
   return result;
+}
+
+/* ── GFA 적재 요청 (시트에서 버튼으로 부른다) ─────────────────────────
+   GFA 는 공개 API 가 없어 **PC 의 크롬**이 관리 화면을 읽어야 한다. Apps Script 는
+   크롬을 띄울 수 없으니, 시트에서 바로 적재할 길은 없다.
+
+   그래서 **쪽지를 남긴다.** 시트에서 메뉴를 누르면 여기에 '적재해 달라' 고 적히고,
+   PC 가 몇 분마다 들여다보다가 쪽지가 있으면 평소 예약 작업과 똑같은 적재를 돌린다.
+   끝나면 결과를 여기에 적어 두므로, 시트에서 '적재 상태 보기' 로 확인할 수 있다.
+
+   누르고 나서 **바로** 되는 게 아니다 (PC 가 들여다보는 동안만큼 기다린다).
+   PC 가 꺼져 있거나 크롬 로그인이 풀려 있으면 그대로 멈춘다 — 그때는 결과에 그 까닭이 적힌다. */
+var GFA_JOB_PROP = 'GFA_JOB';
+
+function gfaJobRead_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(GFA_JOB_PROP);
+  try {
+    var got = JSON.parse(raw || 'null');
+    return (got && typeof got === 'object') ? got : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function gfaJobWrite_(job) {
+  PropertiesService.getScriptProperties().setProperty(GFA_JOB_PROP, JSON.stringify(job || {}));
+}
+
+function gfaJobWhen_(value) {
+  if (!value) return '';
+  return Utilities.formatDate(new Date(value), 'Asia/Seoul', 'M/d HH:mm');
+}
+
+// PC 가 몇 분마다 묻는다 — '지금 적재해 달라는 쪽지가 있나?'
+function naverJobPeek_() {
+  var job = gfaJobRead_();
+  return {
+    ok: true,
+    wanted: job.state === '대기',
+    askedAt: job.askedAt || '',
+    by: job.by || ''
+  };
+}
+
+/* PC 가 적재를 마치고 결과를 적는다. 쪽지는 여기서 지운다 —
+   PC 가 집어 갈 때가 아니라 **끝낸 뒤에** 지워야, 도중에 PC 가 죽어도 쪽지가 남아 다시 걸린다. */
+function naverJobDone_(payload) {
+  var job = gfaJobRead_();
+  job.state = payload.good ? '끝남' : '실패';
+  job.note = String(payload.note || '').slice(0, 500);
+  job.doneAt = new Date().toISOString();
+  gfaJobWrite_(job);
+  return { ok: true };
+}
+
+function gfaJobAsk() {
+  var ui = SpreadsheetApp.getUi();
+  var job = gfaJobRead_();
+  if (job.state === '대기') {
+    ui.alert('GFA 적재 요청',
+      gfaJobWhen_(job.askedAt) + ' 에 이미 요청해 두었습니다.\n\n'
+      + 'PC 가 아직 집어 가지 않았습니다. 그 PC 가 켜져 있는지 봐 주세요.',
+      ui.ButtonSet.OK);
+    return;
+  }
+  var answer = ui.alert('GFA 적재 요청',
+    'PC 에게 지금 적재해 달라고 적어 둘까요?\n\n'
+    + 'GFA 는 공개 API 가 없어 PC 의 크롬이 읽어야 합니다. 시트가 직접 받아 올 수는 없습니다.\n'
+    + '그 PC 가 몇 분 안에 집어 가 적재합니다 — 끝나면 [적재 상태 보기] 에 결과가 뜹니다.\n\n'
+    + '그 PC 가 꺼져 있으면 아무 일도 일어나지 않습니다.',
+    ui.ButtonSet.OK_CANCEL);
+  if (answer !== ui.Button.OK) return;
+
+  gfaJobWrite_({
+    state: '대기',
+    askedAt: new Date().toISOString(),
+    by: Session.getActiveUser().getEmail() || '',
+    note: '',
+    doneAt: ''
+  });
+  ui.alert('적어 두었습니다.\n\nPC 가 집어 가면 적재합니다. 잠시 뒤 [적재 상태 보기] 로 확인해 주세요.');
+}
+
+function gfaJobCheck() {
+  var ui = SpreadsheetApp.getUi();
+  var job = gfaJobRead_();
+  var fresh = naverFresh_();
+  var lines = [];
+
+  if (!job.state) {
+    lines.push('요청해 둔 것이 없습니다.');
+  } else if (job.state === '대기') {
+    lines.push('· 요청: ' + gfaJobWhen_(job.askedAt) + ' — 아직 PC 가 집어 가지 않았습니다.');
+  } else {
+    lines.push('· 요청: ' + gfaJobWhen_(job.askedAt) + (job.by ? ' (' + job.by + ')' : ''));
+    lines.push('· 결과: ' + job.state + ' · ' + gfaJobWhen_(job.doneAt));
+    if (job.note) lines.push('    ' + job.note);
+  }
+
+  lines.push('');
+  if (fresh.loadedAt) {
+    lines.push('마지막으로 적재된 때: ' + gfaJobWhen_(fresh.loadedAt)
+      + ' (' + fresh.hours + '시간 전) · 쌓인 줄 ' + fresh.rows);
+    if (fresh.hours >= 24) lines.push('하루가 넘었습니다 — 그 PC 의 크롬 · 네이버 로그인을 봐 주세요.');
+  } else {
+    lines.push('아직 적재된 것이 없습니다.');
+  }
+  ui.alert('GFA 적재 상태', lines.join('\n'), ui.ButtonSet.OK);
+}
+
+function gfaJobCancel() {
+  gfaJobWrite_({});
+  SpreadsheetApp.getUi().alert('요청을 지웠습니다.');
 }
 
 // ── 네이버 검색광고 (브랜드검색) ──────────────────────────────────

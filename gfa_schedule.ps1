@@ -14,6 +14,10 @@ param(
     # 그 시점에 멈춘 값이 하루 종일 보인다. 최근 7일을 매번 덮으므로 여러 번 돌려도 안전하다.
     [string[]]$At = @("09:00", "14:00", "19:00"),
     [string]$TaskName = "GFA 네이버 성과 적재",
+    # 시트에서 '지금 적재 요청' 을 누른 것을 집으러 몇 분마다 들여다볼지.
+    # 사람이 누르고 기다리는 시간이라 짧게 둔다 — 하는 일은 웹앱에 한 번 묻는 것뿐이다.
+    [int]$WatchEvery = 3,
+    [string]$WatchTaskName = "GFA 적재 요청 지켜보기",
     [switch]$Remove
 )
 
@@ -28,6 +32,11 @@ $batch = Join-Path $folder "gfa_load.bat"
 if ($Remove) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     "지웠습니다: $TaskName"
+    # 지켜보기는 나중에 생긴 것이라 없을 수도 있다. 없다고 멈추지 않는다.
+    try {
+        Unregister-ScheduledTask -TaskName $WatchTaskName -Confirm:$false -ErrorAction Stop
+        "지웠습니다: $WatchTaskName"
+    } catch { "지켜보기 작업은 없었습니다: $WatchTaskName" }
     exit 0
 }
 
@@ -63,3 +72,27 @@ $info = Get-ScheduledTaskInfo -TaskName $TaskName
 ""
 "지금 한 번 돌려 보려면:  Start-ScheduledTask -TaskName '$TaskName'"
 "등록을 지우려면:         이 스크립트를 -Remove 로 실행"
+
+# ── 시트에서 누른 '지금 적재 요청' 집으러 가기 ──────────────────────────
+# 하루 세 번만 돌면, 적재가 멈춘 걸 알아채도 다음 차례까지 몇 시간을 기다려야 한다.
+# 그래서 몇 분마다 웹앱에 한 번 묻는 작업을 따로 둔다. 쪽지가 없으면 바로 끝나므로 가볍다.
+# 쪽지가 있을 때만 위의 gfa_load.bat 을 부른다 — 적재하는 길은 하나로 둔다.
+$watchBat = Join-Path $folder "gfa_watch.bat"
+if (Test-Path $watchBat) {
+    $watchAction = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$watchBat`"" -WorkingDirectory $folder
+    # 하루 종일 되풀이한다. 오늘 시작해 두면 다음 날도 이어진다.
+    $watchTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(1) `
+        -RepetitionInterval (New-TimeSpan -Minutes $WatchEvery)
+    # 적재가 도는 중에 또 부르면 크롬을 두 곳에서 쥐어 둘 다 깨진다. IgnoreNew 로 막는다.
+    $watchSettings = New-ScheduledTaskSettingsSet `
+        -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $WatchTaskName -Action $watchAction -Trigger $watchTrigger `
+        -Settings $watchSettings -Principal $principal -Force | Out-Null
+    ""
+    "등록했습니다: $WatchTaskName"
+    "  $WatchEvery 분마다 · 시트에서 [지금 적재 요청] 을 누른 것만 집어 돌립니다"
+} else {
+    ""
+    "gfa_watch.bat 이 없어 '지켜보기' 는 등록하지 않았습니다."
+}
