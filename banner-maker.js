@@ -407,7 +407,16 @@ const bannerMaker = (() => {
       }
       const cell = (at) => (at >= 0 ? String(cells[at] ?? '').trim() : '');
       if (block && cell(cols.key)) {
-        if (cell(cols.event)) block.event = block.event || cell(cols.event);
+        // 머리글이 맨 위에 한 번뿐인 표(카카오 비즈보드 탭)는 행사명 칸이 바뀔 때마다 새 덩어리다.
+        // 행사명 줄이 따로 없으니 덩어리 이름도 그 칸에서 가져온다.
+        const event = cell(cols.event);
+        if (event && block.event && flat(event) !== flat(block.event)) {
+          block = { title: event, event, rows: [] };
+          blocks.push(block);
+        } else if (event && !block.event && !flat(block.title).includes(flat(event))) {
+          block.title = event;
+        }
+        if (event) block.event = block.event || event;
         const slot = cell(cols.slot) || (block.rows.length ? block.rows[block.rows.length - 1].slot : '');
         const row = { key: cell(cols.key), slot, note: cell(cols.note), main: '', main2: '', sub: '', copyError: '' };
         if (cols.main >= 0) {
