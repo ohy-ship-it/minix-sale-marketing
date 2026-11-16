@@ -7725,17 +7725,36 @@ function metaDailyHoliday_() {
    쓰는 보고서를 그대로 부른다 — 모두 campaigns · adsets(campaignId · name · spend) 모양이다.
    네이버 GFA 는 적재 시트에서 읽으므로 그날 적재가 아직이면 빈다.
    네이버 검색광고(브랜드검색)는 정액이라 「광고비」 시트에 적어 둔 금액을 나눈 값이다. */
+/* 광고그룹을 다 못 읽으면(카카오는 광고비 큰 캠페인부터 정해 둔 수만 판다) 그 몫이 조용히 빠진다.
+   캠페인 지출이 광고그룹 합보다 크면 남는 금액을 '(광고그룹 미확인)' 줄로 붙여 합계를 맞춘다. */
 function metaDailyFromReport_(body) {
   var names = {};
-  ((body && body.campaigns) || []).forEach(function (one) { names[one.id] = one.name; });
-  return ((body && body.adsets) || []).map(function (one) {
-    return { campaign: names[one.campaignId] || one.campaignName || '', adset: one.name || '',
-      spend: Number(one.spend) || 0 };
+  var under = {};
+  ((body && body.campaigns) || []).forEach(function (one) { names[one.id] = one.name; under[one.id] = 0; });
+  var rows = ((body && body.adsets) || []).map(function (one) {
+    var spend = Number(one.spend) || 0;
+    if (under[one.campaignId] !== undefined) under[one.campaignId] += spend;
+    return { campaign: names[one.campaignId] || one.campaignName || '', adset: one.name || '', spend: spend };
   });
+  ((body && body.campaigns) || []).forEach(function (one) {
+    var left = (Number(one.spend) || 0) - under[one.id];
+    if (left >= 1) rows.push({ campaign: one.name || one.id, adset: '(광고그룹 미확인)', spend: left });
+  });
+  return rows;
 }
 
-function metaDailyLive_(list) {
-  return (list || []).filter(function (one) { return !one.disabled; });
+/* 네이버 GFA 는 API 가 없어 PC 가 하루 세 번 적재 시트에 올린다. 그날 적재가 아직이면 빈 채로
+   '지출 없음' 처럼 보이므로, 그때는 전날 것을 꼬리표를 달아 보낸다 (전날도 없으면 못 읽은 곳으로). */
+function metaDailyGfa_(id, day) {
+  var got = naverReport_({ account: id, since: day, until: day, refresh: true });
+  if (!((got.coverage || {}).missing || []).length) return metaDailyFromReport_(got);
+  var before = Utilities.formatDate(new Date(new Date(day + 'T00:00:00+09:00').getTime() - 86400000),
+    'Asia/Seoul', 'yyyy-MM-dd');
+  var prev = naverReport_({ account: id, since: before, until: before, refresh: true });
+  if (((prev.coverage || {}).missing || []).length) throw new Error(day + ' · ' + before + ' 적재가 아직 없습니다');
+  var rows = metaDailyFromReport_(prev);
+  rows.note = day + ' 적재 전 — 전일(' + before + ') 하루치';
+  return rows;
 }
 
 var META_DAILY_MEDIA = [
@@ -7749,18 +7768,17 @@ var META_DAILY_MEDIA = [
           return { campaign: row.campaign_name || '', adset: row.adset_name || '', spend: Number(row.spend) || 0 };
         });
     } },
-  { label: '구글', accounts: function () { return metaDailyLive_(adsAccounts_()); },
+  // 꺼진(OFF) 계정도 묻는다 — 그날 끄기 전에 쓴 돈이 있을 수 있다. 지출 0 인 계정은 어차피 빠진다.
+  { label: '구글', accounts: function () { return adsAccounts_(); },
     rows: function (id, day) {
       return metaDailyFromReport_(adsReport_({ account: id, since: day, until: day, refresh: true }));
     } },
-  { label: '카카오', accounts: function () { return metaDailyLive_(kakaoAccounts_()); },
+  { label: '카카오', accounts: function () { return kakaoAccounts_(); },
     rows: function (id, day) {
       return metaDailyFromReport_(kakaoReport_({ account: id, since: day, until: day, refresh: true }));
     } },
   { label: '네이버 GFA', accounts: function () { return naverAccounts_(); },
-    rows: function (id, day) {
-      return metaDailyFromReport_(naverReport_({ account: id, since: day, until: day, refresh: true }));
-    } },
+    rows: function (id, day) { return metaDailyGfa_(id, day); } },
   { label: '네이버 검색광고', accounts: function () { return naverSaAccounts_(); },
     rows: function (id, day) {
       return metaDailyFromReport_(naverSaReport_({ since: day, until: day }));
@@ -7785,11 +7803,12 @@ function metaDailyText_(day) {
       var rows;
       try { rows = media.rows(account.id, day) || []; }
       catch (error) { trouble.push(media.label + ' ' + (account.name || account.id) + ' — ' + shortly(error)); return; }
+      var note = rows.note;
       rows = rows.filter(function (row) { return row.spend > 0; })
         .sort(function (a, b) { return b.spend - a.spend; });
       if (!rows.length) return;
       var mine = 0;
-      var lines = ['*[' + media.label + ' · ' + (account.name || account.id) + ']*'];
+      var lines = ['*[' + media.label + ' · ' + (account.name || account.id) + ']*' + (note ? ' _(' + note + ')_' : '')];
       rows.forEach(function (row) {
         mine += row.spend;
         lines.push(META_DAILY_LINE, '*' + row.campaign + '*',

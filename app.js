@@ -2217,7 +2217,7 @@ const perfNameHit = (name, wanted, bracketOnly) => {
    광고소재 파일명 · 메타 광고 세팅 · 카카오 광고 세팅이 이 한 표를 같이 쓴다. */
 const PRODUCT_PAIRS = [
   ['더플렌더MAX', 'flender-max'], ['더플렌더mini', 'flender-mini'], ['더플렌더', 'flender'],
-  ['더플렌더PLUS', 'flender-plus'], ['더슬림', 'theslim'], ['더시프트', 'theshift'],
+  ['더플렌더PLUS', 'flender-plus'], ['더플렌더PRO', 'flender-pro'], ['더슬림', 'theslim'], ['더시프트', 'theshift'],
   ['더에어드라이', 'theairdry'], ['식기세척기', 'dishwasher'], ['건조기', 'dryer'],
   ['건조기필터', 'dryerfilter'], ['건조기시트', 'dryersheets'], ['하드필터', 'hardfilter'],
   ['하드락필터', 'hardfilter-rock'], ['푸드컨테이너', 'foodcontainer'], ['식기세제', 'dishdetergent'],
@@ -2225,14 +2225,24 @@ const PRODUCT_PAIRS = [
 ];
 
 // 이 줄의 상품명 칸이 고른 제품인가. 안 골랐으면 다 통과시킨다.
+// 띄어쓰기는 보지 않는다 ('더 플렌더MAX' = '더플렌더MAX').
+// 상품명 칸이 빈 줄은 어느 제품인지 모르니 **빼지 않는다** — 빼면 세팅이 통째로 안 보인다.
 const productMatch = (cell, label) => {
-  const want = String(label ?? '').trim().toLowerCase();
+  const flat = (value) => String(value ?? '').replace(/\s+/g, '').toLowerCase();
+  const want = flat(label);
   if (!want) return true;
-  const text = String(cell ?? '').trim().toLowerCase();
-  if (!text) return false;
-  const found = PRODUCT_PAIRS.find(([name]) => name.toLowerCase() === want);
-  const code = String((found || [])[1] || '').toLowerCase();
+  const text = flat(cell);
+  if (!text) return true;
+  const found = PRODUCT_PAIRS.find(([name]) => flat(name) === want);
+  const code = flat((found || [])[1]);
   return text === want || (!!code && text === code);
+};
+
+// 고른 제품과 안 맞아 빠진 줄의 상품명을 센다 — "0줄" 안내에 실제로 적힌 이름을 보여 주려고.
+const productOthers = (names) => {
+  const count = new Map();
+  names.forEach((name) => count.set(name, (count.get(name) || 0) + 1));
+  return [...count].map(([name, n]) => `${name} ${n}줄`).join(' · ');
 };
 
 /* 제품 고르개 (메타 · 카카오 광고 세팅이 같이 쓴다).
@@ -6011,11 +6021,11 @@ if (adSetup) {
     const code = purposeCode(state.purpose);
     const found = [];
     let otherMedia = 0;
-    let otherProduct = 0;
+    const otherProduct = [];
     for (let i = 1; i < table.length; i += 1) {
       const one = rowOf(head, table[i]);
       if (one.setup.toLowerCase() !== want) continue;
-      if (!productMatch(one.product, state.product)) { otherProduct += 1; continue; }
+      if (!productMatch(one.product, state.product)) { otherProduct.push(one.product.trim()); continue; }
       const media = one.media.toLowerCase();
       if (media.indexOf('메타') < 0 && media.indexOf('페이스북') < 0 && media.indexOf('facebook') < 0) { otherMedia += 1; continue; }
       if (state.purpose) {
@@ -6033,8 +6043,8 @@ if (adSetup) {
       : { state: 'done',
         message: otherMedia
           ? `[${part}] 탭의 '${mark}' 에 메타 줄이 없습니다 (다른 매체로 ${otherMedia}줄 있습니다 — 파트를 확인해 보세요).`
-          : otherProduct
-            ? `[${part}] 탭의 '${setup}' 에 '${state.product}' 줄이 없습니다 (다른 제품으로 ${otherProduct}줄 있습니다).`
+          : otherProduct.length
+            ? `[${part}] 탭의 '${setup}' 에 '${state.product}' 줄이 없습니다 — 시트 상품명: ${productOthers(otherProduct)}. 제품을 '제품 전체' 로 두거나 시트 상품명을 맞춰 주세요.`
             : `[${part}] 탭에서 '${mark}' 로 된 메타 줄을 찾지 못했습니다 — 파트 · 세팅명 · 제품 · 목적 필터를 확인하세요.` };
     if (found.length) selectRow(0, false);
     matchPicks();
@@ -7176,7 +7186,7 @@ if (kakaoSetup) {
     const want = KIND_MEDIA[state.kind];
     const found = [];
     let otherKind = 0;
-    let otherProduct = 0;
+    const otherProduct = [];
     let noColumn = 0;
     tables.forEach((table) => {
       if (!table.length) return;
@@ -7185,7 +7195,7 @@ if (kakaoSetup) {
       for (let i = 1; i < table.length; i += 1) {
         const one = rowOf(head, table[i]);
         if (one.setup.toLowerCase() !== key) continue;
-        if (!productMatch(one.product, state.product)) { otherProduct += 1; continue; }
+        if (!productMatch(one.product, state.product)) { otherProduct.push(one.product.trim()); continue; }
         if (one.media.indexOf('카카오') < 0) continue;
         if (one.media.indexOf(want) < 0) { otherKind += 1; continue; }
         found.push(one);
@@ -7205,8 +7215,8 @@ if (kakaoSetup) {
           ? `파트 탭에 '${COL.setup}' 칸이 없습니다 — 시트 메뉴 [UTM → 전체 행 다시 계산] 을 한 번 눌러 칸을 만들어 주세요.`
           : otherKind
             ? `'${mark}' 에 카카오-${want} 줄이 없습니다 (다른 종류로 ${otherKind}줄 있습니다 — 위에서 종류를 바꿔 보세요).`
-            : otherProduct
-              ? `'${setup}' 에 '${state.product}' 줄이 없습니다 (다른 제품으로 ${otherProduct}줄 있습니다).`
+            : otherProduct.length
+              ? `'${setup}' 에 '${state.product}' 줄이 없습니다 — 시트 상품명: ${productOthers(otherProduct)}. 제품을 '제품 전체' 로 두거나 시트 상품명을 맞춰 주세요.`
               : `'${mark}' 로 된 카카오 줄을 시트에서 못 찾았습니다.` };
     }
     matchPicks();
