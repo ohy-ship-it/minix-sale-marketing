@@ -892,23 +892,70 @@ function weeksNoteClash_(card, clash, by, at, keptBy) {
   return card;
 }
 
+/* ── 지우기는 '지우라고 한 것' 만 ─────────────────────────────────────
+   예전에는 '화면이 보낸 목록에 없으면 지운 것' 으로 봤다. 그러면 화면이 무엇을 빠뜨리기만 해도
+   시트에서 지워진다 — 탭을 둘 열어 둔 채 옛 탭에서 저장, 저장이 실패한 채 새로고침,
+   오래 열어 둔 화면에서 저장 … 그렇게 주차째(11월 3주차) · 카드째 자꾸 사라졌다.
+   그래서 이제는 화면이 [삭제] 를 누른 주차 · 카드 ID 를 payload.drops 에 따로 실어 보내고,
+   서버는 거기 적힌 것만 지운다. 보낸 목록에 빠졌을 뿐인 주차 · 카드는 그대로 둔다.
+     payload.drops = { weeks: [주차 ID], cards: [카드 ID] }
+   drops 를 안 보내는 옛 화면(캐시된 app.js)은 **아무 것도 못 지운다** — 안전한 쪽이다.
+   지우라고 했어도 그 사이 남이 고쳤거나, 지운 사람이 본 적 없는 카드(그 뒤 남이 적은 것)는 남긴다.
+   그리고 실제로 지운 것은 전부 '주간소재요청_휴지통' 시트에 한 줄씩 남긴다 (되살릴 수 있게). */
+var WEEKS_TRASH_NAME = '주간소재요청_휴지통';
+var WEEKS_TRASH_HEADERS = ['지운 시각', '지운 사람', '종류', '주차', '주차 ID', '카드 ID', '카드 이름', '내용(JSON)'];
+
+function weeksDrops_(payload) {
+  var drops = payload && payload.drops;
+  if (!drops || typeof drops !== 'object') return null;   // 옛 화면 — 아무 것도 안 지운다
+  var out = { weeks: {}, cards: {} };
+  (Array.isArray(drops.weeks) ? drops.weeks : []).forEach(function (id) { out.weeks[String(id)] = true; });
+  (Array.isArray(drops.cards) ? drops.cards : []).forEach(function (id) { out.cards[String(id)] = true; });
+  return out;
+}
+
+function weeksTrashLine_(when, who, kind, line, card) {
+  var weekName = [line[2], line[3], line[4]].map(function (one) { return String(one || ''); }).join(' ');
+  var body = JSON.stringify(card || null);
+  return [when, who, kind, weekName, String(line[1] || ''), String((card && card.id) || ''),
+    String((card && card.name) || ''), body.length > 49000 ? body.slice(0, 49000) : body];
+}
+
+function weeksTrash_(lines) {
+  if (!lines.length) return;
+  var book = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = book.getSheetByName(WEEKS_TRASH_NAME);
+  if (!sheet) {
+    sheet = book.insertSheet(WEEKS_TRASH_NAME, book.getNumSheets());
+    sheet.getRange(1, 1, 1, WEEKS_TRASH_HEADERS.length).setValues([WEEKS_TRASH_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(4, 160);
+    sheet.setColumnWidth(7, 240);
+    sheet.setColumnWidth(8, 520);
+  }
+  sheet.getRange(sheet.getLastRow() + 1, 1, lines.length, WEEKS_TRASH_HEADERS.length).setValues(lines);
+}
+
+function weeksParseCards_(text) {
+  try {
+    var cards = JSON.parse(String(text || '[]'));
+    return Array.isArray(cards) ? cards : [];
+  } catch (error) { return []; }
+}
+
 /* 보낸 주차들의 카드를 시트 것과 합친다 (weeks 의 rows 를 바꿔 둔다).
    payload.baseIds   = 그 화면이 시트에서 받은 적 있는 카드 ID 전부
    payload.baseCards = 그중 지금 보낸 것과 다른 카드의 받은 모습 (같은 카드는 안 보낸다 — 보낸 것이 곧 base)
-   - 시트에만 있고 그 화면이 본 적 없는 카드 → 남이 그 뒤에 적은 카드라 살린다.
-   - 그 화면이 알던 카드가 보낸 목록에 없다 → 그 사람이 지웠다. 단, 그 사이 남이 고쳤으면 남긴다.
-   - 그 화면이 알던 카드가 시트에 없다 → 남이 지웠다. 이 사람도 안 고쳤으면 따라 지운다.
-   baseIds 를 안 보내는 옛 화면은 보낸 카드가 그대로 이기고, 본 적 없는 카드만 살린다. */
-function weeksMerge_(sheet, weeks, payload) {
-  var stats = { merged: 0, revived: 0, clashed: 0 };
-  var last = sheet.getLastRow();
-  if (last < 2) return stats;
+   - 시트에만 있고 보낸 목록에 없는 카드 → 지우라고 한 카드(drops.cards)이고 그 사이 아무도
+     안 고쳤을 때만 지운다 (휴지통에 남긴다). 그 밖에는 모두 살린다.
+   - 다른 주차로 옮긴 카드(보낸 다른 주차에 들어 있다) → 이 주차에서는 빼도 된다.
+   - 그 화면이 알던 카드가 시트에 없다 → 남이 지웠다. 이 사람도 안 고쳤으면 따라 지운다. */
+function weeksMerge_(sheetLines, weeks, payload, ctx) {
+  var stats = { merged: 0, revived: 0, clashed: 0, dropped: 0 };
+  if (!sheetLines.length) return stats;
   var fresh = Array.isArray(payload && payload.baseIds);
   var baseCards = (payload && payload.baseCards && !Array.isArray(payload.baseCards)) ? payload.baseCards : {};
-  var known = {};
-  // 하루 동안 나갔던 화면(v320)은 baseCards 에 ID 목록만 담아 보낸다 — 아는 카드로만 쓴다
-  var ids = fresh ? payload.baseIds : (Array.isArray(payload && payload.baseCards) ? payload.baseCards : []);
-  ids.forEach(function (id) { known[String(id)] = true; });
+  var known = ctx.known;
   var baseOf = function (id, mine) {
     if (!known[id]) return null;
     if (baseCards[id]) return baseCards[id];
@@ -916,11 +963,10 @@ function weeksMerge_(sheet, weeks, payload) {
   };
 
   var sheetWeeks = {};
-  sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).getValues().forEach(function (line) {
-    var cards = [];
-    try { cards = JSON.parse(String(line[5] || '[]')) || []; } catch (error) { cards = []; }
+  sheetLines.forEach(function (line) {
     sheetWeeks[String(line[1] || '').trim()] = {
-      cards: cards,
+      line: line,
+      cards: weeksParseCards_(line[5]),
       by: String(line[6] || ''),
       at: line[7] instanceof Date ? line[7].toISOString() : String(line[7] || '')
     };
@@ -954,11 +1000,13 @@ function weeksMerge_(sheet, weeks, payload) {
     there.forEach(function (theirs) {
       var id = String((theirs && theirs.id) || '');
       if (!id || seen[id]) return;
-      if (known[id]) {
-        var base = baseCards[id];
-        if (!base || weeksSame_(base, theirs)) return;   // 이 사람이 지웠다
+      if (ctx.sentCards[id]) return;   // 다른 주차로 옮겼다 — 거기 들어 있다
+      if (ctx.drops && ctx.drops.cards[id] && baseCards[id] && weeksSame_(baseCards[id], theirs)) {
+        ctx.trash.push(weeksTrashLine_(ctx.now, ctx.who, '카드', sheetWeek.line, theirs));
+        stats.dropped += 1;
+        return;   // 이 사람이 지웠고, 그 사이 아무도 안 고쳤다
       }
-      out.push(theirs);   // 본 적 없는 카드 · 지운 뒤 남이 고친 카드
+      out.push(theirs);   // 지우라고 안 한 카드 · 본 적 없는 카드 · 지운 뒤 남이 고친 카드
       stats.revived += 1;
     });
     week.rows = out;
@@ -966,11 +1014,13 @@ function weeksMerge_(sheet, weeks, payload) {
   return stats;
 }
 
-// 화면이 가진 목록 전체를 그대로 받아 시트를 그 모양으로 맞춘다 (차례까지 그대로).
-// 여러 사람이 같은 순간에 저장하면 뒤에 온 것이 이긴다 — 자물쇠로 겹쳐 쓰는 것만 막는다.
+// 화면이 가진 목록을 받아 시트를 맞춘다 (차례까지 그대로). 단, 지우라고 한 것(drops)만 지운다.
+// 여러 사람이 같은 순간에 저장하면 자물쇠로 줄을 세우고, 카드는 칸마다 합친다 (weeksMerge_).
 function weeksPut_(payload) {
   var weeks = (payload && payload.weeks) || [];
-  if (!weeks.length && !(payload && payload.allowEmpty)) {
+  var drops = weeksDrops_(payload);
+  var dropsSomething = drops && (Object.keys(drops.weeks).length || Object.keys(drops.cards).length);
+  if (!weeks.length && !(payload && payload.allowEmpty) && !dropsSomething) {
     throw new Error('빈 목록으로는 덮어쓰지 않습니다 (실수로 다 지우는 것을 막습니다).');
   }
   var who = String((payload && payload.by) || '');
@@ -978,35 +1028,74 @@ function weeksPut_(payload) {
   lock.waitLock(20000);
   try {
     var sheet = weeksSheet_();
-    // 카드는 칸마다 시트 것과 합친다 — 남이 그 사이 고친 칸 · 적은 카드를 지킨다 (weeksMerge_)
-    var stats = weeksMerge_(sheet, weeks, payload);
-    // 이 화면이 본 적 없는 주차는 지우지 않고 뒤에 살려 둔다
-    var kept = keepUnseen_(sheet, WEEKS_HEADERS.length, 2, weeks, payload && payload.base);
+    var now = new Date();
     var last = sheet.getLastRow();
-    if (last > 1) sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).clearContent();
-    if (weeks.length) {
-      var now = new Date();
-      var lines = weeks.map(function (one, at) {
-        return [
-          at + 1,
-          String(one.id || ''),
-          String(one.year || ''),
-          String(one.month || ''),
-          String(one.week || ''),
-          JSON.stringify(one.rows || []),
-          who,
-          now
-        ];
+    var sheetLines = last > 1 ? sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).getValues() : [];
+    var ctx = { known: {}, sentCards: {}, drops: drops, trash: [], who: who, now: now };
+    var ids = Array.isArray(payload && payload.baseIds) ? payload.baseIds
+      : (Array.isArray(payload && payload.baseCards) ? payload.baseCards : []);
+    ids.forEach(function (id) { ctx.known[String(id)] = true; });
+    var sent = {};
+    weeks.forEach(function (week) {
+      sent[String(week.id || '')] = true;
+      (week.rows || []).forEach(function (card) { if (card && card.id) ctx.sentCards[String(card.id)] = true; });
+    });
+    var baseCards = (payload && payload.baseCards && !Array.isArray(payload.baseCards)) ? payload.baseCards : {};
+
+    // 카드는 칸마다 시트 것과 합친다 — 남이 그 사이 고친 칸 · 적은 카드를 지킨다
+    var stats = weeksMerge_(sheetLines, weeks, payload, ctx);
+
+    var out = weeks.map(function (one) {
+      return [0, String(one.id || ''), String(one.year || ''), String(one.month || ''), String(one.week || ''),
+        JSON.stringify(one.rows || []), who, now];
+    });
+    // 시트에 있는데 보낸 목록에 없는 주차
+    var keptWeeks = 0;
+    var droppedWeeks = 0;
+    sheetLines.forEach(function (line, at) {
+      var id = String(line[1] || '').trim();
+      if (!id || sent[id]) return;
+      var cards = weeksParseCards_(line[5]);
+      var stay = cards.filter(function (card) {
+        var cardId = String((card && card.id) || '');
+        return cardId && !ctx.sentCards[cardId];   // 다른 주차로 옮긴 카드는 뺀다
       });
-      sheet.getRange(2, 1, lines.length, WEEKS_HEADERS.length).setValues(lines);
-    }
-    if (kept.length) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, kept.length, WEEKS_HEADERS.length).setValues(kept);
-    }
-    // 합친 결과를 돌려준다 — 화면이 남이 고친 것을 받아 보여 주고, 다음 저장의 base 로 쓴다
-    return { ok: true, saved: weeks.length, kept: kept.length,
+      if (drops && drops.weeks[id]) {
+        // 지운 사람이 본 그대로인 카드만 지운다. 그 뒤 남이 적거나 고친 카드는 주차째 남긴다.
+        var left = stay.filter(function (card) {
+          var cardId = String(card.id);
+          return !(ctx.known[cardId] && baseCards[cardId] && weeksSame_(baseCards[cardId], card));
+        });
+        stay.forEach(function (card) {
+          if (left.indexOf(card) < 0) ctx.trash.push(weeksTrashLine_(now, who, '카드 (주차 삭제)', line, card));
+        });
+        if (!left.length) {
+          ctx.trash.push(weeksTrashLine_(now, who, '주차', line, null));
+          droppedWeeks += 1;
+          return;
+        }
+        stay = left;
+      }
+      var copy = line.slice();
+      copy[5] = JSON.stringify(stay);
+      keptWeeks += 1;
+      out.splice(Math.min(at, out.length), 0, copy);   // 원래 있던 자리 근처에 둔다
+    });
+    out.forEach(function (line, at) { line[0] = at + 1; });
+
+    // 휴지통을 먼저 적는다 — 거기서 실패하면 시트는 건드리지 않는다
+    weeksTrash_(ctx.trash);
+    if (last > 1) sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).clearContent();
+    if (out.length) sheet.getRange(2, 1, out.length, WEEKS_HEADERS.length).setValues(out);
+
+    // 합친 결과를 돌려준다 — 화면이 남이 고친 것 · 남겨 둔 주차를 받아 보여 주고, 다음 저장의 base 로 쓴다
+    return { ok: true, saved: weeks.length, kept: keptWeeks,
       merged: stats.merged, revived: stats.revived, clashed: stats.clashed,
-      weeks: weeks.map(function (one) { return { id: String(one.id || ''), rows: one.rows || [] }; }),
+      dropped: stats.dropped, droppedWeeks: droppedWeeks, trashed: ctx.trash.length,
+      weeks: out.map(function (line) {
+        return { id: String(line[1] || ''), year: String(line[2] || ''), month: String(line[3] || ''),
+          week: String(line[4] || ''), rows: weeksParseCards_(line[5]) };
+      }),
       savedAt: new Date().toISOString() };
   } finally {
     lock.releaseLock();

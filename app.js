@@ -185,6 +185,24 @@ if (creativeBoard) {
     } catch { return []; }
   };
   const knownWrite = (ids) => { try { localStorage.setItem(KNOWN_KEY, JSON.stringify(ids)); } catch { /* 거들기다 */ } };
+  /* **[삭제] 를 누른 주차 · 카드 ID.** 서버는 이 목록에 있는 것만 지운다 (Code.gs weeksPut_).
+     예전에는 '보낸 목록에 없으면 지운 것' 이라, 탭 두 개 · 실패한 저장 뒤 새로고침 · 오래 열어 둔 화면에서
+     저장하면 남의 주차 · 카드가 통째로 사라졌다 (11월 3주차). 보내서 시트가 받으면 비운다.
+     새로고침해도 안 잃게 localStorage 에도 둔다. */
+  const DROP_KEY = 'minix-creative-drops';
+  let drops = (() => {
+    try {
+      const kept = JSON.parse(localStorage.getItem(DROP_KEY) || '{}') || {};
+      return { weeks: Array.isArray(kept.weeks) ? kept.weeks : [], cards: Array.isArray(kept.cards) ? kept.cards : [] };
+    } catch { return { weeks: [], cards: [] }; }
+  })();
+  const dropsWrite = () => { try { localStorage.setItem(DROP_KEY, JSON.stringify(drops)); } catch { /* 거들기다 */ } };
+  const markDrop = (kind, id) => {
+    if (!id || drops[kind].includes(id)) return;
+    drops[kind] = drops[kind].concat(id).slice(-500);
+    dropsWrite();
+  };
+  const isDropped = (kind, id) => drops[kind].includes(id);
   /* 카드는 여럿이 같이 고친다. 이 화면이 시트에서 **마지막으로 받은 카드의 모습**을 둔다 (base).
      저장할 때 같이 보내면 서버가 칸마다 견줘, 이 사람이 안 고친 칸은 시트(남이 고친) 것을 지킨다.
      견주는 셈은 Code.gs weeksMergeValue_ 와 같다 — 한쪽을 고치면 다른 쪽도 고칠 것. */
@@ -320,12 +338,20 @@ if (creativeBoard) {
      (보낸 모습 sent 를 base 로 놓고 같은 셈으로 견준다). */
   const takeMerged = (sent, merged) => {
     if (!Array.isArray(merged)) { cardBaseWrite(sent); return; }   // 옛 서버 — 보낸 것이 곧 시트다
-    const got = merged.map((one) => ({ id: one.id, rows: (one.rows || []).map(normalize) }));
+    const got = merged.map((one) => ({ id: one.id, year: one.year, month: one.month, week: one.week,
+      rows: (one.rows || []).map(normalize) }));
     const sentById = new Map(sent.flatMap((one) => one.rows.map((row) => [row.id, row])));
     let changed = false;
-    got.forEach((there) => {
+    got.forEach((there, at) => {
       const week = weeks.find((one) => one.id === there.id);
-      if (!week) return;   // 그 사이 이 화면에서 지운 주차
+      if (!week) {
+        /* 이 화면에 없는 주차를 시트가 남겨 두었다 (남이 만든 주차 · 이 화면이 놓친 주차).
+           [삭제] 를 누른 것이 아니면 받아 들인다 — 다음 저장에서 빠뜨려 지우는 일이 없게. */
+        if (isDropped('weeks', there.id) || !there.month) return;
+        weeks.splice(Math.min(at, weeks.length), 0, normalizeWeek(there));
+        changed = true;
+        return;
+      }
       const byId = new Map(there.rows.map((row) => [row.id, row]));
       const out = [];
       week.rows.forEach((now) => {
@@ -376,9 +402,16 @@ if (creativeBoard) {
     const baseIds = Object.keys(cardBase);
     const baseCards = {};   // 보낸 것과 같은 카드는 안 보낸다 (그 카드는 보낸 것이 곧 base)
     baseIds.forEach((id) => { if (!same(sentById.get(id), cardBase[id])) baseCards[id] = cardBase[id]; });
-    const mine = askSheet({ action: 'weeksPut', weeks: sent, base: knownRead(), baseIds, baseCards, by: '' })
+    const sentDrops = { weeks: drops.weeks.slice(), cards: drops.cards.slice() };
+    const mine = askSheet({ action: 'weeksPut', weeks: sent, base: knownRead(), baseIds, baseCards, drops: sentDrops, by: '' })
       .then((body) => {
-        knownWrite(sent.map((one) => one.id));   // 시트가 이제 이 주차들을 안다
+        // 시트가 받은 삭제는 목록에서 뺀다 (보내는 사이에 새로 누른 것은 남는다)
+        drops = {
+          weeks: drops.weeks.filter((id) => !sentDrops.weeks.includes(id)),
+          cards: drops.cards.filter((id) => !sentDrops.cards.includes(id)),
+        };
+        dropsWrite();
+        knownWrite(((body && body.weeks) || sent).map((one) => one.id));   // 시트가 이제 이 주차들을 안다
         takeMerged(sent, body && body.weeks);
         const at = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
         const theirs = (body && (body.merged || 0) + (body.revived || 0)) || 0;
@@ -448,15 +481,44 @@ if (creativeBoard) {
   const pullWeeks = (mine) => flushWeeks()
     .then(() => askSheet({ action: 'weeksGet' }))
     .then((body) => {
-      const got = (body.weeks || []).map(normalizeWeek);
+      // raw = 시트에 있는 그대로. 받은 기록(known · cardBase)은 이것으로 적는다 —
+      // 아래에서 got 에 살려 넣는 카드는 아직 시트에 없으니 '받은 카드' 로 적으면 안 된다
+      // (적으면 서버가 '남이 지운 카드' 로 보고 지운다).
+      const raw = (body.weeks || []).map(normalizeWeek);
+      const got = raw.map((one) => ({ ...one, rows: one.rows.slice() }));
       const first = !weekPulled;
       weekPulled = true;
       let push = false;
       let told = false;   // 없어진 주차를 이미 알렸나 (아래 기본 알림이 그 말을 덮지 않게)
+      /* 아직 시트에 못 보낸 [삭제] 가 있으면 시트 것에서도 빼 두고 다시 보낸다
+         (안 그러면 지운 것이 되살아난 것처럼 보인다). */
+      const pending = drops.weeks.length + drops.cards.length > 0;
+      for (let at = got.length - 1; at >= 0; at -= 1) {
+        if (isDropped('weeks', got[at].id)) got.splice(at, 1);
+        else got[at].rows = got[at].rows.filter((row) => !isDropped('cards', row.id));
+      }
+      if (pending) push = true;
+      /* **시트에 한 번도 못 올라간 카드는 버리지 않는다.** 저장이 실패한 채(로그인 만료 · 네트워크)
+         새로고침하면, 시트 것으로 바꿔 그리면서 그 카드가 말없이 사라졌다.
+         시트에서 받은 적 있는 카드(cardBase)가 시트에 없으면 남이 지운 것이라 따른다. */
+      const gotIds = new Set(got.flatMap((one) => one.rows.map((row) => row.id)));
+      let rescued = 0;
+      weeks.forEach((old) => {
+        const there = got.find((one) => one.id === old.id);
+        if (!there) return;
+        old.rows.forEach((row) => {
+          if (gotIds.has(row.id) || cardBase[row.id] || isDropped('cards', row.id)) return;
+          there.rows.push(row);
+          gotIds.add(row.id);
+          rescued += 1;
+        });
+      });
+      if (rescued) push = true;
       if (first && !mine) {
         const sameWeek = (a, b) => a.year === b.year && a.month === b.month && a.week === b.week;
         const known = knownRead();
         const onlyHere = weeks.filter((one) => {
+          if (isDropped('weeks', one.id)) return false;               // 이 화면에서 지운 주차
           if (known.includes(one.id)) return false;                    // 시트가 알던 주차 — 남이 지운 것이다
           if (got.some((there) => there.id === one.id)) return false;   // 시트에 이미 있다
           /* 년 · 월 · 주차가 같은 주차가 시트에 있어도 **카드가 들어 있으면 버리지 않는다.**
@@ -468,15 +530,27 @@ if (creativeBoard) {
         });
         weekBackup();
         weeks = got.concat(onlyHere);
-        push = onlyHere.length > 0;
-        if (push) weekNote = `이 브라우저에만 있던 ${onlyHere.length}개를 시트에 올립니다`;
+        if (onlyHere.length || rescued) {
+          weekNote = `이 브라우저에만 있던 ${onlyHere.length ? `주차 ${onlyHere.length}개` : ''}`
+            + `${onlyHere.length && rescued ? ' · ' : ''}${rescued ? `카드 ${rescued}장` : ''}을 시트에 올립니다`;
+        }
+        push = push || onlyHere.length > 0;
       } else {
-        /* 시트에 없는데 여기에는 카드가 들어 있는 주차. 조용히 지우지 않고 알려 준다 —
-           '적었는데 날아갔다' 는 말이 나오는 자리가 여기다. */
-        const lost = weeks.filter((one) => one.rows.length
+        /* 시트에 없는데 여기에는 카드가 들어 있는 주차.
+           시트에 한 번도 못 올라간 카드가 들어 있으면(저장 실패) 버리지 않고 다시 올린다.
+           시트에서 받은 카드뿐이면 남이 지운 것이라 따르되, 조용히 지우지 않고 알려 준다. */
+        const missing = weeks.filter((one) => one.rows.length && !isDropped('weeks', one.id)
           && !got.some((there) => there.id === one.id));
+        const unsent = missing.filter((one) => one.rows.some((row) => !cardBase[row.id]));
+        const lost = missing.filter((one) => !unsent.includes(one));
         weekBackup();
-        weeks = got;
+        weeks = got.concat(unsent);
+        if (unsent.length) push = true;
+        if (unsent.length || rescued) {
+          weekNote = `시트에 아직 없던 ${unsent.length ? `주차 ${unsent.length}개` : ''}`
+            + `${unsent.length && rescued ? ' · ' : ''}${rescued ? `카드 ${rescued}장` : ''}을 다시 올립니다`;
+          told = true;
+        }
         if (lost.length) {
           weekNote = `시트에 없어 ${lost.length}개 주차(${lost.map(weekName).join(" · ")})를 내렸습니다`
             + ' — 되살리려면 F12 콘솔에서 localStorage.getItem(\'minix-creative-weeks-backup\')';
@@ -484,8 +558,8 @@ if (creativeBoard) {
         }
       }
       weekCache();
-      knownWrite(got.map((one) => one.id));
-      cardBaseWrite(got);
+      knownWrite(raw.map((one) => one.id));
+      cardBaseWrite(raw);
       if (!push && !told) weekNote = weeks.length ? '' : '시트에 주차가 없습니다';
       if (push) save();               // 올려 준다 (save 가 알림도 갈아 준다)
       if (weekList && !weekList.hidden) renderWeekList();
@@ -927,6 +1001,7 @@ if (creativeBoard) {
         if (!window.confirm(`'${row.name || '제목 없음'}' 카드를 지울까요?`)) return;
         const gone = rows.findIndex((one) => one.id === row.id);
         if (gone >= 0) rows.splice(gone, 1);
+        markDrop('cards', row.id);
         if (openId === row.id) closePeek();
         save();
         renderBoard();
@@ -1024,6 +1099,7 @@ if (creativeBoard) {
     if (event.target.closest('.peek-delete')) {
       const index = rows.findIndex((entry) => entry.id === row.id);
       if (index >= 0) rows.splice(index, 1);
+      markDrop('cards', row.id);
       closePeek();
       save();
       renderBoard();
@@ -1444,6 +1520,7 @@ if (creativeBoard) {
     if (event.target.closest('.week-delete')) {
       if (!window.confirm(`'${weekName(week)}'을(를) 삭제할까요? 카드 ${week.rows.length}건이 함께 사라집니다.`)) return;
       weeks = weeks.filter((entry) => entry.id !== week.id);
+      markDrop('weeks', week.id);
       editingWeekId = null;
       save();
       renderWeekList();
