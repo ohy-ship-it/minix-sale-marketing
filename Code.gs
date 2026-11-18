@@ -2217,7 +2217,9 @@ var RESULT_GROUPS = [
      omni_purchase 를 먼저 보면 그 몫이 빠져 화면보다 적게 나온다.
      purchaseValue_ 도 이 차례를 그대로 쓰므로 전환값(구매매출)도 같은 자리에서 온다. */
   { key: 'purchase', types: ['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_web_purchase'] },
-  { key: 'addToCart', types: ['omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart', 'add_to_cart'] },
+  /* 장바구니도 구매와 같은 까닭으로 **'공유 항목이 포함된 장바구니 담기'(add_to_cart)** 를 맨 앞에 둔다.
+     omni_add_to_cart 를 먼저 보면 공유된 게시물로 일어난 담기가 빠져 관리자 화면보다 적게 나왔다 (11/18). */
+  { key: 'addToCart', types: ['add_to_cart', 'omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart'] },
   { key: 'lead', types: ['lead', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.lead_grouped'] },
   /* 커스텀 이벤트 (맞춤 이벤트). 광고세트가 promoted_object 의 custom_event_str 로
      최적화하는 캠페인들이 여기 걸린다 — lead_Alarm 계열이 그렇다. 이걸 안 세면
