@@ -373,11 +373,15 @@ if (creativeBoard) {
       week.rows = out;
     });
     cardBaseWrite(got);
+    /* 위에서 week.rows 를 **새 배열로 바꿨다.** 보드(rows)는 꼭 새 배열을 다시 쥐어야 한다.
+       예전에는 바뀐 것이 없으면(대부분의 저장) 여기서 그냥 돌아가, 보드가 옛 배열을 쥔 채 남았다.
+       그 뒤 [+ 새로 만들기] 로 넣은 카드는 옛 배열에만 들어가 화면에는 보이는데 저장 · 캐시에서
+       빠졌고, 새로고침하면 사라졌다 (11/4 v321 부터 — '카드가 자주 사라진다' 의 큰 원인). */
+    const open = currentWeek();
+    if (open) rows = open.rows;
     if (!changed) return;
     weekCache();
-    const open = currentWeek();
     if (open) {
-      rows = open.rows;
       renderBoard();
       // 적고 있는 칸이 있으면 상세창은 다시 그리지 않는다 (글자가 끊긴다). 고친 값은 카드에 이미 들어 있다.
       if (openId && !peek.contains(document.activeElement)) renderPeek();
@@ -448,7 +452,17 @@ if (creativeBoard) {
     } catch { /* 아직 상세창이 없다 */ }
   };
 
+  /* 보드가 쥔 배열(rows)이 열린 주차의 배열과 갈라져 있으면 다시 붙인다 — 보드에만 있는 카드는
+     주차로 옮겨 담는다. 갈라진 채 저장하면 보드에만 있는 카드가 시트 · 캐시에서 빠진다. */
+  const reattachRows = () => {
+    const open = currentWeek();
+    if (!open || open.rows === rows) return;
+    rows.forEach((row) => { if (!open.rows.some((one) => one.id === row.id)) open.rows.push(row); });
+    rows = open.rows;
+  };
+
   const save = () => {
+    reattachRows();
     weekCache();
     if (weekSaveWait) window.clearTimeout(weekSaveWait);
     weekNote = '저장 중…';
