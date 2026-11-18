@@ -28,6 +28,8 @@ $ErrorActionPreference = "Stop"
 $folder = $PSScriptRoot
 if (-not $folder) { $folder = (Get-Location).Path }
 $batch = Join-Path $folder "gfa_load.bat"
+# -File 로 부르면 '08:30,13:00' 이 쉼표로 갈리지 않고 한 덩어리로 온다. 여기서 가른다.
+$At = @($At | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ })
 
 if ($Remove) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
