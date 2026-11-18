@@ -943,6 +943,45 @@ function weeksParseCards_(text) {
   } catch (error) { return []; }
 }
 
+/* 30분마다 '주간소재요청' 탭 전체를 '주간소재요청_기록' 탭에 떠 둔다 (저장이 들어올 때 잰다).
+   휴지통은 카드 한 장씩이고, 이건 그 시각의 판 전체다 — 무엇이 어떻게 바뀌었든 그 시각으로 되돌릴 수 있다.
+   한 줄 = 그 시각의 주차 하나 (주간소재요청 줄 그대로 + 맨 앞에 기록 시각). 14일 지난 것은 지운다.
+   기록이 실패해도 저장은 막지 않는다. */
+var WEEKS_SNAP_NAME = '주간소재요청_기록';
+var WEEKS_SNAP_EVERY_MIN = 30;
+var WEEKS_SNAP_KEEP_DAYS = 14;
+
+function weeksSnapshot_(sheetLines, now) {
+  try {
+    if (!sheetLines.length) return;
+    var props = PropertiesService.getScriptProperties();
+    var lastAt = Number(props.getProperty('WEEKS_SNAP_AT') || 0);
+    if (now.getTime() - lastAt < WEEKS_SNAP_EVERY_MIN * 60 * 1000) return;
+    var book = SpreadsheetApp.openById(SHEET_ID);
+    var sheet = book.getSheetByName(WEEKS_SNAP_NAME);
+    var width = WEEKS_HEADERS.length + 1;
+    if (!sheet) {
+      sheet = book.insertSheet(WEEKS_SNAP_NAME, book.getNumSheets());
+      sheet.getRange(1, 1, 1, width).setValues([['기록 시각'].concat(WEEKS_HEADERS)]).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+    }
+    var lines = sheetLines.filter(function (line) { return String(line[1] || '').trim(); })
+      .map(function (line) { return [now].concat(line.slice(0, WEEKS_HEADERS.length)); });
+    if (lines.length) sheet.getRange(sheet.getLastRow() + 1, 1, lines.length, width).setValues(lines);
+    props.setProperty('WEEKS_SNAP_AT', String(now.getTime()));
+    // 오래된 기록 지우기 — 시각 순으로 쌓이므로 앞에서부터 센다
+    var last = sheet.getLastRow();
+    if (last < 2) return;
+    var cutoff = now.getTime() - WEEKS_SNAP_KEEP_DAYS * 24 * 60 * 60 * 1000;
+    var times = sheet.getRange(2, 1, last - 1, 1).getValues();
+    var old = 0;
+    while (old < times.length && times[old][0] instanceof Date && times[old][0].getTime() < cutoff) old += 1;
+    if (old) sheet.deleteRows(2, old);
+  } catch (error) {
+    console.warn('주간소재요청 기록 실패: ' + (error && error.message));
+  }
+}
+
 /* 보낸 주차들의 카드를 시트 것과 합친다 (weeks 의 rows 를 바꿔 둔다).
    payload.baseIds   = 그 화면이 시트에서 받은 적 있는 카드 ID 전부
    payload.baseCards = 그중 지금 보낸 것과 다른 카드의 받은 모습 (같은 카드는 안 보낸다 — 보낸 것이 곧 base)
@@ -963,10 +1002,15 @@ function weeksMerge_(sheetLines, weeks, payload, ctx) {
   };
 
   var sheetWeeks = {};
+  // 시트 전체의 카드 (주차를 가리지 않고). 다른 주차로 옮긴 카드는 이 주차 줄에는 없어도 시트에는 있다 —
+  // 이 주차 줄만 보면 '남이 지웠다' 로 잘못 보고 빼 버렸다.
+  var anyWeek = {};
   sheetLines.forEach(function (line) {
+    var cards = weeksParseCards_(line[5]);
+    cards.forEach(function (card) { if (card && card.id) anyWeek[String(card.id)] = card; });
     sheetWeeks[String(line[1] || '').trim()] = {
       line: line,
-      cards: weeksParseCards_(line[5]),
+      cards: cards,
       by: String(line[6] || ''),
       at: line[7] instanceof Date ? line[7].toISOString() : String(line[7] || '')
     };
@@ -983,7 +1027,7 @@ function weeksMerge_(sheetLines, weeks, payload, ctx) {
     (week.rows || []).forEach(function (mine) {
       var id = String((mine && mine.id) || '');
       seen[id] = true;
-      var theirs = thereById[id];
+      var theirs = thereById[id] || anyWeek[id];   // 옮겨 온 카드는 원래 주차의 것과 견준다
       var base = baseOf(id, mine);
       if (theirs && base) {
         var clash = [];
@@ -1083,8 +1127,27 @@ function weeksPut_(payload) {
     });
     out.forEach(function (line, at) { line[0] = at + 1; });
 
+    /* 안전망 — **어떤 길로든** 시트에서 빠지는 카드는 휴지통에 남긴다.
+       위의 [삭제] 말고도 '남이 지웠고 이 사람은 안 고쳤다'(weeksMerge_) 같은 길로 빠질 수 있다.
+       맞는 판단이어도 되살릴 자리는 있어야 한다. 다른 주차로 옮긴 카드는 빠진 것이 아니다. */
+    var afterIds = {};
+    out.forEach(function (line) {
+      weeksParseCards_(line[5]).forEach(function (card) { if (card && card.id) afterIds[String(card.id)] = true; });
+    });
+    var trashedIds = {};
+    ctx.trash.forEach(function (row) { if (row[5]) trashedIds[String(row[5])] = true; });
+    sheetLines.forEach(function (line) {
+      weeksParseCards_(line[5]).forEach(function (card) {
+        var cardId = String((card && card.id) || '');
+        if (!cardId || afterIds[cardId] || trashedIds[cardId]) return;
+        ctx.trash.push(weeksTrashLine_(now, who, '카드 (저장 중 빠짐)', line, card));
+        trashedIds[cardId] = true;
+      });
+    });
+
     // 휴지통을 먼저 적는다 — 거기서 실패하면 시트는 건드리지 않는다
     weeksTrash_(ctx.trash);
+    weeksSnapshot_(sheetLines, now);
     if (last > 1) sheet.getRange(2, 1, last - 1, WEEKS_HEADERS.length).clearContent();
     if (out.length) sheet.getRange(2, 1, out.length, WEEKS_HEADERS.length).setValues(out);
 

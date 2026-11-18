@@ -588,6 +588,44 @@ if (creativeBoard) {
       if (weekList && !weekList.hidden) renderWeekList();
     });
 
+  /* ── 자동 저장 안전망 ────────────────────────────────────────────────
+     칸을 고치면 0.7초 뒤 저장하지만, 그 저장이 실패하거나(로그인 만료 · 네트워크) 빠지면
+     다시 고치기 전까지 아무도 안 보냈다. 시트와 다른 것이 남아 있으면 20초마다 다시 보낸다.
+     '다르다' = 시트에서 받은 모습(cardBase)과 다른 카드 · 아직 시트에 없는 카드 · 못 보낸 [삭제]. */
+  const unsyncedCount = () => {
+    reattachRows();
+    let count = drops.weeks.length + drops.cards.length;
+    weeks.forEach((week) => week.rows.forEach((row) => { if (!same(row, cardBase[row.id])) count += 1; }));
+    return count;
+  };
+  /* 보냈는데도 같은 수가 남으면(서버가 다르게 돌려주는 칸이 있다) 20초마다 시트 전체를 다시 쓰게 된다.
+     같은 수로 세 번 남으면 5분에 한 번으로 늦춘다. 수가 바뀌면(새로 고쳤다) 다시 20초. */
+  let autoSame = 0;
+  let autoLast = -1;
+  let autoAt = 0;
+  window.setInterval(() => {
+    if (!weekPulled || weekSaveWait || weekSending) return;   // 처음 받기 전 · 이미 저장 중이면 기다린다
+    const count = unsyncedCount();
+    if (!count) { autoSame = 0; autoLast = -1; return; }
+    autoSame = count === autoLast ? autoSame + 1 : 0;
+    autoLast = count;
+    if (autoSame >= 3 && Date.now() - autoAt < 5 * 60 * 1000) return;
+    autoAt = Date.now();
+    sendWeeks();
+  }, 20000);
+  // 탭을 닫거나 다른 데로 가면 모아 둔 저장을 바로 보낸다
+  const flushNow = () => { if (weekSaveWait || (weekPulled && !weekSending && unsyncedCount())) flushWeeks(); };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNow(); });
+  window.addEventListener('pagehide', flushNow);
+  // 아직 시트에 안 간 것이 있으면 닫기 전에 묻는다 (브라우저가 '나가시겠습니까?' 를 띄운다)
+  window.addEventListener('beforeunload', (event) => {
+    // 보내도 안 맞춰지는 칸(autoSame ≥ 3)만 남았으면 묻지 않는다 — 닫을 때마다 묻게 된다
+    if (!weekSaveWait && !weekSending && !(weekPulled && autoSame < 3 && unsyncedCount())) return;
+    flushNow();
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
   const isIsoDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
