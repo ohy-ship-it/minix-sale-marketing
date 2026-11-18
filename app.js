@@ -15969,8 +15969,15 @@ if (eventReport) {
        없어서 파일 기준 그대로 남는다 — 그렇다고 알려 주지 않으면 바뀐 줄 알고 읽는다. */
     const stale = erWindow ? packs.reduce((all, one) => all.concat(one.rows), [])
       .filter((row) => !row.hand && !row.win && (row.source === 'meta' || row.source === 'kakao')).length : 0;
+    /* 고른 기준과 파일 기본(광고세트 설정 — 대개 조회까지 든다) 판매량을 나란히 적는다.
+       협업 광고(오늘의집 등)는 구매 대부분이 '조회' 로 잡혀, 1일 클릭이면 46 → 2 처럼 확 준다 —
+       그걸 모르고 보면 메타와 숫자가 다르다고 읽는다 (11/18). */
+    const rawRows = erWindow ? phasePacks(promo).reduce((all, one) => all.concat(one.rows), []) : [];
+    const buyRaw = rawRows.reduce((sum, row) => sum + buyOf(row), 0);
+    const buyWin = rawRows.reduce((sum, row) => sum + buyOf(winRow(row)), 0);
     const winNote = erWindow
-      ? `<p class="perf-note">${erWindow === '1d' ? '1일' : '7일'} 클릭 기준으로 셌습니다 (메타 · 카카오).${stale
+      ? `<p class="perf-note">${erWindow === '1d' ? '1일' : '7일'} 클릭 기준으로 셌습니다 (메타 · 카카오).${buyRaw !== buyWin
+        ? ` <b>파일 기본 기준(광고세트 설정 · 메타 관리자 화면과 같은 값)이면 판매량 ${num(buyRaw)}</b> — 지금 ${num(buyWin)}. 위 [${erWindow === '1d' ? '1일' : '7일'} 클릭] 을 끄면 기본 기준으로 봅니다.` : ''}${stale
         ? ` 다만 <b>${num(stale)}줄</b>은 1일 · 7일 값이 담기기 전에 받은 파일이라 파일 기준 그대로입니다 — 전매체에서 다시 받아 붙여 주세요.` : ''}</p>`
       : '';
     const block = (phase) => {
