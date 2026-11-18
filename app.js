@@ -11833,6 +11833,11 @@ if (creativePerformance) {
      여러 매체를 같이 보는 전매체에서만 보인다. */
   const CUSTOM_MEDIA = ['meta'];
   const showCustom = () => isAll() || CUSTOM_MEDIA.indexOf(state.source) >= 0;
+  /* 맞춤전환은 **광고세트가 맞춤 이벤트로 최적화하는 소재**(slot 'custom' — Code.gs metaPick_)만 센다.
+     메타는 목표와 상관없이 그 광고 뒤에 일어난 커스텀 이벤트를 다 붙여 준다 (구매 목표 광고를 보고
+     들어와 알람 신청을 해도 잡힌다). 그대로 두면 커스텀 이벤트로 안 돌린 광고에도 맞춤전환이 떠서,
+     '총결과에 이미 들어 있다' 는 안내도 틀렸다. */
+  const customOf = (row) => (row && row.slot === 'custom' ? Number(row.custom || 0) : 0);
   const account = () => state.accounts[state.source] || '';
   const setAccount = (id) => { state.accounts[state.source] = id; };
 
@@ -12194,7 +12199,7 @@ if (creativePerformance) {
           ${split ? `${metricRow('구매', perfCount(row.purchase))}${metricRow('장바구니', perfCount(row.addToCart))}`
     : metricRow('결과', perfCount(row.results))}
           ${showCustom()
-    ? metricRow('맞춤전환', row.custom ? perfCount(row.custom) : '<span class="tool-blank">—</span>') : ''}
+    ? metricRow('맞춤전환', customOf(row) ? perfCount(customOf(row)) : '<span class="tool-blank">—</span>') : ''}
           ${metricRow('노출', perfCount(row.impressions))}
           ${metricRow('빈도', blank(perfFreqOf(row), perfFreq))}
           ${metricRow(source().clicks, perfCount(row.linkClicks))}
@@ -12228,8 +12233,8 @@ if (creativePerformance) {
       purchase: sum.purchase + row.purchase,
       addToCart: sum.addToCart + row.addToCart,
       lead: sum.lead + row.lead,
-      // 커스텀 이벤트는 메타만 준다 (위 매체별 성과와 같은 이유)
-      custom: sum.custom + (row.custom || 0),
+      // 커스텀 이벤트는 메타만 준다 · 맞춤 이벤트 목표 소재만 센다 (customOf)
+      custom: sum.custom + customOf(row),
     }), { spend: 0, impressions: 0, linkClicks: 0, results: 0, revenue: 0,
       purchase: 0, addToCart: 0, lead: 0, custom: 0 });
 
@@ -13025,11 +13030,11 @@ if (creativePerformance) {
         cpc === null ? '' : Math.round(cpc),
         cpm === null ? '' : Math.round(cpm),
       ]).concat(source().splitResults
-        ? [row.purchase, row.addToCart].concat(showCustom() ? [row.custom || 0] : []).concat([
+        ? [row.purchase, row.addToCart].concat(showCustom() ? [customOf(row)] : []).concat([
           cvr === null ? '' : perfPercent(cvr),
           perfRatio(row.spend, row.purchase) === null ? '' : Math.round(perfRatio(row.spend, row.purchase)),
           perfRatio(row.spend, row.addToCart) === null ? '' : Math.round(perfRatio(row.spend, row.addToCart))])
-        : [row.results].concat(showCustom() ? [row.custom || 0] : []).concat([
+        : [row.results].concat(showCustom() ? [customOf(row)] : []).concat([
           cvr === null ? '' : perfPercent(cvr),
           cpa === null ? '' : Math.round(cpa)]))
         .concat([Math.round(row.revenue || 0),
