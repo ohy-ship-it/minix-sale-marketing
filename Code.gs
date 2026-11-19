@@ -2836,6 +2836,15 @@ function metaAnswer_(response, where) {
   var code = response.getResponseCode();
   if (body.error) {
     var reason = body.error.error_user_msg || body.error.message || JSON.stringify(body.error);
+    /* 메타의 error_user_msg 는 「문제가 발생했습니다. 나중에 다시 시도하세요」 처럼
+       아무것도 안 알려 줄 때가 있다. 그럴 때 속의 말과 번호를 함께 적어 둔다 —
+       그 번호(code/subcode)가 찾아볼 수 있는 유일한 끈이다. */
+    if (body.error.error_user_msg && body.error.message
+      && body.error.message !== body.error.error_user_msg) {
+      reason += ' [' + body.error.message
+        + ' · code ' + (body.error.code === undefined ? '-' : body.error.code)
+        + ' · subcode ' + (body.error.error_subcode || '-') + ']';
+    }
     // 토큰에 만들기 권한이 없을 때가 가장 흔하다. 무엇을 하면 되는지 함께 적는다.
     if (/permission|ads_management|OAuth/i.test(reason)) {
       reason += ' — 광고를 만들려면 토큰에 ads_management 권한이 있어야 합니다 '
@@ -2847,6 +2856,47 @@ function metaAnswer_(response, where) {
   return body;
 }
 
+/* 이 토큰으로 그 페이지로 게시할 수 있나.
+
+   지금 쓰는 토큰이 **페이지 토큰**이면 제 페이지로만 게시할 수 있다. 다른 페이지를
+   고르면 메타는 크리에이티브를 안 만들어 주는데, 돌려주는 말이
+   「문제가 발생했습니다. 나중에 다시 시도하세요」 뿐이라 까닭을 알 수가 없다
+   (2026-11-19 에 소재 다섯이 모두 이 말로 실패했다 — 고른 페이지가 가사노동해방소였고
+    토큰은 미닉스 페이지의 것이었다).
+
+   그래서 **묻기 전에** 가른다. 토큰이 사용자 · 시스템 사용자 것이면 여러 페이지를
+   다룰 수 있으므로 그냥 보낸다 — 막아야 할 것은 페이지 토큰일 때 하나뿐이다. */
+function metaPageAllowed_(pageId) {
+  var mine = metaTokenPage_();
+  if (!mine.id || String(mine.id) === String(pageId)) return;
+  throw new Error('이 토큰으로는 그 페이지로 광고를 만들 수 없습니다. '
+    + '지금 토큰은 페이지 「' + (mine.name || mine.id) + '」(' + mine.id + ') 의 것인데, '
+    + '화면에서 고른 게시 주체는 ' + pageId + ' 입니다. '
+    + '— 그 페이지로 그대로 내보내려면 화면에서 대표 계정을 「' + (mine.name || mine.id) + '」 로 바꾸시고, '
+    + '두 페이지를 다 쓰시려면 스크립트 속성 META_ACCESS_TOKEN 을 '
+    + '두 페이지가 다 들어 있는 **시스템 사용자 토큰**(ads_management)으로 바꿔 주세요.');
+}
+
+/* 토큰이 어느 페이지 것인가. 페이지 토큰이 아니면 빈 값을 돌려준다.
+   소재마다 물으면 왕복이 늘어나니 잠깐 담아 둔다. */
+function metaTokenPage_() {
+  var cache = CacheService.getScriptCache();
+  var kept = cache.get('metaTokenPage');
+  if (kept) { try { return JSON.parse(kept); } catch (ignore) { /* 깨졌으면 다시 */ } }
+  var out = { id: '', name: '' };
+  try {
+    var info = (graph_('/debug_token', { input_token: metaToken_() }).data) || {};
+    if (String(info.type || '') === 'PAGE' && info.profile_id) {
+      out.id = String(info.profile_id);
+      try { out.name = String(graph_('/' + out.id, { fields: 'name' }).name || ''); }
+      catch (ignore) { /* 이름은 없어도 된다 */ }
+    }
+  } catch (error) { return out; }   // 못 물어보면 막지 않는다 (되던 일을 막는 쪽이 더 나쁘다)
+  try { cache.put('metaTokenPage', JSON.stringify(out), META_STORY_CACHE_SECONDS); }
+  catch (ignore) { /* 거들기다 */ }
+  return out;
+}
+
 /* 게시 주체를 찾는다.
    스크립트 속성 META_PAGE_ID · META_IG_USER_ID 가 있으면 그것을 쓴다.
    없으면 계정이 이미 만들어 둔 크리에이티브에서 page_id · instagram_user_id 를 꺼낸다 —
@@ -2856,6 +2906,7 @@ function metaStory_(account, payload) {
      옛 화면은 안 보내므로 아래 길(스크립트 속성 → 토큰 → 기존 소재)로 찾는다. */
   var chosenPage = String((payload && payload.pageId) || '').replace(/[^0-9]/g, '');
   if (chosenPage) {
+    metaPageAllowed_(chosenPage);
     var chosenIg = String((payload && payload.igId) || '').replace(/[^0-9]/g, '');
     return { pageId: chosenPage, igId: chosenIg, from: '화면에서 고른 대표 계정' };
   }
