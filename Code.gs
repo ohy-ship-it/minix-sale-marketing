@@ -2468,6 +2468,42 @@ function tokenShape_() {
   return token.length + '자, ' + token.slice(0, 4) + '… 로 시작';
 }
 
+/* 지금 **스크립트 속성에 들어 있는** 토큰이 어떤 것인지 편집기에서 바로 본다.
+
+   내 PC 의 env 파일과 스크립트 속성이 다를 수 있다. 실제로 광고를 만드는 건
+   스크립트 속성 쪽이므로, 까닭을 따질 때는 이쪽을 봐야 한다.
+   편집기에서 이 함수를 고르고 실행 → 실행 기록(로그)에 나온다.
+   토큰 값은 찍지 않는다 — 길이와 앞 4글자뿐이다. */
+function 메타토큰확인() {
+  var out = ["토큰 모양 : " + tokenShape_()];
+  var info = {};
+  try {
+    info = graph_('/debug_token', { input_token: metaToken_() }).data || {};
+  } catch (error) {
+    out.push('토큰을 물어보지 못했습니다 : ' + (error && error.message));
+    Logger.log(out.join('\n'));
+    return out.join('\n');
+  }
+  out.push('종류     : ' + (info.type || '(모름)'));
+  out.push('앱       : ' + (info.app_id || '(모름)'));
+  out.push('살아있나 : ' + (info.is_valid === false ? '아니요' : '예'));
+  out.push('만료     : ' + (info.expires_at ? new Date(info.expires_at * 1000) : '없음'));
+  out.push('권한     : ' + ((info.scopes || []).join(', ') || '(없음)'));
+  if (String(info.type || '') === 'PAGE') {
+    var who = info.profile_id || '';
+    var name = '';
+    try { name = String(graph_('/' + who, { fields: 'name' }).name || ''); } catch (ignore) { }
+    out.push('');
+    out.push('→ 이 토큰은 **페이지 토큰** 입니다 — 페이지 「' + (name || who) + '」(' + who + ') 로만 광고를 만들 수 있습니다.');
+    out.push('   다른 페이지로 내보내려면 시스템 사용자 토큰으로 바꾸셔야 합니다.');
+  } else {
+    out.push('');
+    out.push('→ 페이지 토큰이 아닙니다. 자산으로 받은 페이지라면 어느 쪽으로든 게시할 수 있습니다.');
+  }
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
+
 // path 가 http 로 시작하면 (다음 쪽 주소) 그대로 부른다.
 function graph_(path, params) {
   var url = path;
