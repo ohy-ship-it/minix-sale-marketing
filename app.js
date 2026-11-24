@@ -6343,8 +6343,8 @@ if (adSetup) {
       return render();
     }
 
-    /* 한 세팅에 줄이 여럿이다 (소재마다 한 줄). 이름으로 묶으면서 **메타 줄이 몇 개인지**와
-       어느 행사인지를 함께 센다 — 고르기 전에 가늠이 되고, 메타 줄이 0인 것도 미리 보인다. */
+    /* 한 세팅에 줄이 여럿이다 (소재마다 한 줄). 이름으로 묶으면서 **메타 줄이 몇 개인지**만
+       센다 — 0 인 것은 골라도 조회가 빈손이라 보기에서 미리 가려 주어야 한다. */
     const seen = {};
     const list = [];
     for (let i = 1; i < table.length; i += 1) {
@@ -6352,10 +6352,9 @@ if (adSetup) {
       if (!one.setup) continue;
       const key = one.setup.toLowerCase();
       let hit = seen[key];
-      if (!hit) { hit = { name: one.setup, meta: 0, all: 0, events: [] }; seen[key] = hit; list.push(hit); }
+      if (!hit) { hit = { name: one.setup, meta: 0, all: 0 }; seen[key] = hit; list.push(hit); }
       hit.all += 1;
       if (isMeta(one.media)) hit.meta += 1;
-      if (one.event && hit.events.indexOf(one.event) < 0) hit.events.push(one.event);
     }
     list.reverse();   // 시트는 아래쪽이 최근이다 — 방금 적은 것이 맨 위로 온다
 
@@ -6743,14 +6742,9 @@ if (adSetup) {
     return near.length ? near : setups.list;
   };
 
-  /* 고를 때 가늠할 거리 — 어느 행사인지 · 메타 줄이 몇 개인지.
-     메타 줄이 0이면 골라도 조회가 빈손으로 오므로 **미리** 그렇다고 적어 둔다. */
-  const setupNote = (one) => {
-    const where = one.events.slice(0, 2).join(' · ');
-    const more = one.events.length > 2 ? ` 외 ${one.events.length - 2}` : '';
-    const count = one.meta ? `메타 ${one.meta}줄` : `메타 줄 없음 · ${one.all}줄`;
-    return where ? `${where}${more} · ${count}` : count;
-  };
+  /* 보기에는 **세팅명만** 둔다. 행사명까지 적으니 한 줄이 길어 이름이 묻혔다.
+     다만 메타 줄이 0인 것은 골라도 조회가 빈손으로 오므로 그것만 짧게 남긴다. */
+  const setupNote = (one) => (one.meta ? '' : '메타 줄 없음');
 
   const setupInner = () => {
     if (setups.state === 'loading') return '<p class="setup-combo-empty">시트의 세팅명을 읽는 중…</p>';
