@@ -5981,6 +5981,8 @@ if (adSetup) {
   let attempted = false;  // [광고 만들기] 를 한 번이라도 눌렀는가
   // 캠페인명 고르개 — 고른 계정에서 켜져 있는 캠페인. acct 는 그 목록이 어느 계정 것인지다.
   let campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
+  // 세팅명 고르개 — 적재 시트 그 파트 탭에 적힌 세팅명. part 는 그 목록이 어느 탭 것인지다.
+  let setups = { state: 'idle', list: [], part: '', message: '', open: false };
   // 시각 고르개가 열려 있는 칸 ('startAt' · 'endAt' · 빈 글자)
   let whenOpen = '';
   // 끌어다 놓은 소재 [{ file, name, size, row, story }] · 만드는 중 상황
@@ -6090,6 +6092,14 @@ if (adSetup) {
 
   const urlTypeLabel = () => (URL_TYPES.find(([value]) => value === state.urlType) || [])[1] || '랜딩링크';
 
+  /* 매체 칸이 메타인가. 시트에는 '메타' · '페이스북' · 'Facebook' 이 섞여 적힌다.
+     세팅명 보기와 시트 조회가 **같은 잣대**를 써야 한다 — 보기에 「메타 3줄」 이라
+     적어 놓고 눌렀더니 조회가 빈손이면 고르개를 믿을 수 없게 된다. */
+  const isMeta = (media) => {
+    const one = String(media || '').toLowerCase();
+    return one.indexOf('메타') >= 0 || one.indexOf('페이스북') >= 0 || one.indexOf('facebook') >= 0;
+  };
+
   // 머리글 줄에서 열 자리를 찾아 한 줄을 읽기 좋은 모양으로 바꾼다
   const rowOf = (head, cells) => {
     const cell = (name) => { const i = head.indexOf(name); return i >= 0 ? tr(cells[i]) : ''; };
@@ -6155,8 +6165,7 @@ if (adSetup) {
       const one = rowOf(head, table[i]);
       if (one.setup.toLowerCase() !== want) continue;
       if (!productMatch(one.product, state.product)) { otherProduct.push(one.product.trim()); continue; }
-      const media = one.media.toLowerCase();
-      if (media.indexOf('메타') < 0 && media.indexOf('페이스북') < 0 && media.indexOf('facebook') < 0) { otherMedia += 1; continue; }
+      if (!isMeta(one.media)) { otherMedia += 1; continue; }
       if (state.purpose) {
         const purpose = one.purpose.toLowerCase();
         if (purpose.indexOf(state.purpose) < 0 && (!code || purpose.indexOf(code) < 0)) continue;
@@ -6284,6 +6293,74 @@ if (adSetup) {
       campaigns = { state: 'error', list: [], acct: acct, open: true,
         message: `캠페인을 못 읽었습니다 — ${error.message}` };
     }
+    return render();
+  };
+
+  /* 시트에 적힌 세팅명을 그대로 가져온다.
+
+     손으로 적으면 시트와 한 글자만 달라도 조회가 빈손으로 왔다 — 띄어쓰기 · 차수 표기
+     ('1차' / '-1차')처럼 눈으로는 같아 보이는 차이다. 그때마다 시트를 열어 맞춰야 했다.
+     골라 쓰면 그 일이 없어진다.
+
+     파트 탭을 통째로 읽는다. 조회(lookupSheet)가 읽는 바로 그 탭이라 둘이 어긋나지 않는다. */
+  const loadSetups = async (refresh) => {
+    const part = PARTS.indexOf(state.part) >= 0 ? state.part : PARTS[0];
+    // 같은 탭을 이미 읽었으면 다시 읽지 않는다 (열 때마다 시트를 긁지 않는다)
+    if (!refresh && setups.state === 'done' && setups.part === part) {
+      setups.open = true;
+      return render();
+    }
+    setups = { state: 'loading', list: [], part: part, message: '', open: true };
+    render();
+
+    let table;
+    try {
+      // 탭 번호를 아직 모르면 한 번 물어 온다
+      if (!partGid[part]) await loadPartGid().catch(() => ({}));
+      /* 번호를 못 받았으면 **엉뚱한 탭**을 읽는다 (gviz 는 이름을 무시하고 첫 탭을 준다).
+         다른 파트의 세팅명을 조용히 보여 주느니 그렇다고 말하고 멈춘다 — 조회와 같은 몸가짐이다. */
+      if (!partGid[part] && part !== PARTS[0]) {
+        throw new Error(`탭 번호를 못 받아 ${PARTS[0]} 탭이 올 수 있어 멈췄습니다. 잠시 뒤 다시 눌러 주세요`);
+      }
+      // [다시 읽기] 는 구글이 담아 둔 것을 지나친다
+      const response = await fetch(partUrl(part) + (refresh ? `&_=${Date.now()}` : ''));
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      table = parseCsv(await response.text());
+    } catch (error) {
+      if (state.part !== part) return undefined;
+      setups = { state: 'error', list: [], part: part, open: true,
+        message: `[${part}] 탭을 못 읽었습니다 — ${error.message}` };
+      return render();
+    }
+    if (state.part !== part) return undefined;   // 기다리는 사이에 파트를 바꿨다
+
+    const head = (table[0] || []).map((one) => tr(one));
+    if (head.indexOf(COL.setup) < 0) {
+      setups = { state: 'error', list: [], part: part, open: true,
+        message: head.indexOf(COL.event) >= 0
+          ? `[${part}] 탭에 '${COL.setup}' 칸이 없습니다 — 시트 메뉴 [UTM → 전체 행 다시 계산] 을 한 번 눌러 주세요.`
+          : `[${part}] 탭에서 머리글을 찾지 못했습니다 — 시트 공유 설정과 탭 이름을 확인해 주세요.` };
+      return render();
+    }
+
+    /* 한 세팅에 줄이 여럿이다 (소재마다 한 줄). 이름으로 묶으면서 **메타 줄이 몇 개인지**와
+       어느 행사인지를 함께 센다 — 고르기 전에 가늠이 되고, 메타 줄이 0인 것도 미리 보인다. */
+    const seen = {};
+    const list = [];
+    for (let i = 1; i < table.length; i += 1) {
+      const one = rowOf(head, table[i]);
+      if (!one.setup) continue;
+      const key = one.setup.toLowerCase();
+      let hit = seen[key];
+      if (!hit) { hit = { name: one.setup, meta: 0, all: 0, events: [] }; seen[key] = hit; list.push(hit); }
+      hit.all += 1;
+      if (isMeta(one.media)) hit.meta += 1;
+      if (one.event && hit.events.indexOf(one.event) < 0) hit.events.push(one.event);
+    }
+    list.reverse();   // 시트는 아래쪽이 최근이다 — 방금 적은 것이 맨 위로 온다
+
+    setups = { state: 'done', list: list, part: part, open: true,
+      message: list.length ? '' : `[${part}] 탭에 적힌 세팅명이 없습니다.` };
     return render();
   };
 
@@ -6656,8 +6733,41 @@ if (adSetup) {
         : `<p class="setup-combo-empty">${escapeHtml(campaigns.message || '켜져 있는 캠페인이 없습니다.')}</p>`}`;
   };
 
+  // 적은 글자에 맞는 것만 좁혀 본다 (캠페인명 고르개와 같은 몸가짐)
+  const setupChoices = () => {
+    if (setups.part !== state.part) return [];
+    const typed = tr(state.setup).toLowerCase();
+    if (!typed) return setups.list;
+    if (setups.list.some((one) => one.name.toLowerCase() === typed)) return setups.list;
+    const near = setups.list.filter((one) => one.name.toLowerCase().indexOf(typed) >= 0);
+    return near.length ? near : setups.list;
+  };
+
+  /* 고를 때 가늠할 거리 — 어느 행사인지 · 메타 줄이 몇 개인지.
+     메타 줄이 0이면 골라도 조회가 빈손으로 오므로 **미리** 그렇다고 적어 둔다. */
+  const setupNote = (one) => {
+    const where = one.events.slice(0, 2).join(' · ');
+    const more = one.events.length > 2 ? ` 외 ${one.events.length - 2}` : '';
+    const count = one.meta ? `메타 ${one.meta}줄` : `메타 줄 없음 · ${one.all}줄`;
+    return where ? `${where}${more} · ${count}` : count;
+  };
+
+  const setupInner = () => {
+    if (setups.state === 'loading') return '<p class="setup-combo-empty">시트의 세팅명을 읽는 중…</p>';
+    if (setups.state === 'error') return `<p class="setup-combo-empty is-warn">${escapeHtml(setups.message)}</p>`;
+    const list = setupChoices();
+    const narrowed = list.length < setups.list.length;
+    return `<div class="setup-combo-head">
+        <b>[${escapeHtml(setups.part)}] 탭의 세팅명 ${setups.list.length}개${narrowed ? ` · 적은 글자에 맞는 것 ${list.length}개` : ''}</b>
+        <button type="button" class="setup-combo-refresh" data-setupre>다시 읽기</button>
+      </div>
+      ${list.length
+    ? `<ul class="setup-combo-items">${list.map((one) => `<li><button type="button" data-setupname="${escapeHtml(one.name)}"${one.name.toLowerCase() === tr(state.setup).toLowerCase() ? ' class="is-on"' : ''}><b>${escapeHtml(one.name)}</b><small${one.meta ? '' : ' class="is-none"'}>${escapeHtml(setupNote(one))}</small></button></li>`).join('')}</ul>`
+    : `<p class="setup-combo-empty">${escapeHtml(setups.message || '세팅명이 없습니다.')}</p>`}`;
+  };
+
   const campaignField = () => `
-    <div class="setup-field tool-wide setup-combo">
+    <div class="setup-field tool-wide setup-combo setup-combo-campaign">
       <span class="setup-req">캠페인명<small class="setup-hint">시트 조회 시 자동 입력 · 화살표를 누르면 계정에서 켜져 있는 캠페인을 가져옵니다</small></span>
       <div class="setup-combo-row">
         <input type="text" data-field="campaignName" value="${escapeHtml(state.campaignName)}" placeholder="시트 조회 후 자동 입력 또는 직접 입력">
@@ -6781,10 +6891,16 @@ if (adSetup) {
           <div class="setup-field"><span>URL 유형<small class="setup-hint">랜딩 URL 로 쓸 열</small></span>${pills('urltype', URL_TYPES.map(([value, label]) => [label, value]), state.urlType)}</div>
         </div>
         <div class="setup-field setup-promo">
-          <span class="setup-req">세팅명<small class="setup-hint">적재 시트의 세팅명 칸 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
+          <span class="setup-req">세팅명<small class="setup-hint">화살표를 누르면 [${escapeHtml(state.part)}] 탭에 적힌 세팅명을 가져옵니다 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
           <div class="setup-promo-row">
             <select data-field="product" class="setup-product">${productOptions(state.product)}</select>
-            <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="예: 음쓰해방위크-1차">
+            <span class="setup-combo setup-combo-setup">
+              <span class="setup-combo-row">
+                <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="고르거나 직접 적습니다 (예: 음쓰해방위크-1차)">
+                <button type="button" class="setup-combo-toggle${setups.open ? ' is-open' : ''}" data-setuppick title="시트에 적힌 세팅명 고르기"><i data-lucide="chevron-${setups.open ? 'up' : 'down'}"></i></button>
+              </span>
+              ${setups.open ? `<div class="setup-combo-list">${setupInner()}</div>` : ''}
+            </span>
             <button type="button" class="tool-add setup-lookup"${lookup.state === 'loading' ? ' disabled' : ''}><i data-lucide="search"></i>시트 조회</button>
           </div>
         </div>
@@ -6936,8 +7052,12 @@ if (adSetup) {
     // 캠페인 고르개가 열려 있으면 적는 대로 목록을 좁힌다.
     // 입력칸까지 다시 그리면 적던 자리(커서)가 튀므로 목록 칸만 바꿔 끼운다.
     if (field.dataset.field === 'campaignName' && campaigns.open) {
-      const box = adSetup.querySelector('.setup-combo-list');
+      const box = adSetup.querySelector('.setup-combo-campaign .setup-combo-list');
       if (box) box.innerHTML = comboInner();
+    }
+    if (field.dataset.field === 'setup' && setups.open) {
+      const box = adSetup.querySelector('.setup-combo-setup .setup-combo-list');
+      if (box) box.innerHTML = setupInner();
     }
     save();
   });
@@ -6982,6 +7102,25 @@ if (adSetup) {
       render();
     }
 
+    // 세팅명 고르개 — 캠페인 고르개와 같은 모양의 단추라 이쪽을 먼저 가른다
+    if (event.target.closest('[data-setuppick]')) {
+      if (setups.open) { setups.open = false; return render(); }
+      return loadSetups(false);
+    }
+    if (event.target.closest('[data-setupre]')) return loadSetups(true);
+    const setupHit = event.target.closest('[data-setupname]');
+    if (setupHit) {
+      state.setup = setupHit.dataset.setupname;
+      setups.open = false;
+      save();
+      render();
+      return lookupSheet();   // 골랐으면 바로 조회한다 — 다음에 할 일이 그것뿐이다
+    }
+    if (setups.open && !event.target.closest('.setup-combo-setup')) {
+      setups.open = false;
+      render();
+    }
+
     // 캠페인명 고르개 먼저 본다 (다른 것을 누르면 닫혀야 한다)
     if (event.target.closest('.setup-combo-toggle')) {
       if (campaigns.open) { campaigns.open = false; return render(); }
@@ -6996,7 +7135,7 @@ if (adSetup) {
       return render();
     }
     // 고르개 바깥을 눌렀으면 닫는다. 아래 처리는 누른 요소로 이어 가므로 여기서 다시 그려도 된다.
-    if (campaigns.open && !event.target.closest('.setup-combo')) {
+    if (campaigns.open && !event.target.closest('.setup-combo-campaign')) {
       campaigns.open = false;
       render();
     }
@@ -7018,6 +7157,8 @@ if (adSetup) {
       // 파트를 바꾸면 다른 탭을 보게 된다 — 앞서 읽은 줄은 더 이상 맞지 않으므로 지운다
       if (part && part.dataset.part !== state.part) {
         state.part = part.dataset.part;
+        // 세팅명 보기도 탭마다 다르다 — 버리고 다음에 다시 읽는다
+        setups = { state: 'idle', list: [], part: '', message: '', open: false };
         rows = [];
         selectedIdx = -1;
         lookup = { state: 'idle', message: '' };
