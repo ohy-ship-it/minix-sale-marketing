@@ -7365,6 +7365,8 @@ if (kakaoSetup) {
   let baseState = { state: 'idle', message: '' };
   let rows = [];                 // 시트에서 가져온 줄 (고른 종류만)
   let lookup = { state: 'idle', message: '' };
+  // 세팅명 고르개 — 시트 세 탭에 적힌 세팅명. 손으로 적으면 한 글자만 달라도 빈손으로 온다.
+  let setups = { state: 'idle', list: [], message: '', open: false, busy: false };
   let picks = [];                // 고른 소재 파일 [{ file, name, size, width, height, row, bad }]
   let work = null;               // { running, done, total, lines: [], failed }
   let attempted = false;
@@ -7467,13 +7469,19 @@ if (kakaoSetup) {
   /* 탭은 **번호(gid)로** 읽는다. gviz 는 sheet=이름 을 조용히 무시하고 늘 첫 탭을 준다 —
      그래서 세 탭을 읽어도 셋 다 세일즈마케팅이었고, 찾은 줄이 세 번씩 겹쳐 보였다.
      번호는 시트만 아는 값이라 스크립트에 물어 온다 (메타 광고 세팅과 같은 길이다). */
+  /* 탭 번호는 좀처럼 바뀌지 않는데 물어보는 길이 Apps Script 라 몇 초가 걸린다.
+     한 번 받아 두면 이 브라우저에 담아 두고 바로 쓴다. 메타 광고 세팅과 **같은 자리**를
+     쓰므로 둘 중 어느 쪽을 먼저 쓰든 다음부터는 기다림이 없다. */
+  const GID_KEY = 'minix-ad-setup-gids-v1';
   let tabGid = {};
+  try { tabGid = JSON.parse(localStorage.getItem(GID_KEY) || '{}') || {}; } catch { tabGid = {}; }
 
   const loadTabGid = () => askSheet({ action: 'partTabs' })
     .then((body) => {
       const out = {};
       (body.tabs || []).forEach((one) => { if (one && one.name) out[one.name] = String(one.gid); });
       tabGid = out;
+      try { localStorage.setItem(GID_KEY, JSON.stringify(out)); } catch { /* 거들기다 */ }
       return out;
     });
 
@@ -7554,6 +7562,132 @@ if (kakaoSetup) {
     render();
     // 목표(방문 · 전환)가 시트의 목적에서 정해지므로, 읽고 난 뒤 기준을 다시 찾는다
     if (rows.length && state.account) loadBase(false);
+  };
+
+  /* ── 세팅명 보기 ──────────────────────────────────────────────
+
+     시트에 적힌 세팅명을 그대로 가져온다. 손으로 적으면 시트와 한 글자만 달라도
+     (띄어쓰기 · '1차' / '-1차') 조회가 빈손으로 와서, 그때마다 시트를 열어
+     눈으로 맞춰야 했다. 조회가 읽는 **바로 그 세 탭**을 읽으므로 둘이 어긋나지 않는다. */
+  const SETUPS_KEY = 'minix-kakao-setup-names-v1';
+  const setupsMemo = () => {
+    try { return JSON.parse(localStorage.getItem(SETUPS_KEY) || '[]') || []; } catch { return []; }
+  };
+  const setupsKeep = (list) => {
+    try { localStorage.setItem(SETUPS_KEY, JSON.stringify(list)); } catch { /* 거들기다 */ }
+  };
+
+  /* 뒤에서 읽어 온 것으로 바꿔 끼운다. 적는 중이면 화면을 통째로 다시 그리지
+     않는다 — 칸이 새로 만들어져 적던 자리(커서)를 잃는다. */
+  const setupsDraw = () => {
+    const now = document.activeElement;
+    const typing = now && now.dataset && now.dataset.field === 'setup';
+    const box = kakaoSetup.querySelector('.setup-combo-setup .setup-combo-list');
+    if (typing && box) { box.innerHTML = setupInner(); return undefined; }
+    return render();
+  };
+
+  const loadSetups = async (refresh) => {
+    // 이번에 이미 읽어 두었으면 그대로 연다
+    if (!refresh && setups.state === 'done') {
+      setups.open = true;
+      return render();
+    }
+
+    /* 지난번에 읽어 둔 것이 있으면 **먼저 띄우고** 뒤에서 다시 읽는다.
+       빈 상자를 보며 기다릴 까닭이 없다 — 거의 늘 같은 목록이고, 달라지면 조용히 바꿔 끼운다. */
+    const had = setupsMemo();
+    setups = had.length
+      ? { state: 'done', list: had, message: '', open: true, busy: true }
+      : { state: 'loading', list: [], message: '', open: true, busy: true };
+    render();
+
+    if (!Object.keys(tabGid).length) await loadTabGid().catch(() => ({}));
+    if (!Object.keys(tabGid).length) {
+      /* 번호를 모르면 readTab 이 빈 탭을 돌려주어 **세팅명이 하나도 없는 것처럼** 보인다.
+         없는 것과 못 읽은 것은 다르므로 그렇다고 말한다. */
+      setups = had.length
+        ? { state: 'done', list: had, open: setups.open, busy: false,
+          message: '다시 읽지 못했습니다 — 시트 탭 번호를 못 받았습니다.' }
+        : { state: 'error', list: [], open: true, busy: false,
+          message: '시트 탭 번호를 못 받았습니다 — 잠시 뒤 다시 눌러 주세요.' };
+      return setupsDraw();
+    }
+
+    const tables = await Promise.all(SHEET_TABS.map(readTab));
+    if (!tables.some((table) => table.length)) {
+      setups = had.length
+        ? { state: 'done', list: had, open: setups.open, busy: false,
+          message: '다시 읽지 못했습니다 — 시트를 읽지 못했습니다.' }
+        : { state: 'error', list: [], open: true, busy: false,
+          message: '시트를 읽지 못했습니다 — 시트 공유 설정을 확인해 주세요.' };
+      return setupsDraw();
+    }
+
+    /* 한 세팅에 줄이 여럿이고 탭도 셋이다. 이름으로 묶으면서 **카카오 줄이 몇 개인지**만
+       센다 — 0 인 것은 골라도 조회가 빈손이라 보기에서 미리 가려 주어야 한다. */
+    const seen = {};
+    const list = [];
+    tables.forEach((table) => {
+      if (!table.length) return;
+      const heads = table[0].map((one) => tr(one));
+      if (heads.indexOf(COL.setup) < 0) return;
+      for (let i = 1; i < table.length; i += 1) {
+        const one = rowOf(heads, table[i]);
+        if (!one.setup) continue;
+        const key = one.setup.toLowerCase();
+        let hit = seen[key];
+        if (!hit) { hit = { name: one.setup, kakao: 0, all: 0 }; seen[key] = hit; list.push(hit); }
+        hit.all += 1;
+        if (one.media.indexOf('카카오') >= 0) hit.kakao += 1;
+      }
+    });
+    list.reverse();   // 시트는 아래쪽이 최근이다 — 방금 적은 것이 맨 위로 온다
+
+    setupsKeep(list);
+    // 기다리는 사이에 닫았으면 열어 주지 않는다 (보던 것을 가로채지 않는다)
+    setups = { state: 'done', list: list, open: setups.open, busy: false,
+      message: list.length ? '' : '시트에 적힌 세팅명이 없습니다.' };
+    return setupsDraw();
+  };
+
+  /* 적는 칸에 들어서기만 해도 보기를 연다. 화살표를 찾아 누르게 하는 것은 한 번 더
+     묻는 일이다. 다시 그리면 칸이 새로 만들어지므로 적던 자리를 되돌려 둔다. */
+  const openSetups = async () => {
+    const was = kakaoSetup.querySelector('[data-field="setup"]');
+    const at = was ? was.selectionStart : null;
+    await loadSetups(false);
+    const now = kakaoSetup.querySelector('[data-field="setup"]');
+    if (!now || now === document.activeElement) return;
+    now.focus();
+    if (at !== null) { try { now.setSelectionRange(at, at); } catch { /* 못 되돌려도 적을 수는 있다 */ } }
+  };
+
+  // 적은 글자에 맞는 것만 좁혀 본다 (캠페인명 고르개와 같은 몸가짐)
+  const setupChoices = () => {
+    const typed = tr(state.setup).toLowerCase();
+    if (!typed) return setups.list;
+    if (setups.list.some((one) => one.name.toLowerCase() === typed)) return setups.list;
+    const near = setups.list.filter((one) => one.name.toLowerCase().indexOf(typed) >= 0);
+    return near.length ? near : setups.list;
+  };
+
+  // 보기에는 **세팅명만** 둔다. 카카오 줄이 0인 것만 짧게 가려 준다.
+  const setupNote = (one) => (one.kakao ? '' : '카카오 줄 없음');
+
+  const setupInner = () => {
+    if (setups.state === 'loading') return '<p class="setup-combo-empty">시트의 세팅명을 읽는 중…</p>';
+    if (setups.state === 'error') return `<p class="setup-combo-empty is-warn">${escapeHtml(setups.message)}</p>`;
+    const list = setupChoices();
+    const narrowed = list.length < setups.list.length;
+    return `<div class="setup-combo-head">
+        <b>시트의 세팅명 ${setups.list.length}개${narrowed ? ` · 적은 글자에 맞는 것 ${list.length}개` : ''}${setups.busy ? ' · 다시 읽는 중…' : ''}</b>
+        <button type="button" class="setup-combo-refresh" data-setupre>다시 읽기</button>
+      </div>
+      ${setups.message && setups.list.length ? `<p class="setup-combo-empty is-warn">${escapeHtml(setups.message)}</p>` : ''}
+      ${list.length
+    ? `<ul class="setup-combo-items">${list.map((one) => `<li><button type="button" data-setupname="${escapeHtml(one.name)}"${one.name.toLowerCase() === tr(state.setup).toLowerCase() ? ' class="is-on"' : ''}><b>${escapeHtml(one.name)}</b><small${one.kakao ? '' : ' class="is-none"'}>${escapeHtml(setupNote(one))}</small></button></li>`).join('')}</ul>`
+    : `<p class="setup-combo-empty">${escapeHtml(setups.message || '세팅명이 없습니다.')}</p>`}`;
   };
 
   // ── 카카오 조회 ──────────────────────────────────────────────────
@@ -7883,7 +8017,7 @@ if (kakaoSetup) {
   };
 
   const campaignField = () => `
-    <div class="setup-field tool-wide setup-combo">
+    <div class="setup-field tool-wide setup-combo setup-combo-campaign">
       <span class="setup-req">캠페인명<small class="setup-hint">시트 조회 시 자동 입력 · 화살표를 누르면 계정에서 켜져 있는 캠페인을 가져옵니다 · 같은 이름이 있으면 그 캠페인에 붙습니다</small></span>
       <div class="setup-combo-row">
         <input type="text" data-field="campaignName" value="${escapeHtml(state.campaignName)}" placeholder="시트 조회 후 자동 입력 또는 직접 입력">
@@ -8047,10 +8181,16 @@ if (kakaoSetup) {
       <section class="tool-card">
         <h3>세팅</h3>
         <div class="setup-field setup-promo">
-          <span class="setup-req">세팅명<small class="setup-hint">적재 시트의 세팅명 칸 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
+          <span class="setup-req">세팅명<small class="setup-hint">칸을 누르면 시트에 적힌 세팅명을 가져옵니다 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
           <div class="setup-promo-row">
             <select data-field="product" class="setup-product">${productOptions(state.product)}</select>
-            <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="예: 음쓰해방위크-1차">
+            <span class="setup-combo setup-combo-setup">
+              <span class="setup-combo-row">
+                <input type="text" data-field="setup" value="${escapeHtml(state.setup)}" placeholder="고르거나 직접 적습니다 (예: 음쓰해방위크-1차)">
+                <button type="button" class="setup-combo-toggle${setups.open ? ' is-open' : ''}" data-setuppick title="시트에 적힌 세팅명 고르기"><i data-lucide="chevron-${setups.open ? 'up' : 'down'}"></i></button>
+              </span>
+              ${setups.open ? `<div class="setup-combo-list">${setupInner()}</div>` : ''}
+            </span>
             <button type="button" class="tool-add setup-lookup"${lookup.state === 'loading' ? ' disabled' : ''}><i data-lucide="search"></i>시트 조회</button>
           </div>
         </div>
@@ -8141,10 +8281,22 @@ if (kakaoSetup) {
     state[field.dataset.field] = field.value;
     // 캠페인 고르개가 열려 있으면 적는 대로 목록을 좁힌다 (입력칸은 그대로 두고 목록만 바꿔 끼운다)
     if (field.dataset.field === 'campaignName' && campaigns.open) {
-      const box = kakaoSetup.querySelector('.setup-combo-list');
+      const box = kakaoSetup.querySelector('.setup-combo-campaign .setup-combo-list');
       if (box) box.innerHTML = comboInner();
     }
+    // 적는 대로 세팅명 보기를 좁힌다 (입력칸은 그대로 두고 목록만 바꿔 끼운다)
+    if (field.dataset.field === 'setup' && setups.open) {
+      const box = kakaoSetup.querySelector('.setup-combo-setup .setup-combo-list');
+      if (box) box.innerHTML = setupInner();
+    }
     save();
+  });
+
+  // 세팅명 칸을 고르면 보기가 열린다 (화살표를 따로 누르지 않아도 된다)
+  kakaoSetup.addEventListener('focusin', (event) => {
+    const field = event.target.closest('[data-field="setup"]');
+    if (!field || setups.open) return;
+    openSetups();
   });
 
   kakaoSetup.addEventListener('change', (event) => {
@@ -8158,6 +8310,25 @@ if (kakaoSetup) {
   });
 
   kakaoSetup.addEventListener('click', (event) => {
+    // 세팅명 고르개 — 캠페인 고르개와 같은 모양의 단추라 이쪽을 먼저 가른다
+    if (event.target.closest('[data-setuppick]')) {
+      if (setups.open) { setups.open = false; return render(); }
+      return loadSetups(false);
+    }
+    if (event.target.closest('[data-setupre]')) return loadSetups(true);
+    const setupHit = event.target.closest('[data-setupname]');
+    if (setupHit) {
+      state.setup = setupHit.dataset.setupname;
+      setups.open = false;
+      save();
+      render();
+      return lookupSheet();   // 골랐으면 바로 조회한다 — 다음에 할 일이 그것뿐이다
+    }
+    if (setups.open && !event.target.closest('.setup-combo-setup')) {
+      setups.open = false;
+      render();
+    }
+
     // 캠페인명 고르개 먼저 본다 (다른 것을 누르면 닫혀야 한다)
     if (event.target.closest('.setup-combo-toggle')) {
       if (campaigns.open) { campaigns.open = false; return render(); }
@@ -8171,7 +8342,7 @@ if (kakaoSetup) {
       save();
       return render();
     }
-    if (campaigns.open && !event.target.closest('.setup-combo')) {
+    if (campaigns.open && !event.target.closest('.setup-combo-campaign')) {
       campaigns.open = false;
       render();
     }
