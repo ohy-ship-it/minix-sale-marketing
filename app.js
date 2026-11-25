@@ -5982,7 +5982,7 @@ if (adSetup) {
   // 캠페인명 고르개 — 고른 계정에서 켜져 있는 캠페인. acct 는 그 목록이 어느 계정 것인지다.
   let campaigns = { state: 'idle', list: [], acct: '', message: '', open: false };
   // 세팅명 고르개 — 적재 시트 그 파트 탭에 적힌 세팅명. part 는 그 목록이 어느 탭 것인지다.
-  let setups = { state: 'idle', list: [], part: '', message: '', open: false };
+  let setups = { state: 'idle', list: [], part: '', message: '', open: false, busy: false };
   // 시각 고르개가 열려 있는 칸 ('startAt' · 'endAt' · 빈 글자)
   let whenOpen = '';
   // 끌어다 놓은 소재 [{ file, name, size, row, story }] · 만드는 중 상황
@@ -6061,12 +6061,18 @@ if (adSetup) {
      gviz 는 sheet=이름 을 조용히 무시하고 늘 첫 탭을 준다 — 없는 이름을 넣어도 첫 탭이 온다.
      그래서 파트를 바꿔도 세일즈마케팅만 읽히고 아무 말이 없었다. 번호로는 제대로 골라진다.
      번호는 시트만 아는 값이라 서버에 한 번 물어 담아 둔다 (6시간). */
+  /* 탭 번호는 좀처럼 바뀌지 않는데, 물어보는 길이 Apps Script 라 몇 초가 걸린다.
+     새로고침할 때마다 그것을 기다리느라 세팅명 보기가 늦게 떴다. 한 번 받아 두면
+     이 브라우저에 담아 두고 바로 쓴다 (틀렸으면 그 탭을 못 읽어 바로 드러난다). */
+  const GID_KEY = 'minix-ad-setup-gids-v1';
   let partGid = {};
+  try { partGid = JSON.parse(localStorage.getItem(GID_KEY) || '{}') || {}; } catch { partGid = {}; }
   const loadPartGid = () => askSheet({ action: 'partTabs' })
     .then((body) => {
       const found = {};
       (body.tabs || []).forEach((one) => { if (one && one.name && one.gid) found[one.name] = one.gid; });
       partGid = found;
+      try { localStorage.setItem(GID_KEY, JSON.stringify(found)); } catch { /* 거들기다 */ }
       return found;
     });
 
@@ -6303,44 +6309,82 @@ if (adSetup) {
      골라 쓰면 그 일이 없어진다.
 
      파트 탭을 통째로 읽는다. 조회(lookupSheet)가 읽는 바로 그 탭이라 둘이 어긋나지 않는다. */
+  // 지난번에 읽은 세팅명을 이 브라우저에 담아 둔다 (다음에 열 때 곧바로 보여 주려고)
+  const SETUPS_KEY = 'minix-ad-setup-names-v1';
+  const setupsMemo = () => {
+    try { return JSON.parse(localStorage.getItem(SETUPS_KEY) || '{}') || {}; } catch { return {}; }
+  };
+  const setupsKeep = (part, list) => {
+    try {
+      const memo = setupsMemo();
+      memo[part] = { at: Date.now(), list: list };
+      localStorage.setItem(SETUPS_KEY, JSON.stringify(memo));
+    } catch { /* 거들기다 — 없어도 읽어 오면 된다 */ }
+  };
+
+  /* 뒤에서 읽어 온 것으로 바꿔 끼운다.
+     적는 중이면 화면을 통째로 다시 그리지 않는다 — 칸이 새로 만들어져 커서를 잃는다. */
+  const setupsDraw = () => {
+    const now = document.activeElement;
+    const typing = now && now.dataset && now.dataset.field === 'setup';
+    const box = adSetup.querySelector('.setup-combo-setup .setup-combo-list');
+    if (typing && box) { box.innerHTML = setupInner(); return undefined; }
+    return render();
+  };
+
   const loadSetups = async (refresh) => {
     const part = PARTS.indexOf(state.part) >= 0 ? state.part : PARTS[0];
-    // 같은 탭을 이미 읽었으면 다시 읽지 않는다 (열 때마다 시트를 긁지 않는다)
+    // 이번에 이미 읽어 둔 탭이면 그대로 연다 (열 때마다 시트를 긁지 않는다)
     if (!refresh && setups.state === 'done' && setups.part === part) {
       setups.open = true;
       return render();
     }
-    setups = { state: 'loading', list: [], part: part, message: '', open: true };
+
+    /* 지난번에 읽어 둔 것이 있으면 **먼저 띄우고** 뒤에서 다시 읽는다.
+       빈 상자를 보며 기다릴 까닭이 없다 — 거의 늘 같은 목록이고,
+       달라지면 조용히 바꿔 끼운다. 그 사이 「다시 읽는 중」 이라고 적어 둔다. */
+    const kept = setupsMemo()[part];
+    const had = kept && kept.list && kept.list.length ? kept.list : null;
+    setups = had
+      ? { state: 'done', list: had, part: part, message: '', open: true, busy: true }
+      : { state: 'loading', list: [], part: part, message: '', open: true, busy: true };
     render();
 
     let table;
     try {
-      // 탭 번호를 아직 모르면 한 번 물어 온다
-      if (!partGid[part]) await loadPartGid().catch(() => ({}));
+      /* 탭 번호를 아직 모르면 한 번 물어 온다 (담아 둔 것이 있으면 안 묻는다).
+         첫 파트는 묻지 않는다 — gviz 는 이름을 무시하고 첫 탭을 주는데, 그게 바로 그 탭이다.
+         Apps Script 왕복이 몇 초라, 안 기다려도 되는 자리에서는 기다리지 않는다. */
+      if (!partGid[part] && part !== PARTS[0]) await loadPartGid().catch(() => ({}));
       /* 번호를 못 받았으면 **엉뚱한 탭**을 읽는다 (gviz 는 이름을 무시하고 첫 탭을 준다).
          다른 파트의 세팅명을 조용히 보여 주느니 그렇다고 말하고 멈춘다 — 조회와 같은 몸가짐이다. */
       if (!partGid[part] && part !== PARTS[0]) {
         throw new Error(`탭 번호를 못 받아 ${PARTS[0]} 탭이 올 수 있어 멈췄습니다. 잠시 뒤 다시 눌러 주세요`);
       }
-      // [다시 읽기] 는 구글이 담아 둔 것을 지나친다
-      const response = await fetch(partUrl(part) + (refresh ? `&_=${Date.now()}` : ''));
+      // 늘 새 것을 받아 온다 (담아 둔 목록을 먼저 띄우므로 기다리는 느낌이 없다)
+      const response = await fetch(`${partUrl(part)}&_=${Date.now()}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       table = parseCsv(await response.text());
     } catch (error) {
       if (state.part !== part) return undefined;
-      setups = { state: 'error', list: [], part: part, open: true,
-        message: `[${part}] 탭을 못 읽었습니다 — ${error.message}` };
-      return render();
+      /* 담아 둔 목록이 있으면 그대로 두고 왜 못 고쳤는지만 적는다 —
+         조금 오래된 목록이 빈 상자보다 쓸모 있다. */
+      setups = had
+        ? { state: 'done', list: had, part: part, open: setups.open, busy: false,
+          message: `다시 읽지 못했습니다 — ${error.message}` }
+        : { state: 'error', list: [], part: part, open: true, busy: false,
+          message: `[${part}] 탭을 못 읽었습니다 — ${error.message}` };
+      return setupsDraw();
     }
     if (state.part !== part) return undefined;   // 기다리는 사이에 파트를 바꿨다
 
     const head = (table[0] || []).map((one) => tr(one));
     if (head.indexOf(COL.setup) < 0) {
-      setups = { state: 'error', list: [], part: part, open: true,
+      setups = { state: 'error', list: [], part: part, open: true, busy: false,
         message: head.indexOf(COL.event) >= 0
           ? `[${part}] 탭에 '${COL.setup}' 칸이 없습니다 — 시트 메뉴 [UTM → 전체 행 다시 계산] 을 한 번 눌러 주세요.`
           : `[${part}] 탭에서 머리글을 찾지 못했습니다 — 시트 공유 설정과 탭 이름을 확인해 주세요.` };
-      return render();
+      return setupsDraw();
     }
 
     /* 한 세팅에 줄이 여럿이다 (소재마다 한 줄). 이름으로 묶으면서 **메타 줄이 몇 개인지**만
@@ -6358,9 +6402,11 @@ if (adSetup) {
     }
     list.reverse();   // 시트는 아래쪽이 최근이다 — 방금 적은 것이 맨 위로 온다
 
-    setups = { state: 'done', list: list, part: part, open: true,
+    setupsKeep(part, list);
+    // 기다리는 사이에 닫았으면 열어 주지 않는다 (보던 것을 가로채지 않는다)
+    setups = { state: 'done', list: list, part: part, open: setups.open, busy: false,
       message: list.length ? '' : `[${part}] 탭에 적힌 세팅명이 없습니다.` };
-    return render();
+    return setupsDraw();
   };
 
   // 실행 전에 T&D 시트의 제목/문구를 미리 확인한다 (비어 있으면 광고 문구가 빈 채로 올라간다)
@@ -6765,9 +6811,10 @@ if (adSetup) {
     const list = setupChoices();
     const narrowed = list.length < setups.list.length;
     return `<div class="setup-combo-head">
-        <b>[${escapeHtml(setups.part)}] 탭의 세팅명 ${setups.list.length}개${narrowed ? ` · 적은 글자에 맞는 것 ${list.length}개` : ''}</b>
+        <b>[${escapeHtml(setups.part)}] 탭의 세팅명 ${setups.list.length}개${narrowed ? ` · 적은 글자에 맞는 것 ${list.length}개` : ''}${setups.busy ? ' · 다시 읽는 중…' : ''}</b>
         <button type="button" class="setup-combo-refresh" data-setupre>다시 읽기</button>
       </div>
+      ${setups.message && setups.list.length ? `<p class="setup-combo-empty is-warn">${escapeHtml(setups.message)}</p>` : ''}
       ${list.length
     ? `<ul class="setup-combo-items">${list.map((one) => `<li><button type="button" data-setupname="${escapeHtml(one.name)}"${one.name.toLowerCase() === tr(state.setup).toLowerCase() ? ' class="is-on"' : ''}><b>${escapeHtml(one.name)}</b><small${one.meta ? '' : ' class="is-none"'}>${escapeHtml(setupNote(one))}</small></button></li>`).join('')}</ul>`
     : `<p class="setup-combo-empty">${escapeHtml(setups.message || '세팅명이 없습니다.')}</p>`}`;
@@ -7172,7 +7219,7 @@ if (adSetup) {
       if (part && part.dataset.part !== state.part) {
         state.part = part.dataset.part;
         // 세팅명 보기도 탭마다 다르다 — 버리고 다음에 다시 읽는다
-        setups = { state: 'idle', list: [], part: '', message: '', open: false };
+        setups = { state: 'idle', list: [], part: '', message: '', open: false, busy: false };
         rows = [];
         selectedIdx = -1;
         lookup = { state: 'idle', message: '' };
