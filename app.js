@@ -6732,6 +6732,19 @@ if (adSetup) {
         : `<p class="setup-combo-empty">${escapeHtml(campaigns.message || '켜져 있는 캠페인이 없습니다.')}</p>`}`;
   };
 
+  /* 적는 칸에 들어서기만 해도 보기를 연다. 화살표를 찾아 누르게 하는 것은
+     한 번 더 묻는 일이다 — 칸을 고르는 순간 하려던 일이 그것뿐이다.
+     다시 그리면 칸이 통째로 새로 만들어져 적던 자리(커서)를 잃으므로 되돌려 둔다. */
+  const openSetups = async () => {
+    const was = adSetup.querySelector('[data-field="setup"]');
+    const at = was ? was.selectionStart : null;
+    await loadSetups(false);
+    const now = adSetup.querySelector('[data-field="setup"]');
+    if (!now || now === document.activeElement) return;
+    now.focus();
+    if (at !== null) { try { now.setSelectionRange(at, at); } catch (ignore) { /* 못 되돌려도 적을 수는 있다 */ } }
+  };
+
   // 적은 글자에 맞는 것만 좁혀 본다 (캠페인명 고르개와 같은 몸가짐)
   const setupChoices = () => {
     if (setups.part !== state.part) return [];
@@ -6885,7 +6898,7 @@ if (adSetup) {
           <div class="setup-field"><span>URL 유형<small class="setup-hint">랜딩 URL 로 쓸 열</small></span>${pills('urltype', URL_TYPES.map(([value, label]) => [label, value]), state.urlType)}</div>
         </div>
         <div class="setup-field setup-promo">
-          <span class="setup-req">세팅명<small class="setup-hint">화살표를 누르면 [${escapeHtml(state.part)}] 탭에 적힌 세팅명을 가져옵니다 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
+          <span class="setup-req">세팅명<small class="setup-hint">칸을 누르면 [${escapeHtml(state.part)}] 탭에 적힌 세팅명을 가져옵니다 · 제품을 고르면 그 제품 줄만 봅니다</small></span>
           <div class="setup-promo-row">
             <select data-field="product" class="setup-product">${productOptions(state.product)}</select>
             <span class="setup-combo setup-combo-setup">
@@ -7064,6 +7077,13 @@ if (adSetup) {
     state[field.dataset.field] = field.value;
     save();
     render();
+  });
+
+  // 세팅명 칸을 고르면 보기가 열린다 (화살표를 따로 누르지 않아도 된다)
+  adSetup.addEventListener('focusin', (event) => {
+    const field = event.target.closest('[data-field="setup"]');
+    if (!field || setups.open) return;
+    openSetups();
   });
 
   // 시각 칸의 모양은 **빠져나갈 때 한 번만** 맞춘다. 적는 중에 고치면 커서가 튄다.
