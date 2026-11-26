@@ -18804,6 +18804,393 @@ if (budgetPlanView) {
     return true;
   };
 
+  /* ── 미닉스 행사 고르개 ───────────────────────────────────────────
+
+     행사명을 글자로만 적으면 미닉스 행사와 **짝이 안 지어진다** — 띄어쓰기 하나,
+     차수 표기 하나만 달라도 다른 행사가 되고, 미닉스에서 이름을 고치면 끊긴다.
+     그래서 고른 행사의 **ID**(row.eventId) 를 함께 담는다. 보이는 글자는 그대로
+     행사명이고, 짝은 번호로 잡는다.
+
+     목록은 앱 스크립트가 미닉스에 물어 온다 (열쇠는 브라우저에 없다). 5분 담아 둔다. */
+  let promos = { state: 'idle', list: [], message: '', open: '' };
+
+  const loadPromos = async (rowId, refresh) => {
+    if (!refresh && promos.state === 'done') {
+      promos = { ...promos, open: rowId };
+      return render();
+    }
+    promos = { ...promos, state: 'loading', message: '', open: rowId };
+    render();
+    try {
+      const body = await askSheet({ action: 'minixPromos', refresh: !!refresh });
+      const list = body.promos || [];
+      promos = { state: 'done', list, open: promos.open,
+        message: list.length ? '' : '미닉스에 행사가 없습니다.' };
+    } catch (error) {
+      promos = { state: 'error', list: [], open: promos.open,
+        message: `미닉스 행사를 못 읽었습니다 — ${error.message}` };
+    }
+    return render();
+  };
+
+  // 적은 글자에 맞는 것만 좁혀 본다 (광고 세팅의 세팅명 고르개와 같은 몸가짐)
+  const promoChoices = (row) => {
+    const typed = String(row.event || '').trim().toLowerCase();
+    if (!typed) return promos.list;
+    const near = promos.list.filter((one) => String(one.name || '').toLowerCase().indexOf(typed) >= 0);
+    return near.length ? near : promos.list;
+  };
+
+  // 고를 때 가늠할 거리 — 언제 하는 행사인지. 같은 이름이 해마다 돌아오기 때문이다.
+  const promoWhen = (one) => {
+    const since = String(one.startDate || '').slice(0, 10);
+    const until = String(one.endDate || '').slice(0, 10);
+    if (!since && !until) return one.channel || '';
+    const span = `${since.slice(2).replace(/-/g, '/')}~${until.slice(5).replace(/-/g, '/')}`;
+    return one.channel ? `${span} · ${one.channel}` : span;
+  };
+
+  const promoInner = (row) => {
+    if (promos.state === 'loading') return '<p class="setup-combo-empty">미닉스 행사를 읽는 중…</p>';
+    if (promos.state === 'error') return `<p class="setup-combo-empty is-warn">${escape(promos.message)}</p>`;
+    const list = promoChoices(row);
+    const narrowed = list.length < promos.list.length;
+    return `<div class="setup-combo-head">
+        <b>미닉스 행사 ${promos.list.length}개${narrowed ? ` · 맞는 것 ${list.length}개` : ''}</b>
+        <button type="button" class="setup-combo-refresh" data-bg="promoAgain" data-row="${escape(row.id)}">다시 읽기</button>
+      </div>
+      ${row.eventId ? `<p class="bg-promo-tied">지금 짝 — <b>${escape(row.event || row.eventId)}</b>
+        <button type="button" data-bg="promoUntie" data-row="${escape(row.id)}">짝 풀기</button></p>` : ''}
+      ${list.length
+    ? `<ul class="setup-combo-items">${list.map((one) => `<li><button type="button"
+        data-bg="promoHit" data-row="${escape(row.id)}" data-promo="${escape(one.id)}"
+        data-promoname="${escape(one.name || '')}"${String(one.id) === String(row.eventId || '') ? ' class="is-on"' : ''}><b>${escape(one.name || one.id)}</b><small>${escape(promoWhen(one))}</small></button></li>`).join('')}</ul>`
+    : `<p class="setup-combo-empty">${escape(promos.message || '행사가 없습니다.')}</p>`}`;
+  };
+
+  /* 짝지어졌는지 한눈에. 이름만 적힌 줄과 ID 로 묶인 줄은 할 수 있는 일이 다르다
+     (믹스는 ID 가 있어야 연다) — 그러니 보기에서도 갈라 보여야 한다. */
+  const promoTieMark = (row) => (row.eventId
+    ? ` <i class="bg-tied" title="미닉스 행사와 짝지어져 있습니다 (ID ${escape(row.eventId)})">●</i>` : '');
+
+  /* ── 매체믹스 (미닉스와 **같은 자리**를 쓴다) ───────────────────────
+
+     프로모션 줄에서 바로 믹스를 짠다. 담는 곳은 미닉스의
+     ops.mixByProduct[제품].mixPlan **하나뿐**이다 — 여기에 또 담으면 두 벌이
+     되어 곧 서로 어긋난다. 그래서 열 때 미닉스에서 읽고, 저장하면 미닉스에 쓴다.
+     어느 화면에서 적어도 같은 값이 보인다.
+
+     짝은 **행사 ID × SKU** 다. 같은 행사·같은 SKU 라면 판매채널이 달라도 한 믹스를
+     엽는다 — 미닉스의 모양(행사×제품)이 그러하고, 줄마다 따로 두면 미닉스에 담을
+     자리가 없다. 열쇠는 브라우저에 없다. 앱 스크립트가 들고 미닉스에 묻는다.
+
+     셈법은 미닉스 MIX 의 computeMixRow 와 같다:
+       클릭 = 총예산/CPC · 노출 = 클릭/CTR · 전환 = 클릭×CVR · 매출 = 전환×판매가
+     사전(알림)은 전환이 아니라 모수 확보라 뒷단이 다르다. */
+  const MIXP = [
+    { k: 'pre', label: '사전' },
+    { k: 'preAlarm', label: '사전(알림)' },
+    { k: 'day', label: '당일' },
+    { k: 'always', label: '상시' },
+  ];
+  const MIX_MEDIAS = ['브랜드검색', 'GFA', 'AD Voost', '쇼핑검색', '파워링크', '메타', '카카오모먼트',
+    '구글', '버티컬', '매체 SA', '토스라이브', '빅배너', 'CRM-카카오', 'CRM-네이버톡톡'];
+
+  const mixBlankRow = () => ({ media: '', landing: '', purpose: '', slot: '',
+    totalBudget: 0, ctr: 0, cvr: 0, cpc: 0, cvr2: 0 });
+  const mixBlankPlan = () => {
+    const phases = {};
+    MIXP.forEach((one) => { phases[one.k] = { startDate: '', endDate: '', salePrice: 0, rows: [] }; });
+    return { kind: 'mix-plan', v: 2, phases };
+  };
+  /* 미닉스에서 온 것을 이 화면이 쓰는 모양으로 맞춘다. 칸이 빠져 있어도 셈이 깨지지 않게. */
+  const mixNorm = (plan) => {
+    const out = mixBlankPlan();
+    if (!plan || typeof plan !== 'object') return out;
+    const from = plan.phases && typeof plan.phases === 'object' ? plan.phases : plan;
+    MIXP.forEach(({ k }) => {
+      const one = from[k] || {};
+      out.phases[k] = {
+        startDate: one.startDate || '',
+        endDate: one.endDate || '',
+        salePrice: Number(one.salePrice || 0),
+        rows: (one.rows || []).map((row) => ({ ...mixBlankRow(), ...row })),
+      };
+    });
+    return out;
+  };
+
+  const mixDays = (phase) => {
+    if (!phase.startDate || !phase.endDate) return null;
+    const days = Math.round((new Date(phase.endDate) - new Date(phase.startDate)) / 86400000) + 1;
+    return days > 0 ? days : null;
+  };
+  const mixBudget = (phase) => (phase.rows || [])
+    .reduce((sum, row) => sum + (Number(row.totalBudget) || 0), 0);
+  const mixGrand = (plan) => MIXP.reduce((sum, one) => sum + mixBudget(plan.phases[one.k]), 0);
+
+  // 미닉스 MIX 의 computeMixRow 와 같다 — 두 화면이 같은 숫자를 말해야 한다
+  const mixCalc = (row, salePrice, phaseKey) => {
+    const budget = Number(row.totalBudget) || 0;
+    const cpc = Number(row.cpc) || 0;
+    const clicks = cpc > 0 ? budget / cpc : 0;
+    const ctr = Number(row.ctr) || 0;
+    const imp = ctr > 0 ? clicks / (ctr / 100) : 0;
+    const conv = clicks * ((Number(row.cvr) || 0) / 100);
+    const rev = conv * (Number(salePrice) || 0);
+    const roas = budget > 0 ? rev / budget : 0;
+    if (phaseKey === 'preAlarm') {
+      const want = conv * ((Number(row.cvr2) || 0) / 100);
+      return { clicks, imp, conv, rev, roas,
+        cpa: conv > 0 ? budget / conv : 0, want, cps2: want > 0 ? budget / want : 0 };
+    }
+    return { clicks, imp, conv, rev, roas,
+      cps: conv > 0 ? budget / conv : 0,
+      cpm: imp > 0 ? (budget / imp) * 1000 : 0,
+      aov: conv > 0 ? rev / conv : 0 };
+  };
+
+  // 표가 좁아 ₩ 는 안 붙이고 자릿수만 (미닉스와 같다)
+  const mxN = (v) => Math.round(Number(v) || 0).toLocaleString();
+  const mxW = (v) => (Number(v) || 0 ? Math.round(Number(v)).toLocaleString() : '—');
+  const mxP = (v, digits) => (Number(v) || 0
+    ? `${Number(v).toFixed(digits === undefined ? 2 : digits)}%` : '—');
+
+  /* 지금 열려 있는 믹스.
+     promoId · product 가 짝이고, plan 은 미닉스에서 읽어 온 믹스다.
+     dirty 는 적고 아직 안 보낸 것이 있다는 뜻 — 닫을 때 묻는다. */
+  let mixBox = { open: false, rowId: '', promoId: '', product: '', promo: '',
+    state: 'idle', message: '', plan: null, dirty: false, saving: false };
+
+  const mixRowOf = (rowId) => plan.rows.find((one) => one.id === rowId) || null;
+
+  const mixOpen = async (rowId) => {
+    const row = mixRowOf(rowId);
+    if (!row) return;
+    const promoId = String(row.eventId || '').trim();
+    const product = String(row.sku || '').trim();
+    if (!promoId) {
+      mixBox = { open: true, rowId, promoId: '', product, promo: String(row.event || ''),
+        state: 'error', plan: null, dirty: false, saving: false,
+        message: '이 줄은 아직 미닉스 행사와 짝지어지지 않았습니다 — 행사명 칸에서 미닉스 행사를 골라 주세요.' };
+      return render();
+    }
+    mixBox = { open: true, rowId, promoId, product, promo: String(row.event || ''),
+      state: 'loading', message: '', plan: null, dirty: false, saving: false };
+    render();
+    try {
+      const body = await askSheet({ action: 'minixMixGet', promoId, product });
+      if (!mixBox.open || mixBox.rowId !== rowId) return undefined;   // 기다리는 사이에 닫았다
+      mixBox = { ...mixBox, state: 'done', promo: body.promo || mixBox.promo,
+        plan: mixNorm((body.mix || {})[product]) };
+    } catch (error) {
+      if (!mixBox.open || mixBox.rowId !== rowId) return undefined;
+      mixBox = { ...mixBox, state: 'error', message: `믹스를 못 읽었습니다 — ${error.message}` };
+    }
+    return render();
+  };
+
+  const mixClose = (force) => {
+    /* 적어 둔 것을 말없이 버리지 않는다 — 믹스는 한참 걸려 짜는 것이다 */
+    if (!force && mixBox.dirty
+      && !window.confirm('아직 미닉스에 안 보낸 것이 있습니다. 그냥 닫을까요?')) return undefined;
+    mixBox = { open: false, rowId: '', promoId: '', product: '', promo: '',
+      state: 'idle', message: '', plan: null, dirty: false, saving: false };
+    return render();
+  };
+
+  const mixSave = async () => {
+    if (!mixBox.plan || mixBox.saving) return undefined;
+    mixBox = { ...mixBox, saving: true, message: '' };
+    render();
+    try {
+      await askSheet({ action: 'minixMixPut', promoId: mixBox.promoId,
+        product: mixBox.product, plan: mixBox.plan });
+      mixBox = { ...mixBox, saving: false, dirty: false,
+        message: `미닉스에 넣었습니다 — ${mixBox.promo || mixBox.promoId} · ${mixBox.product}` };
+      /* 줄 표의 믹스 칸이 합계를 보여 주므로 그 값도 지금 것으로 맞춘다 */
+      mixSums[`${mixBox.promoId}\u0000${mixBox.product}`] = mixGrand(mixBox.plan);
+    } catch (error) {
+      mixBox = { ...mixBox, saving: false, message: `못 보냈습니다 — ${error.message}` };
+    }
+    return render();
+  };
+
+  /* 줄 표의 믹스 칸에 적을 합계. 행사×SKU 마다 하나다.
+     화면을 다시 그려도 남지만 새로고침하면 사라진다 — 미닉스가 원본이라 담아 두지 않는다. */
+  let mixSums = {};
+  const mixSumOf = (row) => {
+    const id = String(row.eventId || '').trim();
+    if (!id) return undefined;
+    return mixSums[`${id}\u0000${String(row.sku || '').trim()}`];
+  };
+
+  /* 적는 대로 셈한 칸만 고쳐 끼운다.
+     표를 통째로 다시 그리면 적던 자리(커서)를 잃는다 — 믹스는 칸이 스무 개라
+     한 번 튀면 어디를 적고 있었는지 찾기 어렵다. 그래서 input 은 그대로 두고
+     data-calc 가 붙은 칸의 글자만 바꾼다. */
+  const mixRefresh = () => {
+    const box = document.querySelector('.bg-mix-body');
+    if (!box || !mixBox.plan) return;
+    const plans = mixBox.plan;
+    const grand = mixGrand(plans);
+    MIXP.forEach(({ k }) => {
+      const phase = plans.phases[k];
+      const total = mixBudget(phase);
+      const days = mixDays(phase);
+      (phase.rows || []).forEach((row, at) => {
+        const got = mixCalc(row, phase.salePrice, k);
+        const money = Number(row.totalBudget) || 0;
+        const put = (name, text) => {
+          const cell = box.querySelector(`[data-calc="${name}"][data-p="${k}"][data-at="${at}"]`);
+          if (cell) cell.textContent = text;
+        };
+        put('share', mxP(total > 0 ? (money / total) * 100 : 0, 0));
+        put('daily', days ? mxW(money / days) : '—');
+        put('imp', mxN(got.imp));
+        put('clicks', mxN(got.clicks));
+        put('conv', mxN(got.conv));
+        put('rev', mxW(got.rev));
+        put('roas', mxP(got.roas * 100, 0));
+        if (k === 'preAlarm') {
+          put('cpa', mxW(got.cpa));
+          put('want', mxN(got.want));
+          put('cps2', mxW(got.cps2));
+        } else {
+          put('cps', mxW(got.cps));
+          put('cpm', mxW(got.cpm));
+          put('aov', mxW(got.aov));
+        }
+      });
+      const foot = box.querySelector(`[data-total="${k}"]`);
+      if (foot) foot.textContent = mxW(total);
+      const footShare = box.querySelector(`[data-totalshare="${k}"]`);
+      if (footShare) footShare.textContent = mxP(grand > 0 ? (total / grand) * 100 : 0, 0);
+    });
+    const all = box.querySelector('[data-grand]');
+    if (all) all.textContent = mxW(grand);
+  };
+
+  /* 줄 표의 믹스 칸. 짝이 없으면 열 수 없다고 **까닭까지** 적어 둔다 —
+     그냥 흐릿한 단추만 두면 왜 안 눌리는지 알 길이 없다. */
+  const mixCell = (row) => {
+    if (!String(row.eventId || '').trim()) {
+      return `<span class="tool-blank"
+        title="행사명 칸의 화살표를 눌러 미닉스 행사를 고르면 믹스를 짤 수 있습니다">—</span>`;
+    }
+    const sum = mixSumOf(row);
+    return `<button type="button" class="bg-mix-btn" data-bg="mix" data-row="${escape(row.id)}"
+      title="미닉스 매체믹스를 엽니다 — ${escape(row.event || row.eventId)} · ${escape(row.sku || '')}">
+      <i data-lucide="pencil"></i>${sum ? won(sum) : '믹스짜기'}</button>`;
+  };
+
+  const mixPhaseTable = (key, label) => {
+    const phase = mixBox.plan.phases[key];
+    const rows = phase.rows || [];
+    const alarm = key === 'preAlarm';
+    const total = mixBudget(phase);
+    const grand = mixGrand(mixBox.plan);
+    const days = mixDays(phase);
+    const heads = alarm
+      ? ['노출', '클릭', 'CTR', '알림신청', '신청률', '매출액', 'CPC', 'CPA', '예상전환수', 'CVR', 'CPS', 'ROAS']
+      : ['노출', '클릭', 'CTR', '전환수', 'CVR', '매출액', 'CPC', 'CPS', 'CPM', 'AOV', 'ROAS'];
+
+    const money = (value, field, at) => `<input type="text" inputmode="numeric" class="bg-mix-num"
+      data-mix="cell" data-p="${key}" data-at="${at}" data-f="${field}"
+      value="${value ? commaNum(Math.round(value)) : ''}" placeholder="0">`;
+    const pct = (value, field, at) => `<span class="bg-mix-pct"><input type="number" step="any" min="0"
+      data-mix="cell" data-p="${key}" data-at="${at}" data-f="${field}"
+      value="${escape(value || '')}"><b>%</b></span>`;
+    const text = (value, field, at) => `<input type="text" data-mix="cell"
+      data-p="${key}" data-at="${at}" data-f="${field}" value="${escape(value || '')}">`;
+    const calc = (name, at, value) => `<td class="perf-num"
+      data-calc="${name}" data-p="${key}" data-at="${at}">${value}</td>`;
+
+    const body = rows.map((row, at) => {
+      const got = mixCalc(row, phase.salePrice, key);
+      const spent = Number(row.totalBudget) || 0;
+      const cells = alarm
+        ? [['imp', mxN(got.imp)], ['clicks', mxN(got.clicks)], ['ctr', pct(row.ctr, 'ctr', at)],
+          ['conv', mxN(got.conv)], ['cvr', pct(row.cvr, 'cvr', at)], ['rev', mxW(got.rev)],
+          ['cpc', money(row.cpc, 'cpc', at)], ['cpa', mxW(got.cpa)], ['want', mxN(got.want)],
+          ['cvr2', pct(row.cvr2, 'cvr2', at)], ['cps2', mxW(got.cps2)], ['roas', mxP(got.roas * 100, 0)]]
+        : [['imp', mxN(got.imp)], ['clicks', mxN(got.clicks)], ['ctr', pct(row.ctr, 'ctr', at)],
+          ['conv', mxN(got.conv)], ['cvr', pct(row.cvr, 'cvr', at)], ['rev', mxW(got.rev)],
+          ['cpc', money(row.cpc, 'cpc', at)], ['cps', mxW(got.cps)], ['cpm', mxW(got.cpm)],
+          ['aov', mxW(got.aov)], ['roas', mxP(got.roas * 100, 0)]];
+      return `<tr>
+        <td class="bg-mix-media"><select data-mix="cell" data-p="${key}" data-at="${at}" data-f="media">
+          <option value="">매체</option>
+          ${MIX_MEDIAS.concat(MIX_MEDIAS.indexOf(row.media) < 0 && row.media ? [row.media] : [])
+    .map((one) => `<option${one === row.media ? ' selected' : ''}>${escape(one)}</option>`).join('')}
+        </select></td>
+        <td>${text(row.landing, 'landing', at)}</td>
+        <td>${text(row.purpose, 'purpose', at)}</td>
+        ${calc('share', at, mxP(total > 0 ? (spent / total) * 100 : 0, 0))}
+        <td class="perf-num">${money(row.totalBudget, 'totalBudget', at)}</td>
+        ${calc('daily', at, days ? mxW(spent / days) : '—')}
+        ${cells.map(([name, value]) => (/^<(input|span)/.test(value)
+    ? `<td class="perf-num">${value}</td>`
+    : calc(name, at, value))).join('')}
+        <td class="bg-mix-kill"><button type="button" data-mix="drop" data-p="${key}" data-at="${at}"
+          title="이 줄을 지웁니다"><i data-lucide="x"></i></button></td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="bg-mix-phase">
+      <div class="bg-mix-phase-head">
+        <b>${escape(label)}</b>
+        <label>판매가<input type="text" inputmode="numeric" class="bg-mix-num" data-mix="price"
+          data-p="${key}" value="${phase.salePrice ? commaNum(phase.salePrice) : ''}" placeholder="0"></label>
+        <label>기간<input type="date" data-mix="phaseDate" data-p="${key}" data-f="startDate"
+          value="${escape(phase.startDate || '')}"><i>~</i><input type="date" data-mix="phaseDate"
+          data-p="${key}" data-f="endDate" value="${escape(phase.endDate || '')}"></label>
+        <button type="button" class="tool-add" data-mix="add" data-p="${key}">
+          <i data-lucide="plus"></i>매체 줄 추가</button>
+      </div>
+      ${rows.length ? `<div class="tool-table-wrap"><table class="tool-table bg-mix-table">
+        <thead><tr>
+          <th>매체</th><th>랜딩</th><th>목적</th>
+          <th class="perf-num">비중</th><th class="perf-num">Total Budget</th><th class="perf-num">Daily Budget</th>
+          ${heads.map((one) => `<th class="perf-num">${escape(one)}</th>`).join('')}<th></th>
+        </tr></thead>
+        <tbody>${body}
+          <tr class="bg-mix-total"><td colspan="3"><b>광고 Total</b></td>
+            <td class="perf-num" data-totalshare="${key}">${mxP(grand > 0 ? (total / grand) * 100 : 0, 0)}</td>
+            <td class="perf-num"><b data-total="${key}">${mxW(total)}</b></td>
+            <td class="perf-num">${days ? mxW(total / days) : '—'}</td>
+            <td class="perf-num" colspan="${heads.length + 1}"></td></tr>
+        </tbody></table></div>`
+    : '<p class="bg-mix-none">아직 매체가 없습니다. [매체 줄 추가] 를 누르세요.</p>'}
+    </div>`;
+  };
+
+  const mixPanel = () => {
+    if (!mixBox.open) return '';
+    const inner = mixBox.state === 'loading'
+      ? '<p class="bg-mix-none">미닉스에서 믹스를 읽는 중…</p>'
+      : mixBox.state === 'error'
+        ? `<p class="bg-mix-warn">${escape(mixBox.message)}</p>`
+        : `${MIXP.map(({ k, label }) => mixPhaseTable(k, label)).join('')}
+          <p class="bg-mix-sum">네 단계 합계 <b data-grand>${mxW(mixGrand(mixBox.plan))}</b></p>`;
+    return `<div class="tool-modal-backdrop" data-mix="close"></div>
+      <div class="bg-mix-panel">
+        <div class="bg-mix-head">
+          <h3>믹스짜기<small>${escape(mixBox.promo || mixBox.promoId)} · ${escape(mixBox.product)}</small></h3>
+          <button type="button" class="bg-mix-x" data-mix="close" title="닫기"><i data-lucide="x"></i></button>
+        </div>
+        <p class="bg-mix-note">미닉스 워크스페이스의 <b>행사별 결과 → 매체믹스</b> 와 같은 자리입니다.
+          여기서 적으면 거기에도, 거기서 적으면 여기에도 보입니다.</p>
+        <div class="bg-mix-body">${inner}</div>
+        ${mixBox.state === 'done' ? `<div class="bg-mix-foot">
+          ${mixBox.message ? `<span class="bg-mix-said">${escape(mixBox.message)}</span>` : ''}
+          ${mixBox.dirty ? '<span class="bg-mix-dirty">아직 안 보낸 것이 있습니다</span>' : ''}
+          <button type="button" class="tool-add" data-mix="save"${mixBox.saving ? ' disabled' : ''}>
+            <i data-lucide="upload"></i>${mixBox.saving ? '보내는 중…' : '미닉스에 저장'}</button>
+        </div>` : ''}
+      </div>`;
+  };
+
   const eventRow = (row) => {
     const cost = rowShown(row);
     const id = escape(row.id);
@@ -18816,7 +19203,7 @@ if (budgetPlanView) {
         <td>${escape(row.group || '') || dash}</td>
         <td>${escape(row.kind || '') || dash}</td>
         <td class="perf-name"><span>${escape(row.channel || '') || dash}</span></td>
-        <td class="bg-event">${escape(row.event || '') || dash}</td>
+        <td class="bg-event">${escape(row.event || '') || dash}${promoTieMark(row)}</td>
         <td class="bg-live">${escape(row.live || '') || dash}</td>
         <td class="bg-span">${span}</td>
         <td class="perf-num">${row.goal ? num(row.goal) : dash}</td>
@@ -18826,6 +19213,7 @@ if (budgetPlanView) {
     : dash}</td>
         ${hasBrand(row.sku) ? `<td class="perf-num bg-aside">${row.brand ? won(row.brand) : dash}</td>` : ''}
         <td class="perf-num bg-cost"><span${rowManual(row) ? ' class="is-manual" title="수기로 적은 금액입니다"' : ''}>${cost ? won(cost) : dash}</span></td>
+        <td class="perf-num bg-mix-cell">${mixCell(row)}</td>
         <td class="perf-num bg-used">${paid ? won(paid) : dash}</td>
       </tr>`;
     }
@@ -18838,8 +19226,15 @@ if (budgetPlanView) {
     `<option${one === row.kind ? ' selected' : ''}>${escape(one)}</option>`).join('')}</select></td>
       <td><input list="${CHANNEL_LIST}" class="bg-channel" data-bg="channel" data-row="${id}"
         value="${escape(row.channel || '')}" placeholder="고르거나 직접"></td>
-      <td><input list="${EVENT_LIST}" class="bg-event" data-bg="event" data-row="${id}"
-        value="${escape(row.event || '')}" placeholder="행사명"></td>
+      <td class="bg-event-cell"><span class="setup-combo bg-promo-combo">
+        <span class="setup-combo-row">
+          <input list="${EVENT_LIST}" class="bg-event" data-bg="event" data-row="${id}"
+            value="${escape(row.event || '')}" placeholder="고르거나 직접">
+          <button type="button" class="setup-combo-toggle${promos.open === row.id ? ' is-open' : ''}"
+            data-bg="promoPick" data-row="${id}" title="미닉스 행사 고르기"><i data-lucide="chevron-${promos.open === row.id ? 'up' : 'down'}"></i></button>
+        </span>
+        ${promos.open === row.id ? `<div class="setup-combo-list">${promoInner(row)}</div>` : ''}
+      </span></td>
       <td class="bg-live"><input type="date" data-bg="live" data-row="${id}" value="${escape(row.live || '')}"></td>
       <td class="bg-span"><input type="date" data-bg="since" data-row="${id}" value="${escape(row.since || '')}"><i>~</i><input type="date" data-bg="until" data-row="${id}" value="${escape(row.until || '')}"></td>
       <td class="perf-num"><input type="text" class="bg-num" data-bg="goal" data-row="${id}" value="${escape(row.goal ? commaNum(row.goal) : '')}" placeholder="0"></td>
@@ -18852,6 +19247,7 @@ if (budgetPlanView) {
         data-bg="cost" data-row="${id}" value="${escape(row.cost ? commaNum(row.cost) : '')}"
         placeholder="${escape(cost ? commaNum(cost) : '자동')}"
         title="비우면 목표수량 × 목표 CPS 로 셉니다"></td>
+      <td class="perf-num bg-mix-cell">${mixCell(row)}</td>
       <td class="perf-num bg-used-cell"><input type="text" class="bg-num bg-used" data-bg="used" data-row="${id}"
         value="${escape(paid ? commaNum(paid) : '')}" placeholder="0"
         title="실제로 나간 돈"><label class="bg-used-file"
@@ -18871,7 +19267,7 @@ if (budgetPlanView) {
     const spare = sum.budget - sum.planned;   // 예산에서 아직 안 짠 돈
     const rows = rowsOf(sku.name);
     const name = escape(sku.name);
-    const wide = (hasBrand(sku.name) ? 12 : 11) + (editing ? 2 : 0);
+    const wide = (hasBrand(sku.name) ? 13 : 12) + (editing ? 2 : 0);   // 믹스짜기 칸이 하나 더 있다
     return `<div class="tool-card bg-sku" data-sku="${name}">
       <div class="bg-sku-head">
         <span class="bg-sku-name">${name}</span>
@@ -18913,6 +19309,7 @@ if (budgetPlanView) {
           <th class="perf-num">목표수량</th><th class="perf-num">목표 CPS</th><th>진행광고매체</th>
           ${hasBrand(sku.name) ? `<th class="perf-num">브검비<small>${withBrand ? '얹어 보는 중' : '합계 밖'}</small></th>` : ''}
           <th class="perf-num">광고비<small>${editing ? '비우면 CPS×목표수량' : 'CPS×목표수량'}</small></th>
+          <th class="perf-num">믹스짜기<small>미닉스 매체믹스</small></th>
           <th class="perf-num">실사용비</th>${editing ? '<th></th>' : ''}
         </tr></thead>
         <tbody>${rows.length ? rows.map(eventRow).join('')
@@ -19266,6 +19663,7 @@ if (budgetPlanView) {
       ${fixedCard()}
       <div class="tool-list-head bg-title"><h3>프로모션</h3></div>
       ${events()}
+      ${mixPanel()}
 `;
     lucide.createIcons();
   };
@@ -19595,10 +19993,102 @@ if (budgetPlanView) {
   };
 
   // ── 손놀림 ──────────────────────────────────────────────────────
+  /* ── 믹스 창 다루기 ──────────────────────────────────────────── */
+  budgetPlanView.addEventListener('click', (event) => {
+    const hit = event.target.closest('[data-mix]');
+    if (!hit) return;
+    const what = hit.dataset.mix;
+    if (what === 'close') { mixClose(false); return; }
+    if (what === 'save') { mixSave(); return; }
+    if (!mixBox.plan) return;
+    if (what === 'add') {
+      mixBox.plan.phases[hit.dataset.p].rows.push(mixBlankRow());
+      mixBox.dirty = true;
+      render();
+      return;
+    }
+    if (what === 'drop') {
+      mixBox.plan.phases[hit.dataset.p].rows.splice(Number(hit.dataset.at), 1);
+      mixBox.dirty = true;
+      render();
+    }
+  });
+
+  /* 적는 대로 셈만 고쳐 끼운다 — 입력칸은 손대지 않아 커서가 안 튄다 */
+  const mixType = (field) => {
+    if (!mixBox.plan) return;
+    const phase = mixBox.plan.phases[field.dataset.p];
+    if (!phase) return;
+    const what = field.dataset.mix;
+    if (what === 'price') {
+      const value = numValue(field.value);
+      if (value === null) return;
+      phase.salePrice = value;
+    } else if (what === 'phaseDate') {
+      phase[field.dataset.f] = field.value;
+    } else {
+      const row = (phase.rows || [])[Number(field.dataset.at)];
+      if (!row) return;
+      const key = field.dataset.f;
+      if (key === 'totalBudget' || key === 'cpc') {
+        const value = numValue(field.value);
+        if (value === null) return;       // 못 센 수식은 그대로 두고 빨간 칸을 남긴다
+        row[key] = value;
+      } else if (key === 'ctr' || key === 'cvr' || key === 'cvr2') {
+        row[key] = Number(field.value) || 0;
+      } else {
+        row[key] = field.value;
+      }
+    }
+    mixBox.dirty = true;
+    mixRefresh();
+  };
+  budgetPlanView.addEventListener('input', (event) => {
+    const field = event.target.closest('[data-mix]');
+    if (field && field.dataset.mix !== 'close') mixType(field);
+  });
+  budgetPlanView.addEventListener('change', (event) => {
+    const field = event.target.closest('[data-mix]');
+    if (field && field.dataset.mix !== 'close') mixType(field);
+  });
+  // 돈 칸은 **빠져나갈 때 한 번만** 콤마를 붙인다 (적는 중에 고치면 커서가 튄다)
+  budgetPlanView.addEventListener('focusout', (event) => {
+    const field = event.target.closest('.bg-mix-num');
+    if (!field) return;
+    const value = numValue(field.value);
+    if (value !== null) field.value = value ? commaNum(value) : '';
+  });
+
   budgetPlanView.addEventListener('click', (event) => {
     const hit = event.target.closest('[data-bg]');
     if (!hit || hit.tagName === 'SELECT' || hit.tagName === 'INPUT') return;
     const what = hit.dataset.bg;
+    if (what === 'mix') { mixOpen(hit.dataset.row); return; }
+    if (what === 'promoPick') {
+      if (promos.open === hit.dataset.row) { promos = { ...promos, open: '' }; render(); return; }
+      loadPromos(hit.dataset.row, false);
+      return;
+    }
+    if (what === 'promoAgain') { loadPromos(hit.dataset.row, true); return; }
+    if (what === 'promoHit' || what === 'promoUntie') {
+      const row = plan.rows.find((one) => one.id === hit.dataset.row);
+      if (!row) return;
+      if (what === 'promoUntie') { row.eventId = ''; }
+      else {
+        row.eventId = hit.dataset.promo;
+        row.event = hit.dataset.promoname || row.event;
+      }
+      promos = { ...promos, open: '' };
+      render();
+      save();
+      return;
+    }
+    // 고르개 바깥을 눌렀으면 닫는다
+    if (promos.open && !event.target.closest('.bg-promo-combo')) {
+      promos = { ...promos, open: '' };
+      render();
+      return;
+    }
     if (what === 'edit') { editing = true; render(); return; }
     if (what === 'save') { save(true); return; }
     if (what === 'addMonth') {
@@ -19650,7 +20140,7 @@ if (budgetPlanView) {
     }
     if (what === 'add') {
       plan.rows.push({
-        id: uid(), sku: hit.dataset.sku, group: '', kind: '온라인', channel: '', event: '', live: '', media: [],
+        id: uid(), sku: hit.dataset.sku, group: '', kind: '온라인', channel: '', event: '', eventId: '', live: '', media: [],
         since: '', until: '', goal: 0, cps: 0, brand: 0, cost: 0, used: 0,
       });
       render();
@@ -19756,6 +20246,15 @@ if (budgetPlanView) {
     if (what === 'group' || what === 'kind' || what === 'channel' || what === 'event'
       || what === 'live' || what === 'since' || what === 'until') {
       row[what] = hit.value;
+      /* 손으로 이름을 고치면 고른 행사와 더는 같지 않다. 짝을 쥔 채 두면
+         화면은 다른 이름을 보여 주면서 믹스는 옛 행사 것을 연다 — 그게 더 나쁘다. */
+      if (what === 'event' && row.eventId) {
+        const tied = promos.list.find((one) => String(one.id) === String(row.eventId));
+        if (!tied || String(tied.name || '') !== String(row.event || '')) {
+          row.eventId = '';
+          render();
+        }
+      }
       save();
     }
   });

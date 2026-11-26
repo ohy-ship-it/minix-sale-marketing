@@ -2204,6 +2204,99 @@ function mediaPush_(payload) {
     setting: body.setting || '', manual: body.manual || 0 };
 }
 
+/* 미닉스 창구를 부르는 길 한 벌. 밀어넣기 · 빼기 · 믹스가 다 이 길을 쓴다 —
+   오류 말이 한 벌이어야 무엇이 잘못됐는지 늘 같은 말로 알 수 있다.
+   method 는 'get' 또는 'post', body 는 post 일 때만 쓴다. */
+function myPagesCall_(method, path, body) {
+  var options = {
+    method: method,
+    muteHttpExceptions: true,
+    headers: { 'x-media-key': mediaPushKey_() }
+  };
+  if (method === 'post') {
+    options.contentType = 'application/json; charset=utf-8';
+    options.payload = JSON.stringify(body || {});
+  }
+  var answer = UrlFetchApp.fetch(myPagesUrl_() + path, options);
+  var code = answer.getResponseCode();
+  var text = answer.getContentText() || '';
+  var got = null;
+  try { got = JSON.parse(text); } catch (error) { got = null; }
+
+  if (code === 401 && /not logged in/i.test(text)) {
+    throw new Error('미닉스 워크스페이스가 로그인 검사에서 막았습니다 — 창구가 로그인 검사 뒤에 있는 옛 서버입니다 (미닉스 쪽 배포가 필요합니다).');
+  }
+  if (code === 401) {
+    throw new Error('미닉스 워크스페이스가 열쇠를 거절했습니다 — 양쪽 MEDIA_PUSH_KEY 가 같은 값인지 확인해 주세요.');
+  }
+  if (code === 503) {
+    throw new Error('미닉스 워크스페이스에 MEDIA_PUSH_KEY 가 아직 없습니다 (Render 환경변수에 넣고 다시 배포해 주세요).');
+  }
+  if (code === 404 && path.indexOf('/api/promo-list') !== 0) {
+    throw new Error('미닉스 워크스페이스에서 그 행사를 찾지 못했습니다.');
+  }
+  if (code === 404) {
+    throw new Error('미닉스 워크스페이스에 아직 그 창구가 없습니다 (미닉스 쪽 배포가 필요합니다).');
+  }
+  if (code >= 400 || !got || !got.ok) {
+    throw new Error('미닉스 워크스페이스 (HTTP ' + code + '): '
+      + ((got && got.error) || text.slice(0, 300)));
+  }
+  return got;
+}
+
+/* ── 매체믹스 (월별 예산 ↔ 미닉스) ──────────────────────────────
+
+   믹스는 **한 자리에만** 담는다 — 미닉스의 ops.mixByProduct[제품].mixPlan.
+   여기에 또 담으면 두 벌이 되어 곧 서로 어긋난다. 그래서 읽기도 쓰기도
+   미닉스에 물어보고, 세일즈마케팅 시트에는 **행사 ID 와 제품**만 적어 둔다.
+
+   행사 목록은 고르개에 쓴다. 자주 안 바뀌고 부를 때마다 행사를 전부 읽으므로
+   5분 담아 둔다 (미닉스 쪽도 5분 캐시다). */
+var MINIX_PROMOS_CACHE_SECONDS = 300;
+
+function minixPromos_(payload) {
+  var cache = CacheService.getScriptCache();
+  var fresh = !!(payload && payload.refresh);
+  if (!fresh) {
+    var kept = cache.get('minixPromos');
+    if (kept) {
+      try { return { ok: true, promos: JSON.parse(kept), kept: true }; }
+      catch (ignore) { /* 깨졌으면 다시 묻는다 */ }
+    }
+  }
+  var got = myPagesCall_('get', '/api/promo-list');
+  var promos = got.promos || [];
+  try { cache.put('minixPromos', JSON.stringify(promos), MINIX_PROMOS_CACHE_SECONDS); }
+  catch (ignore) { /* 너무 길면 못 담는다 — 그래도 돌려는 준다 */ }
+  return { ok: true, promos: promos, kept: false };
+}
+
+/* 그 행사의 믹스를 읽는다. product 를 주면 그 제품 하나만.
+   담아 두지 않는다 — 두 화면이 같은 값을 말해야 하므로 늘 지금 것을 읽는다. */
+function minixMixGet_(payload) {
+  var promoId = String((payload && payload.promoId) || '').trim();
+  if (!promoId) throw new Error('행사 ID 가 비어 있습니다 (미닉스 행사를 고르면 채워집니다).');
+  var product = String((payload && payload.product) || '').trim();
+  var path = '/api/promos/' + encodeURIComponent(promoId) + '/media-mix'
+    + (product ? '?product=' + encodeURIComponent(product) : '');
+  var got = myPagesCall_('get', path);
+  return { ok: true, promoId: promoId, promo: got.promo || '',
+    products: got.products || [], mix: got.mix || {} };
+}
+
+/* 그 행사·그 제품의 믹스를 쓴다. 미닉스는 그 제품 칸만 겹쳐 쓴다. */
+function minixMixPut_(payload) {
+  var promoId = String((payload && payload.promoId) || '').trim();
+  var product = String((payload && payload.product) || '').trim();
+  if (!promoId) throw new Error('행사 ID 가 비어 있습니다 (미닉스 행사를 고르면 채워집니다).');
+  if (!product) throw new Error('제품이 비어 있습니다.');
+  if (!payload || !payload.plan) throw new Error('보낼 믹스가 비어 있습니다.');
+  var got = myPagesCall_('post', '/api/promos/' + encodeURIComponent(promoId) + '/media-mix',
+    { product: product, plan: payload.plan, by: String((payload && payload.by) || '') });
+  return { ok: true, promoId: promoId, product: product, promo: got.promo || '' };
+}
+
 /* 짝을 풀 때 — 그 행사에 밀어넣었던 파일의 숫자를 미닉스에서 뺀다.
    payload: { promoId, product, files: ['파일명', …], by }
    미닉스는 그 파일이 넣은 줄만 빼고, 손으로 올린 파일은 건드리지 않는다. */
@@ -2432,6 +2525,9 @@ function handleAction_(payload) {
     if (payload.action === 'partTabs') return partTabs_();
     if (payload.action === 'mediaPush') return mediaPush_(payload);
     if (payload.action === 'mediaUnpush') return mediaUnpush_(payload);
+    if (payload.action === 'minixPromos') return minixPromos_(payload);
+    if (payload.action === 'minixMixGet') return minixMixGet_(payload);
+    if (payload.action === 'minixMixPut') return minixMixPut_(payload);
     // 카페24 — 아침에 쌓아 둔 카페24주문 탭을 읽어 상품별 주문 건수를 센다
     if (payload.action === 'cafe24Lookup') return cafe24Lookup_(payload);
     if (payload.action === 'cafe24CaAppend') return cafe24CaAppend_(payload);
