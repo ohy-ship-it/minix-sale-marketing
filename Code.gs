@@ -5908,14 +5908,18 @@ function kakaoTree_(payload) {
   // 한꺼번에 물으면 카카오가 일부를 '너무 잦다(429)' 로 돌려보낸다. kakaoMany_ 는 그것을 조용히 버리므로
   // 빠진 것만 하나씩 다시 묻는다 (kakao_ 는 429 를 쉬었다 되묻는다).
   // 안 그러면 종류를 모르는 캠페인이 '비즈보드가 아닌 것' 으로 걸러져 켜진 캠페인이 목록에서 빠진다.
-  var details = kakaoManySure_(detailJobs, account);
-  var groups = kakaoManySure_(groupJobs, account);
+  /* 다시 묻는 것은 **켜진 캠페인만** 한다. 꺼진 캠페인까지 하나씩 되물으면 계정에 캠페인이
+     수백 개라 그것만으로 카카오 한도를 다 쓰고, 바로 뒤의 기준 광고그룹 조회가 거절된다. */
+  var live = {};
+  campaigns.forEach(function (one) { if (one.config === 'ON') live['c' + one.id] = live['g' + one.id] = true; });
+  var details = kakaoManySure_(detailJobs, account, live);
+  var groups = kakaoManySure_(groupJobs, account, live);
   var missing = 0;
 
   var rows = campaigns.map(function (one) {
     var detail = details['c' + one.id] || {};
     var goal = detail.campaignTypeGoal || one.campaignTypeGoal || {};
-    if (!goal.campaignType || !groups['g' + one.id]) missing += 1;
+    if (one.config === 'ON' && (!goal.campaignType || !groups['g' + one.id])) missing += 1;
     return {
       id: String(one.id),
       name: one.name || String(one.id),
@@ -5929,16 +5933,19 @@ function kakaoTree_(payload) {
   });
 
   var result = { ok: true, source: 'kakao', account: account, campaigns: rows, missing: missing };
-  // 덜 읽은 목록은 담아 두지 않는다 — 담으면 30분 동안 빠진 채로 보인다.
-  if (!missing) cachePut_(cache, key, JSON.stringify(result), KAKAO_TREE_CACHE_SECONDS);
+  /* 덜 읽은 목록은 **2분만** 담아 둔다 — 30분 담으면 빠진 채로 오래 보이고,
+     아예 안 담으면 부를 때마다 수백 번을 다시 물어 카카오 한도를 다 쓴다. */
+  cachePut_(cache, key, JSON.stringify(result), missing ? 120 : KAKAO_TREE_CACHE_SECONDS);
   return result;
 }
 
 // kakaoMany_ 로 한꺼번에 묻고, 답이 안 온 것만 하나씩 다시 묻는다.
-function kakaoManySure_(jobs, account) {
+// only 를 주면 그 열쇠만 다시 묻는다 (나머지는 빈 채로 둔다).
+function kakaoManySure_(jobs, account, only) {
   var out = kakaoMany_(jobs, account);
   jobs.forEach(function (job) {
     if (out[job.key]) return;
+    if (only && !only[job.key]) return;
     try {
       out[job.key] = kakao_(job.path, job.params, account);
     } catch (error) { /* 지워졌거나 볼 수 없는 것 — 비워 둔다 */ }
