@@ -6037,17 +6037,31 @@ function kakaoBase_(account, kind, goal, refresh) {
   var same = goal ? mine.filter(function (one) { return one.goal === goal; }) : [];
   var pool = same.length ? same : mine;
   pool.sort(function (a, b) { return Number(b.id) - Number(a.id); });
-  var campaign = pool[0];
-  var groups = campaign.groups.slice().sort(function (a, b) { return Number(b.id) - Number(a.id); });
 
-  var got = kakaoMany_([
-    { key: 'campaign', path: '/campaigns/' + campaign.id },
-    { key: 'group', path: '/adGroups/' + groups[0].id }
-  ], account);
-  if (!got.campaign || !got.group) throw new Error('기준 광고그룹 설정을 못 읽었습니다.');
-  return { campaign: got.campaign, group: got.group, groupName: groups[0].name,
-    campaignName: campaign.name, matchedGoal: same.length > 0 };
+  /* 기준은 **하나씩 직접** 묻는다 (kakao_ 는 '너무 잦다(429)' 면 쉬었다 되묻는다).
+     예전에는 한꺼번에 물어 거절된 답을 조용히 버리고 '못 읽었습니다' 만 띄웠다 —
+     캠페인 목록을 읽느라 요청을 많이 보낸 직후라 자주 그랬다.
+     가장 최근 것을 못 읽으면(지워졌거나 권한이 없으면) 그다음 최근 것을 본뜬다. */
+  var tried = 0;
+  var reason = '';
+  for (var c = 0; c < pool.length && tried < KAKAO_BASE_TRIES; c += 1) {
+    var campaign = pool[c];
+    var groups = campaign.groups.slice().sort(function (a, b) { return Number(b.id) - Number(a.id); });
+    var campaignBody = null;
+    try { campaignBody = kakao_('/campaigns/' + campaign.id, null, account); }
+    catch (error) { reason = String((error && error.message) || error); tried += 1; continue; }
+    for (var g = 0; g < groups.length && tried < KAKAO_BASE_TRIES; g += 1) {
+      tried += 1;
+      try {
+        var groupBody = kakao_('/adGroups/' + groups[g].id, null, account);
+        return { campaign: campaignBody, group: groupBody, groupName: groups[g].name,
+          campaignName: campaign.name, matchedGoal: same.length > 0 };
+      } catch (error) { reason = String((error && error.message) || error); }
+    }
+  }
+  throw new Error('기준 광고그룹 설정을 못 읽었습니다 (' + tried + '개 시도) — ' + reason);
 }
+var KAKAO_BASE_TRIES = 6;
 
 /* 화면에서 고를 수 있는 게재지면 · 입찰형태를 모은다.
    카카오 문서의 코드를 외워 박아 두면 캠페인 유형마다 되고 안 되고가 갈려 400 이 난다.
@@ -6209,7 +6223,7 @@ function kakaoDefaults_(payload) {
   var base = kakaoBase_(account, payload.kind, payload.goal, !!payload.refresh);
 
   var sample = null;
-  var made = kakaoList_(kakaoMany_([{ key: 'list', path: '/creatives',
+  var made = kakaoList_(kakaoManySure_([{ key: 'list', path: '/creatives',
     params: { adGroupId: base.group.id, config: 'ON,OFF' } }], account).list);
   for (var i = 0; i < made.length; i += 1) {
     var one = kakaoMany_([{ key: 'one', path: '/creatives/' + made[i].id }], account).one;
@@ -6253,19 +6267,39 @@ function kakaoMake_(payload) {
   if (!beginDate) throw new Error('시작일이 비어 있습니다.');
   if (budget < 10000) throw new Error('일예산은 10,000원 이상이어야 합니다.');
 
-  // 같은 종류 × 목표로 마지막에 만든 광고그룹을 기준으로 삼는다 (사람이 고르지 않는다)
+  // ① 캠페인 — 이름이 같은 것이 있으면 그것을 쓴다
+  var campaignId = '';
+  var already = kakaoList_(kakao_('/campaigns', { config: 'ON,OFF' }, account, 0));
+  for (var i = 0; i < already.length; i += 1) {
+    if (String(already[i].name || '') === campaignName) { campaignId = String(already[i].id); break; }
+  }
+
+  /* ② 광고그룹 — 캠페인 안에 **이름이 같은 광고그룹이 있으면 그것을 쓰고 소재만 넣는다**
+     (메타 광고 세팅과 같은 규칙). 그 광고그룹의 설정 · 켜짐 상태는 건드리지 않는다.
+     이때는 새로 만들 것이 없으니 기준 광고그룹도 읽지 않는다. */
+  if (campaignId) {
+    var reusedGroup = '';
+    try {
+      var sameGroups = kakaoList_(kakao_('/adGroups', { campaignId: campaignId, config: 'ON,OFF' }, account, 0));
+      for (var g = 0; g < sameGroups.length; g += 1) {
+        if (String(sameGroups[g].name || '') === groupName) { reusedGroup = String(sameGroups[g].id); break; }
+      }
+    } catch (error) { /* 못 읽으면 새로 만든다 */ }
+    if (reusedGroup) {
+      return { ok: true, source: 'kakao', account: account, campaign: campaignId, group: reusedGroup,
+        off: false, reused: true,
+        log: ['캠페인은 이미 있는 것을 씁니다 (' + campaignId + ')',
+          '광고그룹은 이미 있는 것을 씁니다 (' + reusedGroup + ') — 설정은 그대로 두고 소재만 넣습니다'] };
+    }
+  }
+
+  // 새로 만들 것이 있을 때만 — 같은 종류 × 목표로 마지막에 만든 광고그룹을 기준으로 삼는다
   var base = kakaoBase_(account, payload.kind, payload.goal, false);
   var tpl = { campaign: base.campaign, group: base.group };
 
   var log = ['기준: ' + base.groupName + ' (' + base.campaignName + ')'
     + (base.matchedGoal ? '' : ' — 같은 목표가 없어 같은 유형에서 가져왔습니다')];
 
-  // ① 캠페인
-  var campaignId = '';
-  var already = kakaoList_(kakao_('/campaigns', { config: 'ON,OFF' }, account, 0));
-  for (var i = 0; i < already.length; i += 1) {
-    if (String(already[i].name || '') === campaignName) { campaignId = String(already[i].id); break; }
-  }
   if (campaignId) {
     log.push('캠페인은 이미 있는 것을 씁니다 (' + campaignId + ')');
   } else {
@@ -6281,23 +6315,7 @@ function kakaoMake_(payload) {
       + goal.campaignType + ' × ' + goal.goal + ')');
   }
 
-  /* ② 광고그룹 — 캠페인 안에 **이름이 같은 광고그룹이 있으면 그것을 쓰고 소재만 넣는다**
-     (메타 광고 세팅과 같은 규칙). 그 광고그룹의 설정 · 켜짐 상태는 건드리지 않는다. */
-  var reusedGroup = '';
-  if (campaignId) {
-    try {
-      var sameGroups = kakaoList_(kakao_('/adGroups', { campaignId: campaignId, config: 'ON,OFF' }, account, 0));
-      for (var g = 0; g < sameGroups.length; g += 1) {
-        if (String(sameGroups[g].name || '') === groupName) { reusedGroup = String(sameGroups[g].id); break; }
-      }
-    } catch (error) { /* 새 캠페인이거나 못 읽으면 새로 만든다 */ }
-  }
-  if (reusedGroup) {
-    log.push('광고그룹은 이미 있는 것을 씁니다 (' + reusedGroup + ') — 설정은 그대로 두고 소재만 넣습니다');
-    return { ok: true, source: 'kakao', account: account,
-      campaign: campaignId, group: reusedGroup, off: false, reused: true, log: log };
-  }
-
+  // ③ 광고그룹 새로 만들기 — 기준 그대로, 이름 · 기간 · 예산만 새로
   var from = tpl.group;
   var targeting = {};
   Object.keys(from.targeting || {}).forEach(function (key) {
