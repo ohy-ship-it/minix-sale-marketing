@@ -6281,7 +6281,23 @@ function kakaoMake_(payload) {
       + goal.campaignType + ' × ' + goal.goal + ')');
   }
 
-  // ② 광고그룹 — 틀 그대로, 이름 · 기간 · 예산만 새로
+  /* ② 광고그룹 — 캠페인 안에 **이름이 같은 광고그룹이 있으면 그것을 쓰고 소재만 넣는다**
+     (메타 광고 세팅과 같은 규칙). 그 광고그룹의 설정 · 켜짐 상태는 건드리지 않는다. */
+  var reusedGroup = '';
+  if (campaignId) {
+    try {
+      var sameGroups = kakaoList_(kakao_('/adGroups', { campaignId: campaignId, config: 'ON,OFF' }, account, 0));
+      for (var g = 0; g < sameGroups.length; g += 1) {
+        if (String(sameGroups[g].name || '') === groupName) { reusedGroup = String(sameGroups[g].id); break; }
+      }
+    } catch (error) { /* 새 캠페인이거나 못 읽으면 새로 만든다 */ }
+  }
+  if (reusedGroup) {
+    log.push('광고그룹은 이미 있는 것을 씁니다 (' + reusedGroup + ') — 설정은 그대로 두고 소재만 넣습니다');
+    return { ok: true, source: 'kakao', account: account,
+      campaign: campaignId, group: reusedGroup, off: false, reused: true, log: log };
+  }
+
   var from = tpl.group;
   var targeting = {};
   Object.keys(from.targeting || {}).forEach(function (key) {
@@ -6387,6 +6403,18 @@ function kakaoCreative_(payload) {
   if (!landing) throw new Error('랜딩 URL 이 없습니다: ' + name);
   if (!payload.image) throw new Error('그림이 실려 오지 않았습니다: ' + name);
 
+  /* 같은 이름의 소재가 이미 그 광고그룹에 있으면 만들지 않는다 (메타와 같은 규칙).
+     이미 있는 광고그룹을 쓸 때 같은 소재를 또 올리지 않게 하는 자리다. */
+  try {
+    var have = kakaoList_(kakao_('/creatives', { adGroupId: groupId, config: 'ON,OFF' }, account, 0));
+    for (var h = 0; h < have.length; h += 1) {
+      if (String(have[h].name || '') === name) {
+        return { ok: true, source: 'kakao', creative: String(have[h].id), name: name,
+          images: 0, skipped: true, note: '' };
+      }
+    }
+  } catch (error) { /* 못 읽으면 그냥 만든다 */ }
+
   var bytes = Utilities.base64Decode(String(payload.image));
   var blob = Utilities.newBlob(bytes, mime, fileName);
 
@@ -6398,10 +6426,12 @@ function kakaoCreative_(payload) {
     imageFile: blob
   };
   if (format === 'IMAGE_BANNER') {
-    /* 비즈보드는 **모바일 랜딩 URL 하나만** 보낸다 (카카오톡 안 지면이라 PC 가 없다).
-       예전에는 landingInfo.* 도 같이 보냈는데, 카카오가 그것을 'URL 이 아닌 다른 랜딩 유형'
-       으로 읽어 '랜딩 URL 과 다른 랜딩 유형은 동시에 요청할 수 없습니다' 로 400 을 줬다. */
-    form.mobileLandingUrl = landing;
+    /* 비즈보드도 이제 **반응형 랜딩 URL(rspvLandingUrl)** 하나로 보낸다.
+       2026-10 개정 뒤 모바일 랜딩 URL 만 보내면 '반응형 랜딩 URL 이 필요합니다' 로 400 이 난다.
+       랜딩 칸은 하나만 보낸다 — 둘 이상 보내면 '랜딩 URL 과 다른 랜딩 유형은 동시에 요청할 수
+       없습니다' 로 400 이 난다 (landingInfo.* 를 같이 보냈을 때 겪었다).
+       옛 방식만 받는 계정이 있을 수 있어, 반응형이 막히면 모바일 랜딩으로 한 번 더 해 본다. */
+    form.rspvLandingUrl = landing;
   } else {
     // 반응형 랜딩은 다른 URL 과 같이 못 쓴다 — 이것 하나만 보낸다
     form.rspvLandingUrl = landing;
@@ -6422,7 +6452,17 @@ function kakaoCreative_(payload) {
      세로 소재는 이름 뒤에 파일명의 (세로) 같은 꼬리를 붙여 짝을 알아보게 한다. */
   var extras = format === 'IMAGE_NATIVE' && Array.isArray(payload.extras)
     ? payload.extras.filter(function (one) { return one && one.image; }) : [];
-  var ids = [kakaoCreativeOne_(form, account, name)];
+  var first;
+  try {
+    first = kakaoCreativeOne_(form, account, name);
+  } catch (error) {
+    // 반응형 랜딩을 안 받는 비즈보드면 예전 길(모바일 랜딩)로 한 번 더
+    if (format !== 'IMAGE_BANNER' || !/랜딩|landing/i.test(String(error && error.message))) throw error;
+    delete form.rspvLandingUrl;
+    form.mobileLandingUrl = landing;
+    first = kakaoCreativeOne_(form, account, name);
+  }
+  var ids = [first];
   var failed = [];
   extras.forEach(function (one, at) {
     var extraName = String(one.fileName || '');

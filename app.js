@@ -7964,6 +7964,12 @@ if (kakaoSetup) {
           profileImageUrl: sampleImage(),
           extras: extras,
         });
+        if (answer.skipped) {
+          work.lines.push({ text: `${nameOf(pick)} — 같은 이름의 소재가 이미 있어 건너뛰었습니다 (소재 ${answer.creative})` });
+          work.done += bundle.length;
+          render();
+          continue;
+        }
         const count = bundle.length > 1 ? ` · ${bundle.map((one) => one.name).join(' + ')}` : '';
         work.lines.push({ bad: !!answer.note,
           text: `${nameOf(pick)} — 올렸습니다 (소재 ${answer.creative || '?'}${count} · 심사 대기)${answer.note ? ` — ${answer.note}` : ''}` });
