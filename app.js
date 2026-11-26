@@ -7307,7 +7307,7 @@ if (kakaoSetup) {
   const FORMAT = { bizboard: 'IMAGE_BANNER', display: 'IMAGE_NATIVE' };
   const KIND_MEDIA = { bizboard: '비즈보드', display: '디스플레이' };
   const KIND_SIZE = {
-    bizboard: '1029 × 258 · PNG · 300KB 이하',
+    bizboard: '960 × 300 · PNG · 300KB 이하 (2026-10-20 개정 규격)',
     display: '500×500 · 1200×600 · 720×1280 · 800×1000 중 하나 · 500KB 이하',
   };
   const URL_TYPES = [['landing', '랜딩링크'], ['linkGA', 'LINK(GA)'], ['ntPlain', 'NT(일반)'],
@@ -7833,8 +7833,9 @@ if (kakaoSetup) {
   };
 
   const sizeBad = (pick) => {
-    if (isBoard() && (pick.width !== 1029 || pick.height !== 258)) {
-      return `${pick.width}×${pick.height} — 비즈보드는 1029×258 이어야 합니다`;
+    // 2026-10-20 개정 규격 — 소재 제작(banner-maker.js)과 같은 값이다.
+    if (isBoard() && (pick.width !== 960 || pick.height !== 300)) {
+      return `${pick.width}×${pick.height} — 비즈보드는 960×300 이어야 합니다`;
     }
     if (!pick.width) return '그림을 읽지 못했습니다';
     if (pick.size > 500000) return `${Math.round(pick.size / 1024)}KB — 500KB 를 넘습니다`;
