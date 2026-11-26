@@ -2495,7 +2495,7 @@ const SHEET_TIMEOUT = 60000;
 // Apps Script 자체 한도가 6분이라 3분까지 기다려 준다.
 // 오래 걸리는 요청은 기다려 주는 시간을 늘린다. 소재를 올리는 길(metaAd · metaVideo)도
 // 그림 · 영상 조각이 오가서 60초로는 모자랄 수 있다.
-const SHEET_SLOW = /(Creatives|Report|Breakdown|promoCalendar|clarity|metaAd|metaVideo)/;
+const SHEET_SLOW = /(Creatives|Report|Breakdown|promoCalendar|clarity|metaAd|metaVideo|kakaoTree)/;
 const askBudget = (payload) => (SHEET_SLOW.test(String((payload && payload.action) || '')) ? 180000 : SHEET_TIMEOUT);
 
 const askSheetOnce = (payload) => {
@@ -7407,8 +7407,9 @@ if (kakaoSetup) {
       const body = await askSheet({ action: 'kakaoTree', account: state.account, refresh: !!refresh });
       if (campaignKey() !== key) return undefined;   // 기다리는 사이에 계정 · 종류를 바꿨다
       const want = KAKAO_TYPE[state.kind] || 'TALK_BIZ_BOARD';
+      // 종류를 못 읽은 캠페인(type 이 빈 것)은 버리지 않고 함께 보여 준다 — 버리면 켜진 캠페인이 빠진다.
       const list = (body.campaigns || [])
-        .filter((one) => one.config === 'ON' && one.type === want)
+        .filter((one) => one.config === 'ON' && (one.type === want || !one.type))
         .sort((a, b) => Number(b.id) - Number(a.id));
       campaigns = { state: 'done', list: list, key: key, open: true,
         message: list.length ? '' : `이 계정에 켜져 있는 ${KIND_MEDIA[state.kind]} 캠페인이 없습니다.` };
@@ -8013,7 +8014,7 @@ if (kakaoSetup) {
         <button type="button" class="setup-combo-refresh">다시 읽기</button>
       </div>
       ${list.length
-        ? `<ul class="setup-combo-items">${list.map((one) => `<li><button type="button" data-campaign="${escapeHtml(one.name)}"${tr(one.name) === tr(state.campaignName) ? ' class="is-on"' : ''}><b>${escapeHtml(one.name)}</b><small>${escapeHtml(GOAL_LABEL[one.goal] || one.goal || '')}</small></button></li>`).join('')}</ul>`
+        ? `<ul class="setup-combo-items">${list.map((one) => `<li><button type="button" data-campaign="${escapeHtml(one.name)}"${tr(one.name) === tr(state.campaignName) ? ' class="is-on"' : ''}><b>${escapeHtml(one.name)}</b><small>${escapeHtml(one.type ? (GOAL_LABEL[one.goal] || one.goal || '') : '종류 확인 못함')}</small></button></li>`).join('')}</ul>`
         : `<p class="setup-combo-empty">${escapeHtml(campaigns.message || '켜져 있는 캠페인이 없습니다.')}</p>`}`;
   };
 
