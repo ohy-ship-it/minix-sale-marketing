@@ -2308,3 +2308,8 @@ html.is-gfa-stale,html.is-gfa-stale body{overflow:hidden}
 .search-table td .chips{display:flex;flex-wrap:wrap;gap:3px;white-space:normal;max-width:220px}
 .search-table td.search-hit-week,.search-table td.search-hit-date{color:#6f6e68}
 @media (max-width:640px){.creative-search,.week-search .creative-search{max-width:none}}
+/* 찾기 지우기 — 「전체 보기」 와 같은 생김새 + x 표 */
+.week-search-clear{display:inline-flex;align-items:center;gap:4px;border:1px solid #e3e2dc;border-radius:5px;background:#fff;
+  color:#555;font:600 10px/1 inherit;padding:5px 9px 5px 7px;cursor:pointer}
+.week-search-clear:hover{background:#f4f4f1}
+.week-search-clear svg{width:12px;height:12px;display:block}

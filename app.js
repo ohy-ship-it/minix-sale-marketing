@@ -1433,7 +1433,7 @@ if (creativeBoard) {
         <td><div class="chips">${row.owners.map((one) => chip(propByKey.owners, one)).join('')}</div></td>
         <td class="search-hit-date">${escapeHtml(row.dueDate?.start || '')}</td>
       </tr>`).join('');
-    return `<div class="filter-summary"><button type="button" class="week-search-clear">찾기 지우기</button>
+    return `<div class="filter-summary"><button type="button" class="week-search-clear"><i data-lucide="x"></i>찾기 지우기</button>
         <span class="filter-count">카드 ${hits.length}장${hits.length > 200 ? ' (앞 200장만 보입니다)' : ''}</span></div>
       <div class="week-table-wrap"><table class="week-table search-table">
         <thead><tr><th>주차</th><th>이름 · 행사명</th><th>상태</th><th>SKU</th><th>매체</th><th>담당자</th><th>전달희망</th></tr></thead>
