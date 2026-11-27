@@ -19204,15 +19204,31 @@ if (budgetPlanView) {
       state: 'loading', message: '', plan: null, dirty: false, saving: false };
     render();
     try {
-      const body = await askSheet({ action: 'minixMixGet', promoId, product });
+      /* 제품을 거르지 않고 그 행사의 믹스를 다 받는다 — 미닉스가 쓰는 제품 이름과
+         여기 이름이 조금만 달라도(띄어쓰기 · 괄호) 빈 믹스가 열리고 엉뚱한 칸에 저장돼
+         미닉스 화면에는 안 보인다. 그래서 미닉스 쪽 이름으로 맞춰 연다. */
+      const body = await askSheet({ action: 'minixMixGet', promoId });
       if (!mixBox.open || mixBox.rowId !== rowId) return undefined;   // 기다리는 사이에 닫았다
+      const key = mixProductKey(body, product);
+      const raw = (body.mix || {})[key] || null;
       mixBox = { ...mixBox, state: 'done', promo: body.promo || mixBox.promo,
-        plan: mixNorm((body.mix || {})[product]) };
+        product: key, tieProduct: product, base: JSON.stringify(raw),
+        plan: mixNorm(raw) };
     } catch (error) {
       if (!mixBox.open || mixBox.rowId !== rowId) return undefined;
       mixBox = { ...mixBox, state: 'error', message: `믹스를 못 읽었습니다 — ${error.message}` };
     }
     return render();
+  };
+
+  // 미닉스가 그 행사에 쓰는 제품 이름 중 이 줄의 제품에 맞는 것 (같은 게 없으면 띄어쓰기 · 괄호를 무시하고)
+  const mixProductKey = (body, product) => {
+    const names = Object.keys((body && body.mix) || {})
+      .concat(((body && body.products) || []).map((one) => String(one)));
+    if (names.indexOf(product) >= 0) return product;
+    const want = mixNameKey(product);
+    const near = names.find((one) => mixNameKey(one) === want);
+    return near || product;
   };
 
   // 미닉스 행사 목록 (행사명 고르개와 같은 목록을 같이 쓴다 — 5분 담아 둔다)
@@ -19299,12 +19315,22 @@ if (budgetPlanView) {
     mixBox = { ...mixBox, saving: true, message: '' };
     render();
     try {
+      /* 열어 둔 사이 미닉스에서 누가 고쳤으면 말없이 덮지 않는다 — 두 화면이 한 믹스를 쓴다 */
+      const now = await askSheet({ action: 'minixMixGet', promoId: mixBox.promoId });
+      const there = JSON.stringify((now.mix || {})[mixBox.product] || null);
+      if (mixBox.base !== undefined && there !== mixBox.base
+        && !window.confirm('열어 둔 사이 미닉스 워크스페이스에서 이 믹스가 바뀌었습니다.\n\n'
+          + '[확인] 지금 내용으로 덮어씁니다\n[취소] 저장하지 않습니다 (닫고 다시 열면 바뀐 내용이 보입니다)')) {
+        mixBox = { ...mixBox, saving: false, message: '저장하지 않았습니다 — 미닉스에서 바뀐 내용이 있습니다. 닫고 다시 열어 주세요.' };
+        return render();
+      }
       await askSheet({ action: 'minixMixPut', promoId: mixBox.promoId,
         product: mixBox.product, plan: mixBox.plan });
-      mixBox = { ...mixBox, saving: false, dirty: false,
+      mixBox = { ...mixBox, saving: false, dirty: false, base: JSON.stringify(mixBox.plan),
         message: `미닉스에 넣었습니다 — ${mixBox.promo || mixBox.promoId} · ${mixBox.product}` };
       /* 줄 표의 믹스 칸이 합계를 보여 주므로 그 값도 지금 것으로 맞춘다 */
       mixSums[`${mixBox.promoId}\u0000${mixBox.product}`] = mixGrand(mixBox.plan);
+      if (mixBox.tieProduct) mixSums[`${mixBox.promoId}\u0000${mixBox.tieProduct}`] = mixGrand(mixBox.plan);
     } catch (error) {
       mixBox = { ...mixBox, saving: false, message: `못 보냈습니다 — ${error.message}` };
     }
