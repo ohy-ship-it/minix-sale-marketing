@@ -2899,6 +2899,21 @@ function metaCatalogStop_(campaignId) {
     + '옆 광고세트의 제품 세트로도 넣지 못했습니다 — '
     + '캠페인명을 다르게 적어 새 캠페인으로 만들어 주세요 (또는 Ads Manager 에서 직접 추가해 주세요).';
 }
+/* 메타 조회를 한도 초과(429 · code 4/17/32/613 · 'too many calls')면 잠깐 쉬고 다시 묻는다.
+   예전에는 한 번 막히면 조용히 버려서, 물려받을 픽셀을 못 보고 빈 홍보 개체로 보냈다. */
+function metaGraphRetry_(call) {
+  var last = null;
+  for (var at = 0; at < 3; at += 1) {
+    try { return call(); } catch (error) {
+      last = error;
+      var text = String((error && error.message) || error);
+      if (!/429|too many|limit|한도|요청 수|code (4|17|32|613)\b/i.test(text)) throw error;
+      Utilities.sleep(2000 * (at + 1));
+    }
+  }
+  throw last;
+}
+
 // 카탈로그 광고세트인가 (제품 세트 · 카탈로그 번호가 붙어 있으면)
 function metaHasCatalog_(one) {
   return !!(one && typeof one === 'object' && (one.product_set_id || one.product_catalog_id));
@@ -3150,11 +3165,17 @@ function metaMake_(payload) {
   /* 이미 있는 캠페인이 **캠페인 예산(CBO)** 이면 광고세트에 예산을 넣으면 안 된다 —
      메타가 '광고 세트 예산 또는 캠페인 예산만 설정할 수 있습니다' 로 되돌려준다. */
   var campaignBudget = '';
+  /* 이미 있는 캠페인이면 **그 캠페인의 목적**을 쓴다 — 화면에서 고른 목적과 다를 수 있다.
+     판매(OUTCOME_SALES) 캠페인은 최적화가 무엇이든 광고세트에 픽셀(홍보 개체)을 요구한다. */
+  var campaignObjective = objective;
   if (campaignId) {
     try {
-      var cb = graph_('/' + campaignId, { fields: 'daily_budget,lifetime_budget' });
+      var cb = metaGraphRetry_(function () {
+        return graph_('/' + campaignId, { fields: 'daily_budget,lifetime_budget,objective' });
+      });
       if (Number(cb.daily_budget) > 0) campaignBudget = '일예산 ' + cb.daily_budget + '원';
       else if (Number(cb.lifetime_budget) > 0) campaignBudget = '총예산 ' + cb.lifetime_budget + '원';
+      if (cb.objective) campaignObjective = String(cb.objective);
     } catch (error) { /* 못 읽으면 아래에서 메타 답을 보고 한 번 더 해 본다 */ }
   }
 
@@ -3192,8 +3213,10 @@ function metaMake_(payload) {
     try {
       /* 하나만 보지 않는다 — 먼저 잡히는 광고세트에 픽셀이 없을 수 있다.
          여럿을 보고 **픽셀이 붙은 광고세트**를 고른다. */
-      var sample = graphAll_('/' + campaignId + '/adsets',
-        { fields: 'promoted_object,optimization_goal,billing_event', limit: 25 }, 1);
+      var sample = metaGraphRetry_(function () {
+        return graphAll_('/' + campaignId + '/adsets',
+          { fields: 'promoted_object,optimization_goal,billing_event', limit: 25 }, 1);
+      });
       var pick = null;
       for (var s = 0; s < sample.length; s += 1) {
         var raw = sample[s].promoted_object || {};
@@ -3224,20 +3247,53 @@ function metaMake_(payload) {
        옆이 모두 제품 세트를 쓰면 붙인 쪽을 먼저, 섞여 있으면 뗀 쪽을 먼저 보낸다. */
     var bases = [];
     var pixelName = {};
+    var pixelMiss = [];   // 픽셀을 못 찾은 까닭 (멈출 때 함께 알려 준다)
     if (promoted) bases.push(JSON.parse(promoted));
-    if (optGoal === 'OFFSITE_CONVERSIONS') {
+    /* 판매 캠페인이면 최적화가 전환이 아니어도 픽셀을 붙여야 한다
+       ('광고 세트의 홍보 개체를 선택하세요' · subcode 1815430). */
+    var needPixel = optGoal === 'OFFSITE_CONVERSIONS' || campaignObjective === 'OUTCOME_SALES';
+    if (needPixel) {
       var want = bases[0] || {};
+      var addPixel = function (id, name) {
+        id = String(id || '');
+        if (!id) return;
+        if (name && !pixelName[id]) pixelName[id] = String(name);
+        var mine = { pixel_id: id, custom_event_type: want.custom_event_type || 'PURCHASE' };
+        if (want.custom_event_str) mine.custom_event_str = want.custom_event_str;
+        bases.push(mine);
+      };
+      // 손으로 적어 둔 픽셀(스크립트 속성 META_PIXEL_<계정번호>)이 있으면 그것도 써 본다
+      var fixedPixel = String(PropertiesService.getScriptProperties()
+        .getProperty('META_PIXEL_' + account.replace(/^act_/, '')) || '').trim();
+      if (/^\d+$/.test(fixedPixel)) addPixel(fixedPixel, '스크립트 속성');
       try {
-        graphAll_('/' + account + '/adspixels', { fields: 'id,name', limit: 10 }, 1)
-          .forEach(function (one) {
-            if (!one || !one.id) return;
-            pixelName[String(one.id)] = String(one.name || '');
-            var mine = { pixel_id: String(one.id),
-              custom_event_type: want.custom_event_type || 'PURCHASE' };
-            if (want.custom_event_str) mine.custom_event_str = want.custom_event_str;
-            bases.push(mine);
+        var pixels = metaGraphRetry_(function () {
+          return graphAll_('/' + account + '/adspixels', { fields: 'id,name', limit: 10 }, 1);
+        });
+        pixels.forEach(function (one) { if (one && one.id) addPixel(one.id, one.name); });
+        if (!pixels.length) pixelMiss.push('계정에 연결된 픽셀 목록이 비어 있음');
+      } catch (error) {
+        pixelMiss.push('픽셀 목록을 못 읽음 (' + String((error && error.message) || error) + ')');
+      }
+      /* 계정 픽셀 목록에 안 보여도(비즈니스에서 공유받은 픽셀 등) 다른 캠페인 광고세트가
+         쓰고 있는 픽셀은 쓸 수 있다 — 계정 전체 광고세트에서 픽셀을 모은다. */
+      if (!bases.some(function (one) { return one && one.pixel_id; })) {
+        try {
+          var seen = {};
+          metaGraphRetry_(function () {
+            return graphAll_('/' + account + '/adsets', { fields: 'promoted_object', limit: 100 }, 2);
+          }).forEach(function (one) {
+            var raw = (one && one.promoted_object) || {};
+            if (!raw.pixel_id || seen[raw.pixel_id]) return;
+            seen[raw.pixel_id] = true;
+            if (!bases.length) want = metaPromotedClean_(raw) || {};
+            addPixel(raw.pixel_id, '');
           });
-      } catch (error) { /* 픽셀 목록을 못 읽으면 물려받은 것만 써 본다 */ }
+          if (!Object.keys(seen).length) pixelMiss.push('계정의 다른 광고세트에도 픽셀이 없음');
+        } catch (error) {
+          pixelMiss.push('계정 광고세트를 못 읽음 (' + String((error && error.message) || error) + ')');
+        }
+      }
     }
     var setFirst = !!productSet && !sawPlain;
     var tries = [];
@@ -3319,7 +3375,7 @@ function metaMake_(payload) {
           t -= 1; tried -= 1;
           continue;
         }
-        if (!/픽셀|pixel|제품 세트|product set/i.test(trouble)) break;
+        if (!/픽셀|pixel|제품 세트|product set|홍보 개체|promoted.?object|1815430/i.test(trouble)) break;
       }
     }
     // 제품 세트를 붙여도 떼어도 안 됐다 — 자동세팅으로는 넣을 수 없는 캠페인이다
@@ -3328,8 +3384,15 @@ function metaMake_(payload) {
         + tries.slice(0, tried).map(pixelOf).join(' · ') + ']');
     }
     if (!group) {
+      // 홍보 개체(픽셀)가 없어서 막혔으면 왜 못 찾았는지를 먼저 말한다
+      var noPixel = /홍보 개체|promoted.?object|1815430/i.test(trouble)
+        && !tries.some(function (text) { return text.indexOf('pixel_id') >= 0; });
       // 메타가 어느 값을 물고 늘어지는지 알 수 있게, 써 본 픽셀과 보낸 시각을 함께 적는다.
-      throw new Error(trouble
+      throw new Error((noPixel ? '광고세트에 붙일 픽셀을 찾지 못했습니다 ('
+          + (pixelMiss.join(' · ') || '물려받을 광고세트 없음') + ') — '
+          + '스크립트 속성 META_PIXEL_' + account.replace(/^act_/, '')
+          + ' 에 픽셀 ID 를 적어 주거나, 이 계정에 픽셀을 연결해 주세요. ' : '')
+        + trouble
         + (tried > 1 ? ' [써 본 픽셀 — '
           + tries.slice(0, tried).map(pixelOf).join(' · ') + ']' : '')
         + ' [보낸 값 — 시작 ' + (params.start_time || '(없음)')
