@@ -6381,8 +6381,14 @@ if (adSetup) {
     reader.readAsDataURL(blob);
   });
 
-  // 영상 한 조각의 크기. 조각 하나가 요청 하나다 (Apps Script 가 한 번에 오래 못 돈다).
-  const CHUNK = 4 * 1024 * 1024;
+  /* 영상 한 조각의 크기. 조각 하나가 요청 하나다 (Apps Script 가 한 번에 오래 못 돈다).
+     4MB 였을 때는 조각마다 Apps Script 왕복(1.5~4초)이 붙어 100MB 영상이 25번을 다녀왔다.
+     10MB(밑글자로 13MB 남짓)면 왕복이 2.5배 줄고, Apps Script 의 50MB 한도에도 넉넉하다.
+     메타가 더 작은 조각을 달라고 하면(end_offset) 그쪽을 따른다. */
+  const CHUNK = 10 * 1024 * 1024;
+  // 영상을 동시에 몇 개까지 올릴지. Apps Script 는 동시 실행 30개까지라 넉넉하지만,
+  // 브라우저가 조각(10MB)을 메모리에 들고 있으므로 셋으로 둔다.
+  const VIDEO_LANES = 3;
   // 되묻지 않는 부름. 같은 조각을 두 번 보내면 메타가 자리(offset)가 어긋났다며 막는다.
   const askOnce = (payload) => askSheetOnce(payload).then((body) => {
     if (!body || !body.ok) throw new Error((body && body.error) || '알 수 없는 오류');
@@ -6646,43 +6652,82 @@ if (adSetup) {
   /* 영상을 올린다. 브라우저가 4MB씩 잘라 보내고 서버가 그대로 메타에 넘긴다.
      다 보내면 메타가 인코딩할 때까지 기다린다 — 그 전에는 광고에 쓸 수 없다.
      표지(썸네일)는 같은 이름의 그림이 있으면 그것을, 없으면 메타가 뽑아 준 것을 쓴다. */
-  const uploadVideo = async (pick, say) => {
+  /* 보내기와 기다리기를 나눴다. 예전에는 영상 하나를 보내고 → 인코딩을 기다리고 →
+     광고를 만든 뒤에야 다음 영상을 보내기 시작했다. 이제는 영상들을 먼저 (동시에) 보내고,
+     광고를 만들 차례가 오면 그때 인코딩이 끝났는지 본다 — 그 사이 메타는 이미 인코딩 중이다. */
+  const sendVideo = async (pick, say) => {
     const started = await askOnce({ action: 'metaVideoStart', account: state.acct,
       fileSize: pick.size, fileName: pick.name });
 
+    const piece = (from, upto) => {
+      const end = Math.min(from + Math.min(upto > from ? upto - from : CHUNK, CHUNK), pick.size);
+      return { end, text: readBase64(pick.file.slice(from, end), pick.name) };
+    };
     let sent = 0;
     let at = started.start;
-    let to = started.end;
+    let now = piece(at, started.end);
+    let last = -1;
     while (at < pick.size) {
-      const want = to > at ? to - at : CHUNK;
-      const end = Math.min(at + Math.min(want, CHUNK), pick.size);
-      const chunk = await readBase64(pick.file.slice(at, end), pick.name);
-      const moved = await askOnce({ action: 'metaVideoChunk', account: state.acct,
+      const chunk = await now.text;
+      const sending = askOnce({ action: 'metaVideoChunk', account: state.acct,
         session: started.session, offset: String(at), chunk: chunk, fileName: pick.name });
+      // 보내는 동안 다음 조각을 미리 읽어 둔다 (메타가 다른 자리를 달라고 하면 버린다)
+      const guess = now.end < pick.size ? piece(now.end, 0) : null;
+      if (guess) guess.text.catch(() => {});   // 안 쓰고 버릴 때 오류가 새지 않게
+      const moved = await sending;
       sent += 1;
-      say(`  ${pick.name} — ${Math.min(Math.round((end / pick.size) * 100), 100)}% 보냈습니다`);
+      const pct = Math.min(Math.round((now.end / pick.size) * 100), 100);
+      if (pct - last >= 20 || pct === 100) { say(`  ${pick.name} — ${pct}% 보냈습니다`); last = pct; }
       const next = Number(moved.start) || 0;
       if (next <= at) {
         throw new Error(`영상이 ${at} 바이트에서 더 나아가지 않습니다 — 다시 [광고 만들기] 를 눌러 주세요.`);
       }
+      const to = Number(moved.end) || 0;
       at = next;
-      to = Number(moved.end) || 0;
+      if (at >= pick.size) break;
+      now = guess && next === now.end && (!to || to - at >= guess.end - at) ? guess : piece(at, to);
     }
     await askOnce({ action: 'metaVideoFinish', account: state.acct,
       session: started.session, title: baseName(pick.name) });
     say(`  ${pick.name} — 다 보냈습니다 (조각 ${sent}개). 메타가 처리하는 중…`);
+    return started.video;
+  };
 
-    // 인코딩이 끝나야 표지가 나오고 광고에 쓸 수 있다. 3초씩 스무 번(1분)까지 기다린다.
+  // 인코딩이 끝나야 표지가 나오고 광고에 쓸 수 있다. 2초씩 서른 번(1분)까지 기다린다.
+  const waitVideo = async (pick, videoId, say) => {
     let thumb = '';
-    for (let turn = 0; turn < 20; turn += 1) {
-      const ready = await askOnce({ action: 'metaVideoReady', video: started.video });
+    for (let turn = 0; turn < 30; turn += 1) {
+      const ready = await askOnce({ action: 'metaVideoReady', video: videoId });
       thumb = ready.thumb || thumb;
-      if (ready.ready) return { video: started.video, thumb: thumb };
-      await wait(3000);
+      if (ready.ready) return { video: videoId, thumb: thumb };
+      await wait(2000);
     }
     // 아직 처리 중이어도 광고는 만들어 둔다 (메타가 끝나면 저절로 돈다)
     say(`  ${pick.name} — 메타 처리가 길어집니다. 그대로 광고를 만듭니다.`);
-    return { video: started.video, thumb: thumb };
+    return { video: videoId, thumb: thumb };
+  };
+
+  /* 영상들을 VIDEO_LANES 개씩 동시에 보낸다. 소재마다 '보내기 약속' 을 돌려주고,
+     광고를 만들 차례가 오면 그 약속을 기다린다. */
+  const sendVideos = (list, say) => {
+    const out = new Map();
+    const queue = list.slice();
+    const lane = async () => {
+      while (queue.length) {
+        const pick = queue.shift();
+        const slot = out.get(pick);
+        say(`[영상] ${pick.name} (${kb(pick.size)}) 올리는 중…`);
+        try { slot.done(await sendVideo(pick, say)); } catch (error) { slot.fail(error); }
+      }
+    };
+    list.forEach((pick) => {
+      const slot = {};
+      slot.promise = new Promise((done, fail) => { slot.done = done; slot.fail = fail; });
+      slot.promise.catch(() => {});   // 기다리는 쪽에서 받는다 (여기서는 조용히)
+      out.set(pick, slot);
+    });
+    for (let at = 0; at < Math.min(VIDEO_LANES, list.length); at += 1) lane();
+    return out;
   };
 
   /* 광고를 만든다. 캠페인 · 광고세트를 한 번 만들고(metaMake), 소재마다 한 번씩
@@ -6722,6 +6767,10 @@ if (adSetup) {
     work.adset = base.adset || '';
     const already = base.adNames || [];
 
+    // 영상은 미리 (동시에) 보내기 시작한다. 이미 있는 광고의 영상은 보내지 않는다.
+    const uploads = sendVideos(feeds.filter((pick) => pick.kind === 'video'
+      && already.indexOf(adNameOf(pick)) < 0), say);
+
     for (const pick of feeds) {
       const name = adNameOf(pick);
       if (already.indexOf(name) >= 0) {
@@ -6736,8 +6785,8 @@ if (adSetup) {
         let thumbUrl = '';
         let source = pick;
         if (pick.kind === 'video') {
-          say(`[영상] ${pick.name} (${kb(pick.size)}) 올리는 중…`);
-          const up = await uploadVideo(pick, say);
+          const videoId = await uploads.get(pick).promise;
+          const up = await waitVideo(pick, videoId, say);
           video = up.video;
           thumbUrl = up.thumb;
           source = thumbOf(pick) || null;
