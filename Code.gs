@@ -3284,6 +3284,9 @@ function metaMake_(payload) {
             return graphAll_('/' + account + '/adsets', { fields: 'promoted_object', limit: 100 }, 2);
           }).forEach(function (one) {
             var raw = (one && one.promoted_object) || {};
+            /* 29cm 처럼 공유받은 픽셀은 **제품 세트와 함께여야** 받아 준다 (픽셀만 보내면
+               '픽셀 ID를 사용할 권한이 없습니다'). 그래서 제품 세트도 같이 물려받는다. */
+            if (!productSet && raw.pixel_id && raw.product_set_id) productSet = String(raw.product_set_id);
             if (!raw.pixel_id || seen[raw.pixel_id]) return;
             seen[raw.pixel_id] = true;
             if (!bases.length) want = metaPromotedClean_(raw) || {};
