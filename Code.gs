@@ -2600,6 +2600,18 @@ function 메타토큰확인() {
   return out.join('\n');
 }
 
+/* 토큰을 바꾼 뒤 **기억해 둔 옛 결과**를 지운다 (편집기에서 실행).
+   옛 판(11/27-6 전)은 '이 토큰이 어느 페이지 것인가' 를 열쇠 하나(metaTokenPage)에
+   6시간 담아 둬서, 토큰을 시스템 사용자 것으로 바꿔도 그동안 미닉스 페이지 토큰으로 보고 막았다.
+   스크립트 캐시는 배포 판과 상관없이 한 벌이라, 여기서 지우면 돌고 있는 웹앱에도 바로 먹는다. */
+function 메타캐시비우기() {
+  var cache = CacheService.getScriptCache();
+  cache.removeAll(['metaTokenPage', 'metaAccounts']);
+  var line = '메타 토큰 기억을 지웠습니다 — 다시 세팅해 보세요.';
+  Logger.log(line);
+  return line;
+}
+
 // path 가 http 로 시작하면 (다음 쪽 주소) 그대로 부른다.
 function graph_(path, params) {
   var url = path;
