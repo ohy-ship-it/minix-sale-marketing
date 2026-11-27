@@ -2915,7 +2915,7 @@ function metaGraphRetry_(call) {
 }
 
 // 광고세트 만들기 코드의 판 — 고칠 때마다 올린다 (오류 문구에 찍혀 배포 여부를 알 수 있다)
-var META_MAKE_BUILD = '11/27-4';
+var META_MAKE_BUILD = '11/27-5';
 
 // 카탈로그 광고세트인가 (제품 세트 · 카탈로그 번호가 붙어 있으면)
 function metaHasCatalog_(one) {
@@ -3142,6 +3142,11 @@ function metaMake_(payload) {
   if (end > 0 && end <= start) throw new Error('종료일시가 시작일시보다 빠르거나 같습니다.');
 
   var log = [];
+
+  /* 게시 주체(대표 계정)를 **무엇이든 만들기 전에** 가린다.
+     예전에는 캠페인 · 광고세트를 다 만든 뒤에 물어서, 토큰이 그 페이지를 못 쓰면
+     (미닉스 페이지 토큰으로 가사노동해방소를 고른 때) 빈 캠페인 · 광고세트만 남기고 멈췄다. */
+  var story = metaStory_(account, payload);
 
   // ① 캠페인 — 이름이 같은 것이 있으면 그것을 쓴다
   var campaignId = '';
@@ -3450,7 +3455,6 @@ function metaMake_(payload) {
     if (names.length) log.push('광고세트에 이미 있는 광고 ' + names.length + '건은 건너뜁니다');
   } catch (error) { /* 못 읽으면 그냥 만든다 */ }
 
-  var story = metaStory_(account, payload);
   log.push('게시 주체: 페이지 ' + story.pageId
     + (story.igId ? ' · 인스타 ' + story.igId : '') + ' (' + story.from + ')');
 
