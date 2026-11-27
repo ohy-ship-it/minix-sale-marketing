@@ -2289,3 +2289,22 @@ html.is-gfa-stale,html.is-gfa-stale body{overflow:hidden}
 .bg-mix-foot .tool-add{margin-left:auto}
 .bg-mix-said{font-size:11px;color:#3d8f5f}
 .bg-mix-dirty{font-size:11px;color:#d49a47}
+
+/* 광고소재 기획 — 찾기 칸 (주간 목록: 모든 주차 · 주차 보드: 그 주차) */
+.notion-toolbar{gap:8px;flex-wrap:wrap}
+.creative-search{display:flex;align-items:center;gap:6px;flex:1 1 260px;max-width:440px;min-height:32px;padding:0 10px;
+  border:1px solid #e3e2dc;border-radius:7px;background:#fff;color:#8c8c85}
+.creative-search:focus-within{border-color:#b9b7ae;box-shadow:0 0 0 3px #20211e0d}
+.creative-search svg{width:14px;height:14px;flex:none}
+.creative-search input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:500 12px/1.4 inherit;color:#2f2f2b}
+.week-search{margin:0 0 14px}
+.week-search .creative-search{max-width:520px}
+.week-search + div > .filter-summary{padding-left:0;margin-bottom:10px}
+.search-table .search-hit{cursor:pointer}
+.search-table .search-hit:hover td{background:#faf8f4}
+.search-table td{vertical-align:top}
+.search-table td.search-hit-name{white-space:normal;min-width:180px;width:auto;font-weight:600;color:#2f2f2b}
+.search-table td.search-hit-name small{display:block;margin-top:2px;font-weight:500;color:#8c8c85}
+.search-table td .chips{display:flex;flex-wrap:wrap;gap:3px;white-space:normal;max-width:220px}
+.search-table td.search-hit-week,.search-table td.search-hit-date{color:#6f6e68}
+@media (max-width:640px){.creative-search,.week-search .creative-search{max-width:none}}

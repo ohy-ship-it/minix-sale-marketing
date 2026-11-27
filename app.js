@@ -665,7 +665,11 @@ if (creativeBoard) {
       <button class="back-to-list" type="button"><i data-lucide="chevron-left"></i>주간 목록</button>
       <h2 class="board-title"></h2>
     </div>
-    <div class="notion-toolbar"><button class="new-page-button" type="button"><i data-lucide="plus"></i>요청하기</button></div>`;
+    <div class="notion-toolbar">
+      <label class="creative-search"><i data-lucide="search"></i><input type="search" class="board-search-input"
+        placeholder="이 주차에서 찾기 (이름 · 행사명 · SKU · 매체 · 담당자 · 메모)" autocomplete="off"></label>
+      <button class="new-page-button" type="button"><i data-lucide="plus"></i>요청하기</button>
+    </div>`;
   const filters = document.createElement('div');
   filters.className = 'board-filters';
   boardView.appendChild(filters);
@@ -681,11 +685,32 @@ if (creativeBoard) {
   const active = { owners: [], sku: [] };
   let openId = null;
 
-  const anyFilter = () => FACETS.some((facet) => active[facet.key].length > 0);
-  const visibleRows = () => (anyFilter()
-    ? rows.filter((row) => FACETS.every((facet) => !active[facet.key].length
-      || row[facet.key].some((value) => active[facet.key].includes(value))))
-    : rows);
+  /* ── 검색 ─────────────────────────────────────────────────────────
+     카드의 글자란 글자는 다 본다 (이름 · 행사명 · 상태 · 행사채널 · SKU · 담당자 · 매체 ·
+     메모 · 매체별 메모/갯수 · 날짜). 띄어쓰기 · 대소문자는 가리지 않는다 ('선물 하기' 로도
+     '선물하기' 가 나온다). 낱말을 여럿 적으면 **모두 들어 있는** 카드만 (AND). */
+  const searchKey = (text) => String(text ?? '').toLowerCase().replace(/\s+/g, '');
+  const searchWords = (query) => String(query || '').trim().split(/\s+/).map(searchKey).filter(Boolean);
+  const cardText = (row) => searchKey([
+    row.name, row.event, row.status, row.channel, row.note,
+    ...row.sku, ...row.owners, ...row.media,
+    ...Object.values(row.mediaNotes || {}), ...Object.values(row.mediaCounts || {}),
+    row.eventDate?.start, row.eventDate?.end, row.dueDate?.start, row.dueDate?.end,
+  ].filter((part) => part !== undefined && part !== null).join(' '));
+  const cardMatches = (row, words) => {
+    if (!words.length) return true;
+    const text = cardText(row);
+    return words.every((word) => text.includes(word));
+  };
+  let boardQuery = '';   // 주차 보드 안의 찾기 칸
+
+  const anyFilter = () => FACETS.some((facet) => active[facet.key].length > 0) || searchWords(boardQuery).length > 0;
+  const visibleRows = () => {
+    if (!anyFilter()) return rows;
+    const words = searchWords(boardQuery);
+    return rows.filter((row) => cardMatches(row, words) && FACETS.every((facet) => !active[facet.key].length
+      || row[facet.key].some((value) => active[facet.key].includes(value))));
+  };
 
   const renderTally = (label, icon, tally, colorFor, emptyText = '요청 없음') => {
     const entries = [...tally.entries()];
@@ -1018,8 +1043,23 @@ if (creativeBoard) {
     if (chipButton) return toggleFilter(chipButton.dataset.facet, chipButton.dataset.value);
     if (event.target.closest('.filter-clear')) {
       FACETS.forEach((facet) => { active[facet.key] = []; });
+      boardQuery = '';
+      boardSearch.value = '';
       renderBoard();
     }
+  });
+
+  // 주차 보드 찾기 칸 — 칸은 다시 그리지 않으므로 치는 동안 글자가 끊기지 않는다
+  const boardSearch = boardView.querySelector('.board-search-input');
+  boardSearch.addEventListener('input', () => {
+    boardQuery = boardSearch.value;
+    renderBoard();
+  });
+  boardSearch.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !boardSearch.value) return;
+    boardSearch.value = '';
+    boardQuery = '';
+    renderBoard();
   });
 
   // 카드를 오른쪽 클릭하면 복제 · 링크 복사 · 삭제가 뜬다 (카드 밖에서는 브라우저 메뉴 그대로).
@@ -1357,14 +1397,74 @@ if (creativeBoard) {
     ? weeks.filter((week) => WEEK_FACETS.every((facet) => !weekFilter[facet.key].length || weekFilter[facet.key].includes(week[facet.key])))
     : weeks);
 
+  /* ── 모든 주차에서 카드 찾기 ─────────────────────────────────────
+     찾기 칸은 **한 번만 만들어 두고 다시 그리지 않는다** — 목록은 저장 알림이 올 때마다
+     통째로 다시 그려지는데, 칸까지 다시 그리면 치던 글자 · 커서가 날아간다.
+     찾는 말이 있으면 주차 표 대신 걸린 카드 표를 보여 준다. 줄을 누르면 그 주차 · 카드가 열린다. */
+  let weekQuery = '';
+  const weekTop = document.createElement('div');
+  const weekSearchBar = document.createElement('div');
+  weekSearchBar.className = 'week-search';
+  weekSearchBar.innerHTML = `<label class="creative-search"><i data-lucide="search"></i><input type="search" class="week-search-input"
+    placeholder="모든 주차에서 카드 찾기 (이름 · 행사명 · SKU · 매체 · 담당자 · 메모)" autocomplete="off"></label>`;
+  const weekBody = document.createElement('div');
+  weekList.appendChild(weekTop);
+  weekList.appendChild(weekSearchBar);
+  weekList.appendChild(weekBody);
+  const weekSearch = weekSearchBar.querySelector('.week-search-input');
+
+  const searchHits = () => {
+    const words = searchWords(weekQuery);
+    const hits = [];
+    weeks.forEach((week) => week.rows.forEach((row) => {
+      if (cardMatches(row, words)) hits.push({ week, row });
+    }));
+    return hits;
+  };
+  const renderSearchHits = () => {
+    const hits = searchHits();
+    const list = hits.slice(0, 200).map(({ week, row }) => `
+      <tr class="search-hit" data-week="${week.id}" data-card="${row.id}" title="눌러서 이 카드 열기">
+        <td class="search-hit-week">${escapeHtml(weekName(week))}</td>
+        <td class="search-hit-name">${escapeHtml(row.name || '제목 없음')}${row.event ? `<small>${escapeHtml(row.event)}</small>` : ''}</td>
+        <td>${chip(propByKey.status, row.status)}</td>
+        <td><div class="chips">${row.sku.map((one) => chip(propByKey.sku, one)).join('')}</div></td>
+        <td><div class="chips">${row.media.map((one) => chip(propByKey.media, one)).join('')}</div></td>
+        <td><div class="chips">${row.owners.map((one) => chip(propByKey.owners, one)).join('')}</div></td>
+        <td class="search-hit-date">${escapeHtml(row.dueDate?.start || '')}</td>
+      </tr>`).join('');
+    return `<div class="filter-summary"><button type="button" class="week-search-clear">찾기 지우기</button>
+        <span class="filter-count">카드 ${hits.length}장${hits.length > 200 ? ' (앞 200장만 보입니다)' : ''}</span></div>
+      <div class="week-table-wrap"><table class="week-table search-table">
+        <thead><tr><th>주차</th><th>이름 · 행사명</th><th>상태</th><th>SKU</th><th>매체</th><th>담당자</th><th>전달희망</th></tr></thead>
+        <tbody>${list || '<tr class="week-empty"><td colspan="7">찾는 말이 들어간 카드가 없습니다.</td></tr>'}</tbody>
+      </table></div>`;
+  };
+  weekSearch.addEventListener('input', () => {
+    weekQuery = weekSearch.value;
+    renderWeekList();
+  });
+  weekSearch.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !weekSearch.value) return;
+    weekSearch.value = '';
+    weekQuery = '';
+    renderWeekList();
+  });
+
   const renderWeekList = () => {
-    weekList.innerHTML = `
+    weekTop.innerHTML = `
       <div class="week-head">
         <h2>주간 소재요청</h2>
         <span class="week-note">${escapeHtml(weekNote)}</span>
         <button type="button" class="week-pull" title="시트에서 다시 불러옵니다"><i data-lucide="refresh-cw"></i>새로고침</button>
         <button type="button" class="week-add"><i data-lucide="plus"></i>주간 소재요청 추가</button>
-      </div>
+      </div>`;
+    if (searchWords(weekQuery).length) {
+      weekBody.innerHTML = renderSearchHits();
+      lucide.createIcons();
+      return;
+    }
+    weekBody.innerHTML = `
       <div class="week-filters">
         ${WEEK_FACETS.map((facet) => `<div class="week-filter-row${weekFilter[facet.key].length ? ' is-active' : ''}">
           <span class="filter-label"><i data-lucide="${facet.icon}"></i>${escapeHtml(facet.label)}</span>
@@ -1465,6 +1565,8 @@ if (creativeBoard) {
     currentWeekId = id;
     rows = week.rows;
     FACETS.forEach((facet) => { active[facet.key] = []; });
+    boardQuery = '';
+    boardSearch.value = '';
     boardView.querySelector('.board-title').textContent = weekName(week);
     weekList.hidden = true;
     boardView.hidden = false;
@@ -1483,6 +1585,20 @@ if (creativeBoard) {
   };
 
   weekList.addEventListener('click', (event) => {
+    if (event.target.closest('.week-search-clear')) {
+      weekSearch.value = '';
+      weekQuery = '';
+      renderWeekList();
+      weekSearch.focus();
+      return;
+    }
+    const hit = event.target.closest('.search-hit');
+    if (hit) {
+      // 찾던 말은 남겨 둔다 — [주간 목록] 으로 돌아오면 같은 결과가 그대로 있다
+      openWeek(hit.dataset.week);
+      if (rows.some((row) => row.id === hit.dataset.card)) openPeek(hit.dataset.card);
+      return;
+    }
     if (event.target.closest('.week-pull')) {
       weekNote = '시트에서 불러오는 중…';
       renderWeekList();
@@ -1503,8 +1619,10 @@ if (creativeBoard) {
       }
       weeks.unshift(week);
       editingWeekId = week.id;
-      // 필터가 켜져 있으면 새 행이 걸러져 보이지 않으므로 해제한다
+      // 필터 · 찾기가 켜져 있으면 새 행이 걸러져 보이지 않으므로 해제한다
       WEEK_FACETS.forEach((facet) => { weekFilter[facet.key] = []; });
+      weekSearch.value = '';
+      weekQuery = '';
       save();
       renderWeekList();
       weekList.querySelector('.week-input')?.focus();
