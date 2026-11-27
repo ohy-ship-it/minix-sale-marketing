@@ -2927,7 +2927,7 @@ function metaGraphRetry_(call) {
 }
 
 // 광고세트 만들기 코드의 판 — 고칠 때마다 올린다 (오류 문구에 찍혀 배포 여부를 알 수 있다)
-var META_MAKE_BUILD = '11/27-6';
+var META_MAKE_BUILD = '11/27-7';
 
 // 카탈로그 광고세트인가 (제품 세트 · 카탈로그 번호가 붙어 있으면)
 function metaHasCatalog_(one) {
@@ -3158,7 +3158,8 @@ function metaMake_(payload) {
   if (budgetType === 'lifetime' && !(end > 0)) throw new Error('총예산을 쓰려면 종료일시가 있어야 합니다.');
   if (end > 0 && end <= start) throw new Error('종료일시가 시작일시보다 빠르거나 같습니다.');
 
-  var log = [];
+  // 맨 첫 줄에 서버 판을 적는다 — 진행 상자만 보고도 웹앱이 새 버전으로 배포됐는지 알 수 있게
+  var log = ['서버 판 ' + META_MAKE_BUILD];
 
   /* 게시 주체(대표 계정)를 **무엇이든 만들기 전에** 가린다.
      예전에는 캠페인 · 광고세트를 다 만든 뒤에 물어서, 토큰이 그 페이지를 못 쓰면
