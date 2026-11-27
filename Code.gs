@@ -216,7 +216,8 @@ function doPost(e) {
 function doGet(e) {
   var p = (e && e.parameter) || {};
   if (p.state && (p.code || p.error)) return cafe24Callback_(p);
-  return json({ ok: true, message: 'minix filename endpoint' });
+  // build — 웹앱 주소를 브라우저로 열면 지금 배포된 판이 보인다 (배포가 됐는지 확인용)
+  return json({ ok: true, message: 'minix filename endpoint', build: META_MAKE_BUILD });
 }
 
 function json(payload) {
@@ -2927,7 +2928,7 @@ function metaGraphRetry_(call) {
 }
 
 // 광고세트 만들기 코드의 판 — 고칠 때마다 올린다 (오류 문구에 찍혀 배포 여부를 알 수 있다)
-var META_MAKE_BUILD = '11/27-7';
+var META_MAKE_BUILD = '11/27-8';
 
 // 카탈로그 광고세트인가 (제품 세트 · 카탈로그 번호가 붙어 있으면)
 function metaHasCatalog_(one) {
