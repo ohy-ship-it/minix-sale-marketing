@@ -2915,7 +2915,7 @@ function metaGraphRetry_(call) {
 }
 
 // 광고세트 만들기 코드의 판 — 고칠 때마다 올린다 (오류 문구에 찍혀 배포 여부를 알 수 있다)
-var META_MAKE_BUILD = '11/27-3';
+var META_MAKE_BUILD = '11/27-4';
 
 // 카탈로그 광고세트인가 (제품 세트 · 카탈로그 번호가 붙어 있으면)
 function metaHasCatalog_(one) {
@@ -3353,6 +3353,18 @@ function metaMake_(payload) {
     // 글자로 굳혀서 넣는다 (메타는 유닉스 초를 받는다).
     if (start > 0) params.start_time = String(start);
     if (end > 0) params.end_time = String(end);
+    /* 기여 설정 — 클릭 후 7일 · 조회 후 1일 · 참여한 조회 후 1일 (기존 29cm 광고세트와 같은 값).
+       전환 최적화에서만 이 조합을 받아 준다. 링크클릭 등은 메타가 '클릭 1일'만 허용해
+       '조회 기여 기간 오류'(subcode 1885501)로 돌려주므로 넣지 않는다. */
+    var attribution = '';
+    if (optGoal === 'OFFSITE_CONVERSIONS') {
+      attribution = JSON.stringify([
+        { event_type: 'CLICK_THROUGH', window_days: 7 },
+        { event_type: 'VIEW_THROUGH', window_days: 1 },
+        { event_type: 'ENGAGED_VIDEO_VIEW', window_days: 1 }
+      ]);
+      params.attribution_spec = attribution;
+    }
     var budgetKey = budgetType === 'lifetime' ? 'lifetime_budget' : 'daily_budget';
     // 캠페인 예산이면 예산과 입찰 전략은 캠페인 것을 따른다
     if (campaignBudget) delete params.bid_strategy;
@@ -3378,6 +3390,14 @@ function metaMake_(payload) {
           campaignBudget = '캠페인 예산';
           delete params[budgetKey];
           delete params.bid_strategy;
+          t -= 1; tried -= 1;
+          continue;
+        }
+        // 기여 설정이 막히면 빼고 같은 후보로 다시 (광고세트는 만들고, 빠진 것을 알려 준다)
+        if (params.attribution_spec && /기여|attribution|1885501/i.test(trouble)) {
+          delete params.attribution_spec;
+          attribution = '';
+          log.push('기여 설정(클릭 7일 · 조회 1일 · 참여 1일)을 메타가 받지 않아 기본값으로 만듭니다 — ' + trouble);
           t -= 1; tried -= 1;
           continue;
         }
@@ -3410,6 +3430,7 @@ function metaMake_(payload) {
         + tries.slice(0, tried).map(pixelOf).join(' · ') + ']');
     }
     if (usedPixel) log.push('픽셀을 붙였습니다 (' + pixelOf(usedPixel) + ')');
+    if (attribution) log.push('기여 설정: 클릭 후 7일 · 조회 후 1일 · 참여한 조회 후 1일');
     if (sawCatalog && usedPixel.indexOf('product_set_id') < 0) {
       log.push('옆 광고세트의 제품 세트는 붙이지 않았습니다 (없이도 들어갔습니다)');
     }
