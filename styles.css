@@ -2313,3 +2313,10 @@ html.is-gfa-stale,html.is-gfa-stale body{overflow:hidden}
   color:#555;font:600 10px/1 inherit;padding:5px 9px 5px 7px;cursor:pointer}
 .week-search-clear:hover{background:#f4f4f1}
 .week-search-clear svg{width:12px;height:12px;display:block}
+.bg-mix-pick-find{display:flex;gap:6px;align-items:center;margin:8px 0}
+.bg-mix-pick-find input{flex:1;max-width:360px;padding:6px 9px;border:1px solid #e3e2dc;border-radius:6px;font:inherit}
+.bg-mix-pick-list{max-height:52vh;overflow:auto;list-style:none;margin:0;padding:0}
+.bg-mix-pick-list button{display:flex;flex-direction:column;align-items:flex-start;width:100%;text-align:left;border:0;border-bottom:1px solid #f0efea;background:#fff;padding:8px 10px;cursor:pointer;font:inherit}
+.bg-mix-pick-list button:hover{background:#f4f8fd}
+.bg-mix-pick-list small{color:#888;font-size:11px}
+.bg-mix-pick-products{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}

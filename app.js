@@ -19192,10 +19192,13 @@ if (budgetPlanView) {
     const promoId = tie ? tie.id : '';
     const product = tie ? tie.product : String(row.sku || '').trim();
     if (!promoId) {
+      /* 아직 미닉스 행사와 짝이 없다 — 행사별 결과의 [미닉스 고르기] 처럼 여기서 고른다.
+         고른 짝은 같은 자리(row.minix)에 담아 행사별 결과에서도 그대로 보인다. */
       mixBox = { open: true, rowId, promoId: '', product, promo: String(row.event || ''),
-        state: 'error', plan: null, dirty: false, saving: false,
-        message: '이 줄은 아직 미닉스 행사와 짝지어지지 않았습니다 — 행사별 결과에서 [미닉스 고르기] 로 골라 주세요.' };
-      return render();
+        state: 'pick', plan: null, dirty: false, saving: false, message: '',
+        find: '', chosen: null };
+      render();
+      return mixPickLoad(false);
     }
     mixBox = { open: true, rowId, promoId, product, promo: tie.name || String(row.event || ''),
       state: 'loading', message: '', plan: null, dirty: false, saving: false };
@@ -19210,6 +19213,76 @@ if (budgetPlanView) {
       mixBox = { ...mixBox, state: 'error', message: `믹스를 못 읽었습니다 — ${error.message}` };
     }
     return render();
+  };
+
+  // 미닉스 행사 목록 (행사명 고르개와 같은 목록을 같이 쓴다 — 5분 담아 둔다)
+  const mixPickLoad = async (refresh) => {
+    if (!refresh && promos.state === 'done') return render();
+    promos = { ...promos, state: 'loading', message: '' };
+    render();
+    try {
+      const body = await askSheet({ action: 'minixPromos', refresh: !!refresh });
+      const list = body.promos || [];
+      promos = { ...promos, state: 'done', list, message: list.length ? '' : '미닉스에 행사가 없습니다.' };
+    } catch (error) {
+      promos = { ...promos, state: 'error', list: [], message: `미닉스 행사를 못 읽었습니다 — ${error.message}` };
+    }
+    return render();
+  };
+
+  // 제품 이름은 곳마다 조금씩 다르다 ('더 플렌더MAX' · '더플렌더(MAX)') — 띄어쓰기 · 괄호를 지우고 견준다
+  const mixNameKey = (text) => String(text || '').toLowerCase().replace(/[\s()_·\-.]/g, '');
+
+  // 고른 행사 · 제품으로 짝을 담고 믹스를 연다
+  const mixTieTo = (promo, product) => {
+    const row = mixRowOf(mixBox.rowId);
+    if (!row || !promo) return undefined;
+    row.minix = { id: String(promo.id), event: String(promo.name || promo.id),
+      channel: String(promo.channel || ''), product: String(product || row.sku || '') };
+    save();
+    return mixOpen(row.id);
+  };
+
+  const mixPickPromo = (promoId) => {
+    const promo = promos.list.find((one) => String(one.id) === String(promoId));
+    const row = mixRowOf(mixBox.rowId);
+    if (!promo || !row) return undefined;
+    const products = (promo.products || []).map((one) => String(one)).filter(Boolean);
+    const want = mixNameKey(row.sku);
+    const same = products.filter((one) => mixNameKey(one) === want);
+    if (same.length === 1) return mixTieTo(promo, same[0]);
+    if (!products.length) return mixTieTo(promo, row.sku);
+    if (products.length === 1 && !want) return mixTieTo(promo, products[0]);
+    // 어느 제품 믹스인지 모르겠다 — 사람이 고른다
+    mixBox = { ...mixBox, chosen: promo };
+    return render();
+  };
+
+  const mixPickInner = () => {
+    const row = mixRowOf(mixBox.rowId) || {};
+    if (mixBox.chosen) {
+      const promo = mixBox.chosen;
+      const products = (promo.products || []).map((one) => String(one)).filter(Boolean);
+      const extra = row.sku && products.indexOf(String(row.sku)) < 0 ? [String(row.sku)] : [];
+      return `<p class="bg-mix-note"><b>${escape(promo.name || promo.id)}</b> — 어느 제품의 믹스를 짤까요?
+          <button type="button" class="setup-combo-refresh" data-mix="pickBack">행사 다시 고르기</button></p>
+        <div class="bg-mix-pick-products">${products.concat(extra).map((one) => `<button type="button"
+          class="bg-kind" data-mix="pickProduct" data-product="${escape(one)}">${escape(one)}</button>`).join('')}</div>`;
+    }
+    const head = `<p class="bg-mix-note">이 줄은 아직 미닉스 행사와 짝이 없습니다. 넣을 미닉스 행사를 고르세요 —
+        고른 짝은 <b>행사별 결과</b>의 미닉스 짝과 같은 자리에 담깁니다.</p>
+      <div class="bg-mix-pick-find"><input type="search" data-mix="pickFind" value="${escape(mixBox.find || '')}"
+        placeholder="행사명으로 찾기"><button type="button" class="setup-combo-refresh" data-mix="pickAgain">다시 읽기</button></div>`;
+    if (promos.state === 'loading' || promos.state === 'idle') return `${head}<p class="bg-mix-none">미닉스 행사를 읽는 중…</p>`;
+    if (promos.state === 'error') return `${head}<p class="bg-mix-warn">${escape(promos.message)}</p>`;
+    const typed = String(mixBox.find || '').trim().toLowerCase();
+    const list = typed
+      ? promos.list.filter((one) => String(one.name || '').toLowerCase().indexOf(typed) >= 0)
+      : promos.list;
+    return `${head}${list.length
+      ? `<ul class="setup-combo-items bg-mix-pick-list">${list.map((one) => `<li><button type="button"
+          data-mix="pickPromo" data-promo="${escape(one.id)}"><b>${escape(one.name || one.id)}</b><small>${escape(promoWhen(one))}${(one.products || []).length ? ` · ${escape(one.products.join(', '))}` : ''}</small></button></li>`).join('')}</ul>`
+      : `<p class="bg-mix-none">${escape(promos.message || '맞는 행사가 없습니다.')}</p>`}`;
   };
 
   const mixClose = (force) => {
@@ -19298,8 +19371,8 @@ if (budgetPlanView) {
   const mixCell = (row) => {
     const tie = mixTie(row);
     if (!tie) {
-      return `<span class="tool-blank"
-        title="행사별 결과에서 이 줄을 미닉스 행사와 짝지으면 믹스를 짤 수 있습니다">—</span>`;
+      return `<button type="button" class="bg-mix-btn is-untied" data-bg="mix" data-row="${escape(row.id)}"
+        title="미닉스 행사를 골라 넣고 믹스를 짭니다"><i data-lucide="pencil"></i>믹스짜기</button>`;
     }
     const sum = mixSumOf(row);
     return `<button type="button" class="bg-mix-btn" data-bg="mix" data-row="${escape(row.id)}"
@@ -19390,7 +19463,8 @@ if (budgetPlanView) {
 
   const mixPanel = () => {
     if (!mixBox.open) return '';
-    const inner = mixBox.state === 'loading'
+    const inner = mixBox.state === 'pick' ? mixPickInner()
+      : mixBox.state === 'loading'
       ? '<p class="bg-mix-none">미닉스에서 믹스를 읽는 중…</p>'
       : mixBox.state === 'error'
         ? `<p class="bg-mix-warn">${escape(mixBox.message)}</p>`
@@ -20223,6 +20297,10 @@ if (budgetPlanView) {
     const what = hit.dataset.mix;
     if (what === 'close') { mixClose(false); return; }
     if (what === 'save') { mixSave(); return; }
+    if (what === 'pickPromo') { mixPickPromo(hit.dataset.promo); return; }
+    if (what === 'pickProduct') { mixTieTo(mixBox.chosen, hit.dataset.product); return; }
+    if (what === 'pickBack') { mixBox = { ...mixBox, chosen: null }; render(); return; }
+    if (what === 'pickAgain') { mixPickLoad(true); return; }
     if (!mixBox.plan) return;
     if (what === 'add') {
       mixBox.plan.phases[hit.dataset.p].rows.push(mixBlankRow());
@@ -20268,6 +20346,16 @@ if (budgetPlanView) {
   };
   budgetPlanView.addEventListener('input', (event) => {
     const field = event.target.closest('[data-mix]');
+    if (field && field.dataset.mix === 'pickFind') {
+      mixBox.find = field.value;
+      const box = document.querySelector('.bg-mix-body');
+      if (box) {
+        box.innerHTML = mixPickInner();
+        const again = box.querySelector('[data-mix="pickFind"]');
+        if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+      }
+      return;
+    }
     if (field && field.dataset.mix !== 'close') mixType(field);
   });
   budgetPlanView.addEventListener('change', (event) => {
