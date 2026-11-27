@@ -19025,8 +19025,25 @@ if (budgetPlanView) {
 
   /* 짝지어졌는지 한눈에. 이름만 적힌 줄과 ID 로 묶인 줄은 할 수 있는 일이 다르다
      (믹스는 ID 가 있어야 연다) — 그러니 보기에서도 갈라 보여야 한다. */
-  const promoTieMark = (row) => (row.eventId
-    ? ` <i class="bg-tied" title="미닉스 행사와 짝지어져 있습니다 (ID ${escape(row.eventId)})">●</i>` : '');
+  /* 믹스를 열 짝. **행사별 결과에서 골라 둔 미닉스 짝(row.minix)** 을 먼저 쓴다 —
+     세일즈마케팅에서 넣은 줄을 미닉스 행사에 골라 넣는 그 짝이다. 매체결과를 밀어넣는
+     행사 · 제품과 같아야 믹스도 같은 칸(mixByProduct[제품])을 연다.
+     없으면 월별 예산 행사명 칸에서 고른 짝(row.eventId)을 쓴다. */
+  const mixTie = (row) => {
+    const link = row && row.minix && row.minix.id ? row.minix : null;
+    if (link) {
+      return { id: String(link.id), name: String(link.event || row.event || ''),
+        product: String(link.sent || link.product || row.sku || '').trim() };
+    }
+    const id = String((row && row.eventId) || '').trim();
+    return id ? { id, name: String(row.event || ''), product: String(row.sku || '').trim() } : null;
+  };
+
+  const promoTieMark = (row) => {
+    const tie = mixTie(row);
+    return tie
+      ? ` <i class="bg-tied" title="미닉스 행사와 짝지어져 있습니다 — ${escape(tie.name || tie.id)} (ID ${escape(tie.id)})">●</i>` : '';
+  };
 
   /* ── 매체믹스 (미닉스와 **같은 자리**를 쓴다) ───────────────────────
 
@@ -19122,15 +19139,16 @@ if (budgetPlanView) {
   const mixOpen = async (rowId) => {
     const row = mixRowOf(rowId);
     if (!row) return;
-    const promoId = String(row.eventId || '').trim();
-    const product = String(row.sku || '').trim();
+    const tie = mixTie(row);
+    const promoId = tie ? tie.id : '';
+    const product = tie ? tie.product : String(row.sku || '').trim();
     if (!promoId) {
       mixBox = { open: true, rowId, promoId: '', product, promo: String(row.event || ''),
         state: 'error', plan: null, dirty: false, saving: false,
-        message: '이 줄은 아직 미닉스 행사와 짝지어지지 않았습니다 — 행사명 칸에서 미닉스 행사를 골라 주세요.' };
+        message: '이 줄은 아직 미닉스 행사와 짝지어지지 않았습니다 — 행사별 결과에서 [미닉스 고르기] 로 골라 주세요.' };
       return render();
     }
-    mixBox = { open: true, rowId, promoId, product, promo: String(row.event || ''),
+    mixBox = { open: true, rowId, promoId, product, promo: tie.name || String(row.event || ''),
       state: 'loading', message: '', plan: null, dirty: false, saving: false };
     render();
     try {
@@ -19175,9 +19193,9 @@ if (budgetPlanView) {
      화면을 다시 그려도 남지만 새로고침하면 사라진다 — 미닉스가 원본이라 담아 두지 않는다. */
   let mixSums = {};
   const mixSumOf = (row) => {
-    const id = String(row.eventId || '').trim();
-    if (!id) return undefined;
-    return mixSums[`${id}\u0000${String(row.sku || '').trim()}`];
+    const tie = mixTie(row);
+    if (!tie) return undefined;
+    return mixSums[`${tie.id}\u0000${tie.product}`];
   };
 
   /* 적는 대로 셈한 칸만 고쳐 끼운다.
@@ -19229,13 +19247,14 @@ if (budgetPlanView) {
   /* 줄 표의 믹스 칸. 짝이 없으면 열 수 없다고 **까닭까지** 적어 둔다 —
      그냥 흐릿한 단추만 두면 왜 안 눌리는지 알 길이 없다. */
   const mixCell = (row) => {
-    if (!String(row.eventId || '').trim()) {
+    const tie = mixTie(row);
+    if (!tie) {
       return `<span class="tool-blank"
-        title="행사명 칸의 화살표를 눌러 미닉스 행사를 고르면 믹스를 짤 수 있습니다">—</span>`;
+        title="행사별 결과에서 이 줄을 미닉스 행사와 짝지으면 믹스를 짤 수 있습니다">—</span>`;
     }
     const sum = mixSumOf(row);
     return `<button type="button" class="bg-mix-btn" data-bg="mix" data-row="${escape(row.id)}"
-      title="미닉스 매체믹스를 엽니다 — ${escape(row.event || row.eventId)} · ${escape(row.sku || '')}">
+      title="미닉스 매체믹스를 엽니다 — ${escape(tie.name || tie.id)} · ${escape(tie.product)}">
       <i data-lucide="pencil"></i>${sum ? won(sum) : '믹스짜기'}</button>`;
   };
 
