@@ -2915,7 +2915,7 @@ function metaGraphRetry_(call) {
 }
 
 // 광고세트 만들기 코드의 판 — 고칠 때마다 올린다 (오류 문구에 찍혀 배포 여부를 알 수 있다)
-var META_MAKE_BUILD = '11/27-5';
+var META_MAKE_BUILD = '11/27-6';
 
 // 카탈로그 광고세트인가 (제품 세트 · 카탈로그 번호가 붙어 있으면)
 function metaHasCatalog_(one) {
@@ -3031,7 +3031,12 @@ function metaPageAllowed_(pageId) {
    소재마다 물으면 왕복이 늘어나니 잠깐 담아 둔다. */
 function metaTokenPage_() {
   var cache = CacheService.getScriptCache();
-  var kept = cache.get('metaTokenPage');
+  /* 담아 두는 열쇠에 **토큰 지문**을 넣는다. 예전에는 열쇠가 하나라 토큰을 시스템 사용자
+     토큰으로 바꿔도 6시간 동안 옛 결과(미닉스 페이지 토큰)를 믿고 다른 페이지를 막았다. */
+  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(metaToken_()));
+  var mark = digest.slice(0, 8).map(function (b) { return ((b + 256) % 256).toString(16); }).join('');
+  var cacheKey = 'metaTokenPage:' + mark;
+  var kept = cache.get(cacheKey);
   if (kept) { try { return JSON.parse(kept); } catch (ignore) { /* 깨졌으면 다시 */ } }
   var out = { id: '', name: '' };
   try {
@@ -3042,7 +3047,7 @@ function metaTokenPage_() {
       catch (ignore) { /* 이름은 없어도 된다 */ }
     }
   } catch (error) { return out; }   // 못 물어보면 막지 않는다 (되던 일을 막는 쪽이 더 나쁘다)
-  try { cache.put('metaTokenPage', JSON.stringify(out), META_STORY_CACHE_SECONDS); }
+  try { cache.put(cacheKey, JSON.stringify(out), META_STORY_CACHE_SECONDS); }
   catch (ignore) { /* 거들기다 */ }
   return out;
 }
