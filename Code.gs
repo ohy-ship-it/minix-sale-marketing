@@ -2914,6 +2914,9 @@ function metaGraphRetry_(call) {
   throw last;
 }
 
+// 광고세트 만들기 코드의 판 — 고칠 때마다 올린다 (오류 문구에 찍혀 배포 여부를 알 수 있다)
+var META_MAKE_BUILD = '11/27-3';
+
 // 카탈로그 광고세트인가 (제품 세트 · 카탈로그 번호가 붙어 있으면)
 function metaHasCatalog_(one) {
   return !!(one && typeof one === 'object' && (one.product_set_id || one.product_catalog_id));
@@ -3401,7 +3404,10 @@ function metaMake_(payload) {
         + ' [보낸 값 — 시작 ' + (params.start_time || '(없음)')
         + ' · 종료 ' + (params.end_time || '(없음)')
         + ' · 받은 값 ' + JSON.stringify(String(payload.startAt || '')) + ' ~ '
-        + JSON.stringify(String(payload.endAt || '')) + ']');
+        + JSON.stringify(String(payload.endAt || '')) + ']'
+        // 배포가 새 버전인지 오류 문구만 보고 알 수 있게 (이 표시가 없으면 옛 버전이 돌고 있는 것)
+        + ' [서버 ' + META_MAKE_BUILD + ' · 써 본 값 ' + tried + '개: '
+        + tries.slice(0, tried).map(pixelOf).join(' · ') + ']');
     }
     if (usedPixel) log.push('픽셀을 붙였습니다 (' + pixelOf(usedPixel) + ')');
     if (sawCatalog && usedPixel.indexOf('product_set_id') < 0) {
