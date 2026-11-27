@@ -7426,8 +7426,19 @@ if (kakaoSetup) {
   const KIND_MEDIA = { bizboard: '비즈보드', display: '디스플레이' };
   const KIND_SIZE = {
     bizboard: '960 × 300 · PNG · 300KB 이하 (2026-10-20 개정 규격)',
-    display: '500×500 · 1200×600 · 720×1280 · 800×1000 중 하나 · 500KB 이하',
+    display: '1:1(500×500 이상) · 2:1(1200×600 이상) · 4:5(800×1000 이상) · 9:16(720×1280 이상) · 500KB 이하 · 사이즈마다 소재를 따로 만듭니다',
   };
+  /* 디스플레이(네이티브) 홍보 이미지가 받는 비율 — 카카오 문서(creatives-display)의 imageFile 칸.
+     소재 하나에 한 장만 들어가서, 같은 광고의 다른 사이즈는 소재를 따로 만든다. 정사각형을 맨 앞에 둔다. */
+  const DISPLAY_RATIOS = [
+    { label: '1:1', w: 1, h: 1, minW: 500, minH: 500 },
+    { label: '2:1', w: 2, h: 1, minW: 1200, minH: 600 },
+    { label: '4:5', w: 4, h: 5, minW: 800, minH: 1000 },
+    { label: '9:16', w: 9, h: 16, minW: 720, minH: 1280 },
+  ];
+  const ratioOf = (pick) => (pick.width && pick.height
+    ? DISPLAY_RATIOS.find((one) => Math.abs((pick.width * one.h) / (pick.height * one.w) - 1) < 0.01) || null
+    : null);
   const URL_TYPES = [['landing', '랜딩링크'], ['linkGA', 'LINK(GA)'], ['ntPlain', 'NT(일반)'],
     ['ntStory', 'NT(쇼핑스토리)'], ['fmLive', 'FM(쇼핑라이브)']];
   // 게재지면 · 입찰형태는 카카오가 **코드**로 준다. 화면에는 한글로 적고, 모르는 코드는 코드 그대로 적는다.
@@ -7957,31 +7968,51 @@ if (kakaoSetup) {
       return `${pick.width}×${pick.height} — 비즈보드는 960×300 이어야 합니다`;
     }
     if (!pick.width) return '그림을 읽지 못했습니다';
+    if (!isBoard()) {
+      const ratio = ratioOf(pick);
+      if (!ratio) return `${pick.width}×${pick.height} — 디스플레이는 1:1 · 2:1 · 4:5 · 9:16 비율이어야 합니다`;
+      if (pick.width < ratio.minW) return `${pick.width}×${pick.height} — ${ratio.label} 은 ${ratio.minW}×${ratio.minH} 이상이어야 합니다`;
+    }
     if (pick.size > 500000) return `${Math.round(pick.size / 1024)}KB — 500KB 를 넘습니다`;
     return '';
   };
 
-  const nameOf = (pick) => (pick.row && pick.row.ad ? pick.row.ad : pick.name.replace(/\.[^.]+$/, ''));
   const urlFor = (pick) => (pick.row ? urlOf(pick.row) : '');
+  const baseName = (pick) => (pick.row && pick.row.ad ? pick.row.ad : pick.name.replace(/\.[^.]+$/, ''));
 
-  /* 디스플레이는 같은 이름의 파일을 한 번에 보낸다 — 서버가 소재를 장마다 따로 만든다
+  /* 디스플레이는 같은 광고(같은 시트 줄)의 여러 사이즈를 **소재 따로** 만든다
      (카카오 API 는 소재 하나에 홍보 이미지 한 장만 받는다).
-     benefit-562 1.jpg + benefit-562(세로) 1.jpg → 소재 둘 (세로 쪽 이름에 (세로) 가 붙는다).
-     파일명에서 (세로) · 확장자를 떼고 같은 것끼리 묶고, (세로) 가 없는 쪽을 앞에 둔다.
-     비즈보드는 한 장짜리 상품이라 묶지 않는다. */
-  const bundleKey = (pick) => pick.name.replace(/\.[^.]+$/, '').replace(/\s*\(세로\)\s*/g, ' ')
-    .replace(/\s+/g, ' ').trim().toLowerCase();
-  const bundles = (list) => {
-    if (isBoard()) return list.map((one) => [one]);
+     이름이 같으면 서버가 '이미 있다' 고 건너뛰므로 둘째 장부터 꼬리를 붙인다:
+     정사각형(1:1)이 맨 앞이라 꼬리 없이 광고명 그대로, 나머지는 광고명(2:1) · 광고명(4:5) · 광고명(9:16).
+     파일명에 (세로) 가 있으면 예전처럼 광고명(세로). 비즈보드는 한 장짜리라 손대지 않는다. */
+  const displayNames = () => {
+    const out = new Map();
     const groups = new Map();
-    list.forEach((one) => {
-      const key = bundleKey(one);
+    picks.filter((one) => !sizeBad(one) && urlFor(one)).forEach((one) => {
+      const key = baseName(one);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(one);
     });
-    return Array.from(groups.values()).map((group) => group.slice()
-      .sort((a, b) => Number(/\(세로\)/.test(a.name)) - Number(/\(세로\)/.test(b.name))));
+    const rank = (pick) => {
+      const at = DISPLAY_RATIOS.indexOf(ratioOf(pick));
+      return (at < 0 ? 9 : at) * 2 + Number(/\(세로\)/.test(pick.name));
+    };
+    groups.forEach((group, key) => {
+      const used = {};
+      group.slice().sort((a, b) => rank(a) - rank(b)).forEach((pick, i) => {
+        let name = key;
+        if (i > 0) {
+          const ratio = ratioOf(pick);
+          name = key + (/\(세로\)/.test(pick.name) ? '(세로)' : `(${ratio ? ratio.label : `${pick.width}x${pick.height}`})`);
+        }
+        for (let n = 2; used[name]; n += 1) name = `${key}(${ratioOf(pick) ? ratioOf(pick).label : ''}) ${n}`.replace('() ', ' ');
+        used[name] = true;
+        out.set(pick, name);
+      });
+    });
+    return out;
   };
+  const nameOf = (pick) => (isBoard() ? baseName(pick) : displayNames().get(pick) || baseName(pick));
 
   const readBase64 = (file) => new Promise((done, fail) => {
     const reader = new FileReader();
@@ -8055,21 +8086,19 @@ if (kakaoSetup) {
     work.ids = { campaign: made.campaign, group: made.group };
     render();
 
-    // 소재는 하나씩 차례로 올린다 (카카오가 1초에 한 번만 받는다)
-    for (const bundle of bundles(good)) {
-      const pick = bundle[0];
+    // 소재는 하나씩 차례로 올린다 (카카오가 1초에 한 번만 받는다).
+    // 사이즈마다 이름이 다른 소재 하나씩이다 — 이름은 올리기 전에 정해 둔다.
+    const names = isBoard() ? null : displayNames();
+    for (const pick of good) {
+      const title = names ? (names.get(pick) || baseName(pick)) : baseName(pick);
       try {
         const image = await readBase64(pick.file);
-        const extras = [];
-        for (const more of bundle.slice(1)) {
-          extras.push({ fileName: more.name, image: await readBase64(more.file) });
-        }
         const answer = await askSheet({
           action: 'kakaoCreative',
           account: state.account,
           group: made.group,
           format: FORMAT[state.kind],
-          name: nameOf(pick),
+          name: title,
           altText: tr(state.altText),
           landing: urlFor(pick),
           fileName: pick.name,
@@ -8080,22 +8109,22 @@ if (kakaoSetup) {
           actionButton: state.action,
           profileName: tr(state.profileName),
           profileImageUrl: sampleImage(),
-          extras: extras,
+          extras: [],
         });
         if (answer.skipped) {
-          work.lines.push({ text: `${nameOf(pick)} — 같은 이름의 소재가 이미 있어 건너뛰었습니다 (소재 ${answer.creative})` });
-          work.done += bundle.length;
+          work.lines.push({ text: `${title} — 같은 이름의 소재가 이미 있어 건너뛰었습니다 (소재 ${answer.creative})` });
+          work.done += 1;
           render();
           continue;
         }
-        const count = bundle.length > 1 ? ` · ${bundle.map((one) => one.name).join(' + ')}` : '';
+        const size = ` · ${pick.width}×${pick.height}`;
         work.lines.push({ bad: !!answer.note,
-          text: `${nameOf(pick)} — 올렸습니다 (소재 ${answer.creative || '?'}${count} · 심사 대기)${answer.note ? ` — ${answer.note}` : ''}` });
+          text: `${title} — 올렸습니다 (소재 ${answer.creative || '?'}${size} · 심사 대기)${answer.note ? ` — ${answer.note}` : ''}` });
       } catch (reason) {
-        work.failed += bundle.length;
-        work.lines.push({ bad: true, text: `${nameOf(pick)} — 실패: ${reason.message}` });
+        work.failed += 1;
+        work.lines.push({ bad: true, text: `${title} — 실패: ${reason.message}` });
       }
-      work.done += bundle.length;
+      work.done += 1;
       render();
     }
 
@@ -8257,7 +8286,7 @@ if (kakaoSetup) {
     const url = urlFor(pick);
     return `<tr${bad || !url ? ' class="is-bad"' : ''}>
         <td><span class="setup-code">${escapeHtml(pick.name)}</span></td>
-        <td>${pick.width}×${pick.height} · ${Math.round(pick.size / 1024)}KB${bad ? `<br><small class="setup-warn">${escapeHtml(bad)}</small>` : ''}</td>
+        <td>${pick.width}×${pick.height}${!isBoard() && ratioOf(pick) ? ` (${ratioOf(pick).label})` : ''} · ${Math.round(pick.size / 1024)}KB${bad ? `<br><small class="setup-warn">${escapeHtml(bad)}</small>` : ''}</td>
         <td>${escapeHtml(nameOf(pick))}</td>
         <td class="setup-url">${escapeHtml(url) || '<span class="setup-warn">짝지을 줄이 없습니다</span>'}</td>
         <td><button type="button" class="tool-media-remove" data-drop="${i}">×</button></td>
